@@ -1,0 +1,219 @@
+{
+  "name": "readymade-ship-workspace",
+  "displayName": "Readymade Ship Workspace",
+  "description": "Urbit source, drafts, Pataphor receipts and terminals in a real editor workbench.",
+  "version": "0.2.0",
+  "publisher": "pataphor",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.143.0",
+    "node": ">=22"
+  },
+  "main": "./dist/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "enabledApiProposals": [
+    "browser"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "contributes": {
+    "configurationDefaults": {
+      "workbench.browser.dataStorage": "ephemeral"
+    },
+    "commands": [
+      {
+        "command": "readymade.landscape",
+        "title": "Readymade: Open Landscape",
+        "icon": "$(home)"
+      },
+      {
+        "command": "readymade.selectProject",
+        "title": "Readymade: Choose Project"
+      },
+      {
+        "command": "readymade.workspaceRequests",
+        "title": "Readymade: Project Requests"
+      },
+      {
+        "command": "readymade.connect",
+        "title": "Readymade: Connect to Ship",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "readymade.refresh",
+        "title": "Readymade: Refresh Ship Workspace",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "readymade.selectSession",
+        "title": "Readymade: Observe Coding Session"
+      },
+      {
+        "command": "readymade.openSource",
+        "title": "Readymade: Open Retained Ship File"
+      },
+      {
+        "command": "readymade.readFile",
+        "title": "Readymade: Read Ship File"
+      },
+      {
+        "command": "readymade.createDraft",
+        "title": "Readymade: Create Draft from Ship File"
+      },
+      {
+        "command": "readymade.prepareCandidate",
+        "title": "Readymade: Prepare Candidate from Draft"
+      },
+      {
+        "command": "readymade.conversation",
+        "title": "Readymade: Show Pataphor Workspace"
+      },
+      {
+        "command": "readymade.request",
+        "title": "Readymade: Send Pataphor Request"
+      },
+      {
+        "command": "readymade.receipts",
+        "title": "Readymade: Check Request Receipts"
+      },
+      {
+        "command": "readymade.terminal",
+        "title": "Readymade: Observe Ship Terminal"
+      },
+      {
+        "command": "readymade.terminalControl",
+        "title": "Readymade: Ship Terminal Control"
+      },
+      {
+        "command": "readymade.glurff",
+        "title": "Readymade: Open Glurff",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "readymade.noltbook",
+        "title": "Readymade: Calls and Notes (Noltbook)",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "readymade.calls",
+        "title": "Readymade: Open Legacy Call Board"
+      },
+      {
+        "command": "readymade.mediaObserve",
+        "title": "Readymade: Check Media Tab",
+        "icon": "$(info)"
+      },
+      {
+        "command": "readymade.mediaReconnect",
+        "title": "Readymade: Reconnect Media Tab",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "readymade.mediaClose",
+        "title": "Readymade: Close Media Tab",
+        "icon": "$(close)"
+      },
+      {
+        "command": "readymade.mediaForget",
+        "title": "Readymade: Disconnect Private Media"
+      },
+      {
+        "command": "readymade.legacyCalls",
+        "title": "Readymade: Show Existing Native Calls"
+      },
+      {
+        "command": "readymade.returnCode",
+        "title": "Readymade: Return to Code",
+        "icon": "$(code)"
+      }
+    ],
+    "views": {
+      "readymade": [
+        {
+          "id": "readymade.workspace",
+          "name": "Readymade",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Readymade",
+      "properties": {
+        "readymade.origin": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Exact Urbit origin. Authentication uses the private saved-code store or VS Code secret storage."
+        },
+        "readymade.legacyMediaSocket": {
+          "type": "string",
+          "default": "",
+          "description": "Optional existing native Readymade owner socket. Showing an existing call preserves its current media owner."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "readymade",
+          "title": "Readymade",
+          "icon": "platform/urbit.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "readymade.connect",
+          "when": "view == readymade.workspace",
+          "group": "connection"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "readymade.mediaObserve",
+          "when": "view == readymade.workspace && viewItem == readymade.media",
+          "group": "inline@1"
+        },
+        {
+          "command": "readymade.mediaClose",
+          "when": "view == readymade.workspace && viewItem == readymade.media",
+          "group": "inline@2"
+        },
+        {
+          "command": "readymade.mediaReconnect",
+          "when": "view == readymade.workspace && viewItem == readymade.media",
+          "group": "manage@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "check": "tsc -p . --noEmit",
+    "lint": "eslint src tests platform",
+    "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "@types/vscode": "1.144.0",
+    "eslint": "9.39.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DashusNavnul/readymade.git"
+  },
+  "homepage": "https://github.com/DashusNavnul/readymade#readme",
+  "bugs": {
+    "url": "https://github.com/DashusNavnul/readymade/issues"
+  }
+}
