@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installLandscapeCommand } from '../src/landscape-command';
+import { installAppCommand, installLandscapeCommand } from '../src/landscape-command';
 
 const execute = promisify(execFile), URI = 'vscodium://pataphor.readymade-ship-workspace/landscape';
 async function fixture(run: (paths: { root: string; cli: string; userData: string; directory: string; output: string }) => Promise<void>): Promise<void> {
@@ -17,6 +17,24 @@ async function fixture(run: (paths: { root: string; cli: string; userData: strin
     await run({ root, cli, userData, directory, output });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('Groups command coexists with Landscape and admits only its exact app route and extension', async () => {
+  await fixture(async ({cli, userData, directory, output}) => {
+    const bin = await installLandscapeCommand(directory, cli, userData, URI), original = await readFile(join(bin, 'landscape'), 'utf8');
+    const uri = URI.replace('/landscape', '/groups');
+    assert.equal(await installAppCommand('groups', directory, cli, userData, uri), bin);
+    const command = join(bin, 'groups');
+    await execute(command, [], {env: {...process.env, LANDSCAPE_TEST_OUTPUT: output}});
+    assert.deepEqual((await readFile(output, 'utf8')).trimEnd().split('\n'), ['--user-data-dir', userData, '--open-url', uri]);
+    await assert.rejects(execute(command, ['extra']), error => (error as {code: number}).code === 2);
+    for (const invalid of [URI, uri + '?x=1', uri + '#x', uri.replace('pataphor.readymade-ship-workspace', 'other.extension'), uri + '/child'])
+      await assert.rejects(installAppCommand('groups', directory, cli, userData, invalid));
+    await writeFile(command, original, {mode: 0o700});
+    await assert.rejects(installAppCommand('groups', directory, cli, userData, uri));
+    assert.equal(await readFile(command, 'utf8'), original);
+    assert.equal(await readFile(join(bin, 'landscape'), 'utf8'), original);
+  });
+});
 
 test('Landscape executable quotes spaced/apostrophe paths and targets the explicit profile once', async () => {
   await fixture(async ({ cli, userData, directory, output }) => {

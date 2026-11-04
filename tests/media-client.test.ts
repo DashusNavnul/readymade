@@ -66,6 +66,26 @@ test('strict bounded binding, cookies and navigation validation sends nothing un
   });
 });
 
+test('Groups binding retains its kind and exact URL through IPC and rejects foreign origins', async () => {
+  await fixture(async (server, client) => {
+    const url = origin + '/apps/groups/?group=fixture%2Froom#channel', payload = { ...bind(), kind: 'groups', url };
+    server.answer(state({ kind: 'groups', url }));
+    assert.equal((await client.request('bind', payload)).kind, 'groups');
+    assert.deepEqual(server.frames[0].payload, payload);
+    await assert.rejects(client.request('bind', { ...payload, kind: 'noltbook' }), code('invalidBinding'));
+    await assert.rejects(client.request('navigate', { bindingId, url: 'https://foreign.fixture/apps/groups/' }), code('invalidURL'));
+    const seen: MediaOpenEvent[] = []; client.events.onOpen(event => seen.push(event));
+    server.steps.push((row, socket) => {
+      socket.write(JSON.stringify({ type: 'open', bindingId, url: origin + '/apps/noltbook/' }) + '\n');
+      socket.write(JSON.stringify({ type: 'open', bindingId, url: 'https://foreign.fixture/apps/groups/' }) + '\n');
+      socket.write(JSON.stringify({ id: row.id, ok: true, result: state({ kind: 'groups', url }) }) + '\n');
+    });
+    await client.request('observe', { bindingId });
+    assert.deepEqual(seen, [{ type: 'open', bindingId, url: origin + '/apps/noltbook/' }]);
+    assert.equal(server.frames.length, 2);
+  });
+});
+
 test('correlated responses may split and arrive out of order; only approved bound-origin events are exposed', async () => {
   await fixture(async (server, client) => {
     let first: JsonObject | undefined;

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { validUnicode, type JsonObject } from './protocol';
 import { originOf } from './source-store';
 
-export type MediaKind = 'glurff' | 'noltbook' | 'landscape' | 'call';
+export type MediaKind = 'glurff' | 'noltbook' | 'landscape' | 'groups' | 'call';
 export interface MediaTab { readonly url: string; readonly title?: string }
 export interface BrowserAdapter<T extends MediaTab> {
   open(url: string): Promise<T>; reveal(tab: T): Promise<void>; close(tab: T): Promise<void>;
@@ -22,7 +22,7 @@ export interface MediaRecord {
   readonly phase: 'opening' | 'bound' | 'unknown'; readonly ready: boolean; readonly closed?: boolean; readonly active?: boolean; readonly title?: string; readonly fault?: string; readonly currentURL?: string; readonly pending?: boolean;
 }
 interface Owned<T> { record: MediaRecord; tab?: T; busy: boolean; opened: Promise<void>; bindAttempted: boolean; released: boolean }
-const roots: Record<MediaKind, string> = { glurff: '/apps/glurff/', noltbook: '/apps/noltbook/', landscape: '/apps/landscape/', call: '/apps/call' };
+const roots: Record<MediaKind, string> = { glurff: '/apps/glurff/', noltbook: '/apps/noltbook/', landscape: '/apps/landscape/', groups: '/apps/groups/', call: '/apps/call' };
 export function mediaURL(origin: string, kind: MediaKind, raw?: string): string {
   origin = originOf(origin);
   if (!Object.hasOwn(roots, kind)) throw new Error('Unknown ship media surface.');
@@ -146,7 +146,7 @@ export class MediaController<T extends MediaTab> {
     if (owner?.record.phase === 'opening') await owner.opened;
     if (!owner || owner.record.phase !== 'bound' || !this.current(owner) ||
         owner.tab && this.browser.isClosed?.(owner.tab)) return undefined;
-    for (const kind of ['glurff', 'noltbook', 'landscape'] as const) {
+    for (const kind of ['glurff', 'noltbook', 'landscape', 'groups'] as const) {
       try { mediaURL(this.origin, kind, event.url); } catch { continue; }
       return this.open(kind, event.url);
     }

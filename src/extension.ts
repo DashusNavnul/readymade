@@ -14,7 +14,7 @@ import { ShipTerminalSession, terminalApps } from './terminal-session';
 import { ShipTerminalView } from './terminal-view';
 import { MediaWorkbench, type MediaTreeRow } from './media-workbench';
 import { WorkspaceRequestView } from './workspace-request-view';
-import { installLandscapeCommand } from './landscape-command';
+import { installAppCommand } from './landscape-command';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -52,19 +52,23 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   private selectedProject?: string;
   get project(): string | undefined { return this.selectedProject; }
   async enableTerminalCommand(): Promise<void> {
-    const uri = vscode.Uri.from({ scheme: vscode.env.uriScheme, authority: this.context.extension.id, path: '/landscape' });
+    const apps = ['landscape', 'groups'] as const;
+    const uris = apps.map(app => vscode.Uri.from({ scheme: vscode.env.uriScheme, authority: this.context.extension.id, path: '/' + app }));
     this.registrations.push(vscode.window.registerUriHandler({ handleUri: async incoming => {
-      if (incoming.toString() !== uri.toString()) return;
-      try { await this.media.open('landscape'); }
-      catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Landscape could not open.'); }
+      const index = uris.findIndex(uri => incoming.toString() === uri.toString());
+      if (index < 0) return;
+      try { await this.media.open(apps[index]); }
+      catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Ship app could not open.'); }
     } }));
     const candidates = [join(vscode.env.appRoot, '../../../../../MacOS/ReadymadeCLI'), join(vscode.env.appRoot, 'bin/codium'), join(vscode.env.appRoot, 'bin/code')];
     const cli = candidates.find(existsSync);
     if (!cli) throw new Error('Editor command-line launcher is unavailable.');
     await mkdir(this.context.globalStorageUri.fsPath, { recursive: true, mode: 0o700 });
-    const bin = await installLandscapeCommand(await realpath(this.context.globalStorageUri.fsPath), await realpath(cli), await realpath(this.media.bridge.directory), uri.toString());
+    const directory = await realpath(this.context.globalStorageUri.fsPath), executable = await realpath(cli), userData = await realpath(this.media.bridge.directory);
+    let bin = '';
+    for (const [index, app] of apps.entries()) bin = await installAppCommand(app, directory, executable, userData, uris[index].toString());
     const environment = this.context.environmentVariableCollection;
-    environment.persistent = false; environment.description = 'Adds landscape to open the retained Landscape app tab.';
+    environment.persistent = false; environment.description = 'Adds landscape and groups to open retained ship app tabs.';
     environment.prepend('PATH', bin + delimiter);
     this.registrations.push({ dispose: () => environment.clear() });
   }
@@ -168,7 +172,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       rows.push({ label: 'Observe ship terminal…', command: { command: 'readymade.terminal', title: 'Terminal' } });
     }
     for (const draft of this.drafts.list()) rows.push({ label: draft.snapshot.path, description: draft.pending ? `${draft.pending.phase} ${draft.pending.candidate ?? draft.pending.request ?? 'intent retained'}` : 'local draft', command: { command: 'vscode.open', title: 'Open draft', arguments: [vscode.Uri.parse(draft.uri)] } });
-    const primary = new Set(['project', 'workspace-requests', 'code', 'glurff', 'noltbook', 'landscape']);
+    const primary = new Set(['project', 'workspace-requests', 'code', 'groups', 'glurff', 'noltbook', 'landscape']);
     this.tree.rows = [...rows.filter(row => row.id && primary.has(row.id)),
       {id: 'more', label: 'More', icon: 'ellipsis', children: rows.filter(row => !row.id || !primary.has(row.id))}];
     this.tree.refresh();

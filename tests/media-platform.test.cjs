@@ -340,3 +340,20 @@ test('Noltbook hands same-frame and popup Glurff links to the workspace without 
     wc.emit('will-navigate', { isMainFrame: true, preventDefault() {} }, url);
   assert.equal(events.length, count); assert.equal(wc.getURL(), note.url); assert.deepEqual(wc.loads, [note.url]);
 });
+
+test('Groups keeps its exact app boundary and hands Landscape links off without losing its owner', async () => {
+  const f = fixture(), wc = f.view(), events = [];
+  const request = { ...payload(), kind: 'groups', url: ORIGIN + '/apps/groups/groups/~zod/test' };
+  for (const url of [ORIGIN + '/apps/groups-other/', ORIGIN + '/apps/other/', 'https://foreign.test/apps/groups/'])
+    assert.equal(policy.approved(url, ORIGIN, 'groups'), false);
+  const state = await f.controller.request('bind', request, event => events.push(event));
+  assert.equal(state.kind, 'groups'); assert.equal(state.ready, true);
+  const target = ORIGIN + '/apps/landscape/';
+  let prevented = false;
+  wc.emit('will-navigate', { isMainFrame: true, preventDefault() { prevented = true; } }, target);
+  assert.equal(prevented, true); assert.equal(events.at(-1).url, target);
+  assert.deepEqual(wc.loads, [request.url]);
+  const count = events.length;
+  wc.emit('will-navigate', { isMainFrame: true, preventDefault() {} }, 'https://foreign.test/apps/groups/');
+  assert.equal(events.length, count);
+});

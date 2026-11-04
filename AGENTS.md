@@ -2,6 +2,8 @@
 
 For connecting a user's Urbit, read README.md and docs/LLM_SETUP.md first.
 Read docs/COMPATIBILITY.md before assuming backend availability.
+For collaborating with the maintainer or another host, follow
+docs/JOIN_A_WORKSPACE.md and use their actual invitation and project grants.
 
 Never request access codes in chat or commit credentials, cookies, profiles,
 private ship data or local logs. Use the private in-app authentication field.

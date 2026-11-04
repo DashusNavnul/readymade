@@ -128,7 +128,7 @@ function installContents(wc, context) {
     if (bound && !policy.approved(target, bound.origin, bound.kind, true)) {
       e.preventDefault();
       if (event === 'will-navigate' && e.isMainFrame !== false &&
-          ['glurff', 'noltbook', 'landscape'].some(kind => policy.approved(target, bound.origin, kind)))
+          ['glurff', 'noltbook', 'landscape', 'groups'].some(kind => policy.approved(target, bound.origin, kind)))
         context.emit(bound, { type: 'open', bindingId: bound.bindingId, url: target });
     }
   });

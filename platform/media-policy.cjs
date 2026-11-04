@@ -1,7 +1,7 @@
 'use strict';
 // Pure admission rules. This adapter carries presentation cookies, never login codes.
 const fail = code => { throw new Error(code); };
-const roots = { glurff: '/apps/glurff', noltbook: '/apps/noltbook', landscape: '/apps/landscape', call: '/apps/call' };
+const roots = { glurff: '/apps/glurff', noltbook: '/apps/noltbook', landscape: '/apps/landscape', groups: '/apps/groups', call: '/apps/call' };
 function origin(value) {
   let url; try { url = new URL(value); } catch { fail('invalidOrigin'); }
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||

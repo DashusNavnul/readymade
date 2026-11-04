@@ -29,7 +29,7 @@ function scan(directory, prefix) {
     if (entry.isDirectory()) scan(file, relative); else add(file, relative);
   }
 }
-for (const file of ['package.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); console.log(digest.digest('hex'));
+for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); console.log(digest.digest('hex'));
 FINGERPRINT
 }
 cleanup() {
@@ -103,10 +103,13 @@ kernel_app="$inner_app/Contents/Resources/app"
 mkdir "$kernel_app/out/readymade-media"
 cp "$workspace_dir/platform/"*.cjs "$kernel_app/out/readymade-media/"
 cp "$kernel_app/package.json" "$kernel_app/out/readymade-media/upstream-package.json"
-node - "$kernel_app/package.json" <<'ENTRY'
+node - "$kernel_app/package.json" "$kernel_app/product.json" <<'ENTRY'
 const fs = require('node:fs'), file = process.argv[2], p = JSON.parse(fs.readFileSync(file, 'utf8'));
 if (p.main !== './out/main.js') throw new Error('Unexpected upstream entry point');
 p.main = './out/readymade-main.mjs'; p.name = p.productName = 'Readymade Workspace'; fs.writeFileSync(file, JSON.stringify(p, null, 2) + '\n');
+const productFile = process.argv[3], product = JSON.parse(fs.readFileSync(productFile, 'utf8'));
+product.trustedExtensionProtocolHandlers = [...new Set([...(product.trustedExtensionProtocolHandlers || []), 'pataphor.readymade-ship-workspace'])];
+fs.writeFileSync(productFile, JSON.stringify(product, null, 2) + '\n');
 ENTRY
 cat > "$kernel_app/out/readymade-main.mjs" <<'BOOTSTRAP'
 import { createRequire } from 'node:module';
@@ -297,6 +300,7 @@ const kernel = path.join(app, 'Contents/Resources/VSCodium.app/Contents/Resource
 const platform = {};
 for (const name of ['media-main.cjs', 'media-session.cjs', 'media-policy.cjs']) platform[name] = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'out/readymade-media', name))).digest('hex');
 platform.bootstrap = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'out/readymade-main.mjs'))).digest('hex');
+platform.product = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'product.json'))).digest('hex');
 platform.entry = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'package.json'))).digest('hex');
 fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), upstream: { version: '1.143.17232', codeOSS: '1.143.1', url, sha256 },
   bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, platform,

@@ -32,7 +32,7 @@ them as a support bundle.
 
 ## App and execution boundaries
 
-Managed tabs admit the selected ship's Landscape, Glurff, Noltbook and legacy
+Managed tabs admit the selected ship's Groups, Landscape, Glurff, Noltbook and legacy
 call routes. A tab is bound to its origin and app kind. Cross-app handoffs use
 the supported route allowlist; arbitrary foreign navigation is refused. The
 browser contents require sandboxing and context isolation to be enabled, with
@@ -55,10 +55,12 @@ do next. Do not clear journals or create replacement identities merely to force
 a retry. A local draft save does not change canonical ship source.
 
 The integrated local terminal runs with your local account's privileges. The
-generated `landscape` command only asks the packaged editor CLI to open the
-registered Landscape URI with the selected local profile. It accepts no
-arguments and does not modify global shell configuration. It is not a remote
-shell or a ship installer.
+generated `landscape` and `groups` commands only ask the packaged editor CLI to open the
+registered app URI with the selected local profile. They accept no
+arguments and do not modify global shell configuration. Neither is a remote
+shell or a ship installer. The package trusts its own bundled URI handler so
+these local app commands need no repeated permission dialog. The handler admits
+only its exact Groups and Landscape URIs; other extensions retain upstream policy.
 
 ## Local trust and reporting
 

@@ -108,7 +108,7 @@ test('exact note and room bytes survive bind; automatic joins and foreign routes
 
 test('app descendants and hash routes remain available without prefix confusion or normalized traversal', async () => {
   const f = fixture();
-  for (const kind of ['glurff', 'noltbook', 'landscape', 'call'] as const) {
+  for (const kind of ['glurff', 'noltbook', 'landscape', 'groups', 'call'] as const) {
     const root = `/apps/${kind}`, target = f.origin + root + '/room/red%20door?note=note-a%2Fb#L2%3A4';
     assert.equal(mediaURL(f.origin, kind, target), target);
     assert.equal(mediaURL(f.origin, kind, root + '#/world/room'), f.origin + root + '#/world/room');
@@ -264,6 +264,22 @@ test('Landscape reuses its owner and hands approved app links between retained t
   for (const url of [f.origin + '/apps/other/', f.origin + '/apps/landscape-other/', 'https://foreign.example/apps/landscape/'])
     assert.equal(await f.controller.handleOpen({ type: 'open', bindingId: landscape.bindingId, url }), undefined);
   assert.equal(f.opened.length, 3); assert.deepEqual(f.requests.map(row => row.op), ['bind', 'bind', 'bind']);
+  assert.equal(f.closed.length, 0);
+});
+
+test('Groups retains its owner and exchanges app handoffs without navigating existing pages', async () => {
+  const f = fixture(), groups = await f.controller.open('groups');
+  assert.equal(groups.url, f.origin + '/apps/groups/'); assert.equal(groups.phase, 'bound');
+  assert.equal(f.requests[0].payload.kind, 'groups');
+  assert.equal((await f.controller.open('groups')).bindingId, groups.bindingId);
+  for (const kind of ['glurff', 'noltbook', 'landscape'] as const) {
+    const target = await f.controller.handleOpen({ type: 'open', bindingId: groups.bindingId, url: f.origin + `/apps/${kind}/` });
+    assert.equal(target?.kind, kind);
+    assert.equal((await f.controller.handleOpen({ type: 'open', bindingId: target!.bindingId, url: groups.url }))?.bindingId, groups.bindingId);
+  }
+  for (const url of [f.origin + '/apps/groups-other/', f.origin + '/apps/other/', 'https://foreign.example/apps/groups/'])
+    assert.equal(await f.controller.handleOpen({ type: 'open', bindingId: groups.bindingId, url }), undefined);
+  assert.equal(f.opened.length, 4); assert.deepEqual(f.requests.map(row => row.op), ['bind', 'bind', 'bind', 'bind']);
   assert.equal(f.closed.length, 0);
 });
 

@@ -28,11 +28,11 @@ First verify the exact origin. Before the first connection, set **Readymade: Ori
 
 The desktop may use an existing private saved-code store or editor secret storage. A stale saved credential can require a different diagnosis from a missing app. Do not dump or delete credential databases as a first step; report whether the failure was authentication, an unavailable page or a coding endpoint.
 
-Clicking **Landscape**, **Glurff** or **Calls** authenticates for app access. The coding **Connect to Ship** action also requests Pataphor workspace and native coding state. A plain Urbit ship without those endpoints can fail that step even with valid credentials. See [compatibility](COMPATIBILITY.md).
+Clicking **Groups**, **Landscape**, **Glurff** or **Calls** authenticates for app access. The coding **Connect to Ship** action also requests Pataphor workspace and native coding state. A plain Urbit ship without those endpoints can fail that step even with valid credentials. See [compatibility](COMPATIBILITY.md).
 
 ## An app page is missing, or media will not start
 
-Landscape, Glurff and Calls target `/apps/landscape/`, `/apps/glurff/` and `/apps/noltbook/`. The relevant application must already be installed on that ship. This desktop repository does not install it automatically.
+Landscape, Glurff and Calls target `/apps/landscape/`, `/apps/glurff/` and `/apps/noltbook/`. Tlon Groups targets `/apps/groups/`. The relevant application must already be installed on that ship. This desktop repository does not install it automatically.
 
 Use the app's own controls to join or start a call. Opening a page does not start capture. Check the selected origin and macOS camera/microphone permissions. A working local fixture does not establish real capture, screen/audio sharing or a two-peer call. Record those as separate tests.
 
@@ -51,3 +51,14 @@ If submission has an unknown outcome, use **Check submission outcome**. Do not s
 Open a new integrated terminal in Readymade after activation. The command is installed in that editor's terminal environment, not in your global shell. Confirm you launched the outer packaged application; if the command still fails, retain the exact error and test **Landscape** from the persistent controls separately.
 
 When asking for help, include the platform, Node version, action, sanitized error, build method and which verification layer passed. Do not include access codes or authentication headers. See [security](SECURITY.md).
+
+## Groups stays on “Starting up…”
+
+Tlon may need several minutes to synchronize its initial data and initialize
+its local database in a fresh tab. Keep that tab open. An authenticated HTML
+response alone does not mean synchronization finished. If it remains stuck,
+check the app's own diagnostics; closing and recreating the tab starts fresh work.
+
+Open a new Readymade terminal and type `groups`, or use the Groups sidebar
+control. This opens the same retained app. Use `/usr/bin/groups` if you intended
+the operating system's group-membership command instead.

@@ -49,15 +49,23 @@ open "dist/Readymade Workspace.app"
 
 For an alternate output directory, adjust that path. Launch the outer app; its native launcher selects the private Readymade profile and enables the required browser API. Do not substitute the nested VSCodium launcher.
 
-Before the first connection, set **Readymade: Origin** (`readymade.origin`) in editor Settings. Supply only the exact ship origin: HTTPS for remote ships, or HTTP for localhost. No app path, query string, URL credentials or redirect address. Then click **Landscape**, **Glurff** or **Calls**, and let the operator enter their access code privately when prompted. App buttons use the configured origin; they do not prompt for a new origin. An existing connection or remembered origin takes precedence, so use a separate fresh window/profile when connecting another ship.
+Before the first connection, set **Readymade: Origin** (`readymade.origin`) in editor Settings. Supply only the exact ship origin: HTTPS for remote ships, or HTTP for localhost. No app path, query string, URL credentials or redirect address. Then click **Groups**, **Landscape**, **Glurff** or **Calls**, and let the operator enter their access code privately when prompted. App buttons use the configured origin; they do not prompt for a new origin. An existing connection or remembered origin takes precedence, so use a separate fresh window/profile when connecting another ship.
 
 This connection requires no SSH, boot, restart, Clay mount or ship modification. If a separately authorized task actually boots any Urbit instance, mount `%base` through native Clay `%mont` once `conn.sock` is ready, then verify nonempty exported `sys/hoon.hoon`, `sys/zuse.hoon`, `sys/lull.hoon` and `sys/vane/clay.hoon` before claiming readiness. That startup rule is not a reason to boot a ship for this desktop setup.
 
 If an app is missing, report which page is unavailable. Do not guess an app publisher, install a desk or modify the ship. The main coding connection requires the backend endpoints described in [compatibility](COMPATIBILITY.md); this repository does not contain a complete self-service backend installation.
 
+## Join the intended collaboration
+
+Follow [Join a workspace](JOIN_A_WORKSPACE.md) after local app access works. Use
+the host's actual group invitation and project details. Never use another
+participant's ship login. Group communication and shared coding execution have
+separate acceptance checks; this repository does not yet supply the backend
+installer needed for automatic end-to-end multiplayer onboarding.
+
 ## Verify in layers
 
-1. **Desktop:** the outer app starts, a local folder opens, editing and an integrated terminal work. In a newly opened terminal, `landscape` opens or reveals the Landscape tab.
+1. **Desktop:** the outer app starts, a local folder opens, editing and an integrated terminal work. In a newly opened terminal, `landscape` opens or reveals the Landscape tab; `groups` does the same for Tlon Groups.
 2. **Authentication and pages:** the operator signs in privately; each installed app opens on the exact intended origin. A failed coding endpoint is reported separately from login failure.
 3. **App continuity:** switch to Code and back; the same page remains. Move an app tab between supported editor groups and confirm its page remains usable. Do not equate tab movement with proven continuity of an active call.
 4. **Optional coding backend:** observe project/session and retained request data. Read-only inspection must not submit work. Review the exact request and scope before an explicitly chosen submission; distinguish unknown, submitted, recorded and refused outcomes. Never automatically retry an unknown submission.

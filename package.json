@@ -30,6 +30,11 @@
     },
     "commands": [
       {
+        "command": "readymade.groups",
+        "title": "Readymade: Open Tlon Groups",
+        "icon": "$(organization)"
+      },
+      {
         "command": "readymade.landscape",
         "title": "Readymade: Open Landscape",
         "icon": "$(home)"

@@ -12,6 +12,7 @@ its expected route on your ship:
 
 | Control | Required route |
 | --- | --- |
+| Groups (Tlon) | `/apps/groups/` |
 | Landscape | `/apps/landscape/` |
 | Glurff | `/apps/glurff/` |
 | Calls, using Noltbook | `/apps/noltbook/` |
@@ -27,7 +28,7 @@ supported: enter the origin, not an `/apps/...` URL. Another ship uses another
 window. The `landscape` command in new integrated local terminals opens the same
 retained Landscape tab.
 
-Glurff, Noltbook and Landscape links can hand off between their managed tabs.
+Groups, Glurff, Noltbook and Landscape links can hand off between their managed tabs.
 Arbitrary apps launched from Landscape are not part of this route allowlist.
 Media capture, call signaling and peer connectivity still depend on the app,
 operating-system permissions and the receiver's network configuration.

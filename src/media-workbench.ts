@@ -48,6 +48,7 @@ export class MediaWorkbench implements vscode.Disposable {
     this.bridge = new MediaClient(userData);
     const controls: { label: string; icon: string; command: string; kind?: MediaKind }[] = [
       {label: 'Code', icon: 'code', command: 'returnCode'},
+      {label: 'Groups', icon: 'organization', command: 'groups', kind: 'groups'},
       {label: 'Glurff', icon: 'globe', command: 'glurff', kind: 'glurff'},
       {label: 'Calls', icon: 'comment-discussion', command: 'noltbook', kind: 'noltbook'},
       {label: 'Landscape', icon: 'home', command: 'landscape', kind: 'landscape'}
@@ -74,6 +75,7 @@ export class MediaWorkbench implements vscode.Disposable {
     this.disposables.push(vscode.window.onDidChangeActiveBrowserTab(() => this.rememberApp()));
     this.disposables.push(vscode.window.onDidChangeBrowserTabState(() => this.rememberApp()));
     command('glurff', url => this.open('glurff', typeof url === 'string' ? url : undefined));
+    command('groups', url => this.open('groups', typeof url === 'string' ? url : undefined));
     command('noltbook', url => this.open('noltbook', typeof url === 'string' ? url : undefined));
     command('landscape', url => this.open('landscape', typeof url === 'string' ? url : undefined));
     command('calls', url => this.open('call', typeof url === 'string' ? url : undefined));
@@ -159,21 +161,22 @@ export class MediaWorkbench implements vscode.Disposable {
       if (typeof id !== 'string' || !this.controller?.state().some(state => state.bindingId === id)) throw new Error('This app tab is no longer available.');
       return id;
     }
-    const choices = (this.controller?.state() ?? []).map(s => ({ label: s.kind === 'call' ? 'Legacy Call Board' : s.kind === 'noltbook' ? 'Noltbook and Calls' : s.kind === 'landscape' ? 'Landscape' : 'Glurff', description: s.phase + ' · ' + s.url, id: s.bindingId }));
+    const choices = (this.controller?.state() ?? []).map(s => ({ label: s.kind === 'call' ? 'Legacy Call Board' : s.kind === 'noltbook' ? 'Noltbook and Calls' : s.kind === 'landscape' ? 'Landscape' : s.kind === 'groups' ? 'Tlon Groups' : 'Glurff', description: s.phase + ' · ' + s.url, id: s.bindingId }));
     if (!choices.length) { void vscode.window.showInformationMessage('No Readymade media tabs are open.'); return; }
     return (await vscode.window.showQuickPick(choices, { title: 'Choose a retained media tab' }))?.id;
   }
   rows(): MediaTreeRow[] {
     const rows: MediaTreeRow[] = [
       { id: 'code', label: 'Code', icon: 'code', command: { title: 'Return to Code', command: 'readymade.returnCode' } },
+      { id: 'groups', label: 'Groups', icon: 'organization', tooltip: 'Tlon groups and channels, kept open beside your code', command: { title: 'Tlon Groups', command: 'readymade.groups' } },
       { id: 'glurff', label: 'Glurff', icon: 'globe', tooltip: 'Your shared world, kept open beside your code', command: { title: 'Glurff', command: 'readymade.glurff' } },
       { id: 'noltbook', label: 'Calls', icon: 'comment-discussion', tooltip: 'Noltbook — notes and calls', command: { title: 'Noltbook', command: 'readymade.noltbook' } },
       { id: 'landscape', label: 'Landscape', icon: 'home', tooltip: 'Your ship’s apps, beside your code', command: { title: 'Landscape', command: 'readymade.landscape' } }
     ];
     const retained = (this.controller?.state() ?? []).filter(state => !state.closed).map(state => ({
       id: state.bindingId, bindingId: state.bindingId,
-      label: state.title?.trim().slice(0, 100) || (state.kind === 'glurff' ? 'Glurff' : state.kind === 'noltbook' ? 'Noltbook' : state.kind === 'landscape' ? 'Landscape' : 'Legacy Call Board'),
-      icon: state.kind === 'glurff' ? 'globe' : state.kind === 'noltbook' ? 'comment-discussion' : state.kind === 'landscape' ? 'home' : 'device-camera-video',
+      label: state.title?.trim().slice(0, 100) || (state.kind === 'glurff' ? 'Glurff' : state.kind === 'noltbook' ? 'Noltbook' : state.kind === 'landscape' ? 'Landscape' : state.kind === 'groups' ? 'Tlon Groups' : 'Legacy Call Board'),
+      icon: state.kind === 'glurff' ? 'globe' : state.kind === 'noltbook' ? 'comment-discussion' : state.kind === 'landscape' ? 'home' : state.kind === 'groups' ? 'organization' : 'device-camera-video',
       description: state.fault ?? (state.active ? 'Active' : state.ready ? 'Open' : state.phase), tooltip: state.url,
       command: { title: 'Return to app', command: 'readymade.mediaReveal', arguments: [state.bindingId] }
     }));

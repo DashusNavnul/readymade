@@ -29,7 +29,7 @@ async function fixtureAcceptance(api: ReadymadeWorkspace): Promise<JsonObject> {
     if (request.url === '/~/login' && request.method === 'POST') {
       request.resume(); response.writeHead(204, { 'Set-Cookie': 'urbauth-~zod=fixture; Path=/; HttpOnly', Location: '/' }); response.end(); return;
     }
-    if (request.url === '/apps/glurff/' || request.url === '/apps/landscape/') { assert.equal(request.headers.cookie, 'urbauth-~zod=fixture'); response.setHeader('Content-Type', 'text/html'); response.end('<title>Ship app fixture</title>'); return; }
+    if (request.url === '/apps/glurff/' || request.url === '/apps/landscape/' || request.url === '/apps/groups/') { assert.equal(request.headers.cookie, 'urbauth-~zod=fixture'); response.setHeader('Content-Type', 'text/html'); response.end('<title>Ship app fixture</title>'); return; }
     if (request.method !== 'GET') { response.writeHead(500); response.end('{}'); return; }
     if (request.url?.startsWith('/apps/pataphor-native/coding/state?')) response.end(JSON.stringify(fixture(request.url.split('?')[1]!.split('&')[0]!)));
     else if (request.url === '/apps/readymade-collab/workspace-requests') response.end(JSON.stringify({schema: 'readymade-workspace-catalog-v1', owner: '~zod', catalog: '0x1', offset: 0, total: 0, next: null, requests: [], executionAuthorized: false}));
@@ -50,6 +50,15 @@ async function fixtureAcceptance(api: ReadymadeWorkspace): Promise<JsonObject> {
     try { await until(() => !!api.media.controller?.state().some(s => s.kind === 'landscape' && s.ready), 30000); }
     finally { launch.dispose(); }
     assert.ok(requests.includes('GET /apps/landscape/'), 'Typing landscape must open the authenticated app');
+    const groupsTerminal = vscode.window.createTerminal({ name: 'Groups command proof', shellPath: '/bin/zsh', shellArgs: ['-f', '-c', 'groups'] });
+    try { await until(() => !!api.media.controller?.state().some(s => s.kind === 'groups' && s.ready), 30000); }
+    finally { groupsTerminal.dispose(); }
+    assert.ok(requests.includes('GET /apps/groups/'), 'Typing groups must open the authenticated Tlon app');
+    const groupState = api.media.controller!.state().find(s => s.kind === 'groups')!;
+    const groupsLoads = requests.filter(r => r === 'GET /apps/groups/').length;
+    const reopened = await vscode.commands.executeCommand('readymade.groups') as {bindingId: string};
+    assert.equal(reopened.bindingId, groupState.bindingId);
+    assert.equal(requests.filter(r => r === 'GET /apps/groups/').length, groupsLoads, 'Groups must reuse its page without reload');
     await api.selectProject('empty'); assert.equal(api.project, 'empty');
     await api.refresh(); assert.equal(api.project, 'empty', 'An empty project must survive a refresh');
     await api.selectProject('demo'); assert.equal(api.project, 'demo');
@@ -93,7 +102,7 @@ async function fixtureAcceptance(api: ReadymadeWorkspace): Promise<JsonObject> {
     await api.client!.workspaceState();
     assert.equal(requests.filter(r => r.startsWith('POST ')).length, 1, 'Apps and workspace must share one authentication POST');
     assert.ok(requests.some(r => r.includes('coding/state?0x1&')));
-    return { fixture: true, landscapeTerminalCommand: true, projectSelection: true, emptyProjectRetained: true, requestsBrowseWithoutSubmission: true, sharedAuthentication: true, concurrentAuthentication: true, appDisposalPreservesWorkspace: true, readOnlyCanonical: true, draftSaveIsLocal: true, splitEditors: true, diagnostics: true, breakpoints: true, terminalObserveAndCloseOnly: true, requests: requests.length };
+    return { fixture: true, groupsTerminalCommand: true, groupsRetainedWithoutReload: true, landscapeTerminalCommand: true, projectSelection: true, emptyProjectRetained: true, requestsBrowseWithoutSubmission: true, sharedAuthentication: true, concurrentAuthentication: true, appDisposalPreservesWorkspace: true, readOnlyCanonical: true, draftSaveIsLocal: true, splitEditors: true, diagnostics: true, breakpoints: true, terminalObserveAndCloseOnly: true, requests: requests.length };
   } finally { api.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }
 async function liveAcceptance(api: ReadymadeWorkspace, origin: string): Promise<JsonObject> {

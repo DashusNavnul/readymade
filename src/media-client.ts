@@ -61,7 +61,7 @@ export class MediaClient {
     let origin = binding?.origin, bindingIds: readonly string[] | undefined;
     if (op === 'bind') {
       origin = originOf(payload.origin);
-      if (!['glurff', 'noltbook', 'landscape', 'call'].includes(String(payload.kind)) || payload.bootstrapURL !== 'about:blank#readymade-' + bindingId ||
+      if (!['glurff', 'noltbook', 'landscape', 'groups', 'call'].includes(String(payload.kind)) || payload.bootstrapURL !== 'about:blank#readymade-' + bindingId ||
           !Array.isArray(payload.cookies) || !payload.cookies.length || payload.cookies.length > 8) fail('invalidBinding');
       destination(origin, payload.url);
       for (const item of payload.cookies) {
