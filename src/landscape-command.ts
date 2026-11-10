@@ -31,8 +31,8 @@ const quote = (value: string): string => "'" + value.replace(/'/g, "'\\''") + "'
 export async function installLandscapeCommand(directory: string, cli: string, userData: string, uri: string): Promise<string> {
   return installAppCommand('landscape', directory, cli, userData, uri);
 }
-export async function installAppCommand(app: 'landscape' | 'groups', directory: string, cli: string, userData: string, uri: string): Promise<string> {
-  if (!['landscape', 'groups'].includes(app)) refuse();
+export async function installAppCommand(app: 'landscape' | 'groups' | 'lattice' | 'glurff' | 'noltbook', directory: string, cli: string, userData: string, uri: string): Promise<string> {
+  if (!['landscape', 'groups', 'lattice', 'glurff', 'noltbook'].includes(app)) refuse();
   const header = `#!/bin/sh\n# readymade-${app}-command-v1\n`;
   absolute(directory); absolute(cli); absolute(userData);
   if (!uri || uri.length > 8192 || /[\r\n\0]/.test(uri)) refuse();

@@ -40,6 +40,64 @@ async function fixture(run: (server: Fixture, client: ShipClient) => Promise<voi
   try { await run(server, client); assert.equal(server.steps.length, 0); } finally { client.close(); await server.stop(); }
 }
 
+test('project sharing sends exact owner protocol and recovers by GET without resubmission', async () => {
+  await fixture(async (server, client) => {
+    const command = { request: '01234567-89ab-4cde-8fab-0123456789ab', owner: '~zod', project: 'demo', peer: '~nec', expected: '0x123',
+      operation: 'grant' as const, desk: 'demo-work', paths: '/lib/example/hoon', permission: 'view' as const };
+    server.steps.push((_request, response) => { response.writeHead(200, { 'Set-Cookie': 'urbauth-~zod=sharing-session; Path=/' }); response.end(); });
+    await client.signIn();
+    server.json({ expected: '0x123' }); await client.projectSharing('read', { project: 'demo', peer: '~nec' });
+    assert.equal(server.captured.at(-1)!.headers['x-readymade-project'], 'demo');
+    assert.equal(server.captured.at(-1)!.headers['x-readymade-project-peer'], '~nec');
+    server.json({ request: command.request, status: 'unconfirmed' }, 202);
+    assert.equal((await client.projectSharing('submit', command)).status, 202);
+    const sent = server.captured.at(-1)!;
+    assert.equal(sent.method, 'POST'); assert.equal(sent.url, '/apps/readymade-collab/project-sharing');
+    assert.equal(sent.cookie, 'urbauth-~zod=sharing-session'); assert.equal(sent.headers.origin, server.origin);
+    assert.equal(sent.headers['x-readymade-project-sharing'], 'v1');
+    assert.deepEqual(JSON.parse(sent.body), { schema: 'readymade-project-sharing-v1', ...command });
+    await assert.rejects(client.projectSharing('submit', command), code('commandBusy'));
+    server.json({ request: command.request, status: 'confirmed' });
+    await client.projectSharing('result', { request: command.request });
+    assert.equal(server.captured.at(-1)!.url, '/apps/readymade-collab/project-sharing-result');
+    assert.equal(server.captured.at(-1)!.method, 'GET');
+    assert.equal(server.captured.at(-1)!.headers['x-readymade-project-request'], command.request);
+    const lost = { ...command, request: '11234567-89ab-4cde-8fab-0123456789ab' };
+    server.steps.push((_request, response) => { response.socket!.destroy(); });
+    await assert.rejects(client.projectSharing('submit', lost), OutcomeUnknownError);
+    const count = server.captured.length;
+    await assert.rejects(client.projectSharing('submit', lost), code('commandBusy'));
+    assert.equal(server.captured.length, count);
+    server.json({ status: 'missing' }, 404);
+    assert.equal((await client.projectSharing('result', { request: lost.request })).status, 404);
+    await assert.rejects(client.projectSharing('submit', lost), code('commandBusy'));
+    const revoke = { request: '21234567-89ab-4cde-8fab-0123456789ab', owner: '~zod', project: 'demo', peer: '~nec', expected: '0x234', operation: 'revoke' as const, generation: '1.234' };
+    server.json({ request: revoke.request, status: 'unconfirmed' }, 202);
+    await client.projectSharing('submit', revoke);
+    assert.deepEqual(JSON.parse(server.captured.at(-1)!.body), { schema: 'readymade-project-sharing-v1', ...revoke });
+  });
+});
+
+test('project sharing rejects malformed selections before sending and bounds server responses', async () => {
+  await fixture(async (server, client) => {
+    const command = { request: '01234567-89ab-4cde-8fab-0123456789ab', owner: '~zod', project: 'demo', peer: '~nec', expected: '0x123', operation: 'grant' as const, desk: 'demo-work', paths: '/lib/example/hoon', permission: 'view' as const };
+    for (const change of [{ peer: '~nec\r\nx:x' }, { paths: '/lib/example/hoon\n/lib/example/hoon' }, { paths: '/lib/../hoon' }, { paths: '/lib/example/js' }, { expected: '0x0123' }, { request: 'bad' }, { project: '' }, { unexpected: 'field' }]) {
+      await assert.rejects(client.projectSharing('submit', { ...command, ...change }), code('contextChanged'));
+    }
+    for (const generation of ['0', '01', '1000', '18.446.744.073.709.551.616']) {
+      await assert.rejects(client.projectSharing('submit', { request: command.request, owner: '~zod', project: 'demo', peer: '~nec', expected: '0x1', operation: 'revoke', generation }), code('contextChanged'));
+    }
+    await assert.rejects(client.projectSharing('result', { request: 'bad' }), code('contextChanged'));
+    assert.equal(server.captured.length, 0);
+    server.json({ oversized: 'x'.repeat(65536) });
+    await assert.rejects(client.projectSharing('read', { project: 'demo', peer: '~nec' }), code('tooLarge'));
+    server.steps.push((_request, response) => { response.writeHead(302, { Location: '/~/login' }); response.end(); });
+    await assert.rejects(client.projectSharing('result', { request: command.request }), code('redirectRefused'));
+    server.steps.push((_request, response) => { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end('[]'); });
+    await assert.rejects(client.projectSharing('result', { request: command.request }), code('malformed'));
+  });
+});
+
 test('workspace protocol preserves outcomes, exact headers and authenticated request bodies', async () => {
   await fixture(async (server, client) => {
     const key = { requester: '~zod', nonce: '01234567-89ab-4cde-8fab-0123456789ab' };
@@ -254,6 +312,27 @@ test('generic terminal unknown packet identity, attach is read-only recovery, re
     server.steps.push((_request, response) => { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end('not json private'); });
     await assert.rejects(client.requestJSON('/apps/x', { method: 'POST', body: { id: 'same' } }), OutcomeUnknownError);
     await assert.rejects(client.requestJSON('/apps/x', { method: 'POST', body: { id: 'same', changed: true } }), code('commandBusy'));
+  });
+});
+
+test('connector source transport refusal is distinct from authentication and never exposes server details', async () => {
+  await fixture(async (server, client) => {
+    const path = '/apps/pataphor-cli/source';
+    server.json({status: 'secure-transport-required'}, 403);
+    await assert.rejects(client.requestJSON(path), code('secureTransportRequired'));
+    for (const body of [{status: 'owner-required'}, {status: 'secure-transport-required', private: 'secret'}, ['secure-transport-required']]) {
+      server.json(body, 403);
+      await assert.rejects(client.requestJSON(path), code('authenticationRequired'));
+    }
+    server.json({status: 'secure-transport-required'}, 401);
+    await assert.rejects(client.requestJSON(path), code('authenticationRequired'));
+    server.json({status: 'secure-transport-required'}, 403);
+    await assert.rejects(client.workspaceState(), code('authenticationRequired'));
+    for (const [type, body] of [['text/html', '{"status":"secure-transport-required"}'], ['application/json', 'private broken JSON']]) {
+      server.steps.push((_request, response) => {response.writeHead(403, {'Content-Type': type}); response.end(body);});
+      await assert.rejects(client.requestJSON(path), code('authenticationRequired'));
+    }
+    assert.equal(server.captured.length, 8, 'No automatic retry');
   });
 });
 

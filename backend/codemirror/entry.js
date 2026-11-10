@@ -1,0 +1,10 @@
+import {EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine} from '@codemirror/view';
+import {EditorState, Compartment} from '@codemirror/state';
+import {defaultKeymap, history, historyKeymap, indentWithTab} from '@codemirror/commands';
+import {StreamLanguage, HighlightStyle, syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, foldGutter} from '@codemirror/language';
+import {javascript} from '@codemirror/lang-javascript';
+import {json} from '@codemirror/lang-json';
+import {css} from '@codemirror/lang-css';
+import {tags} from '@lezer/highlight';
+const miniSetup = [lineNumbers(), highlightActiveLineGutter(), highlightSpecialChars(), history(), foldGutter(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true), indentOnInput(), syntaxHighlighting(defaultHighlightStyle, {fallback: true}), bracketMatching(), rectangularSelection(), crosshairCursor(), highlightActiveLine(), keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab])];
+/** @type {Window & {PataphorCM6?: object}} */ (window).PataphorCM6 = {EditorView, EditorState, Compartment, miniSetup, StreamLanguage, HighlightStyle, syntaxHighlighting, languages: {javascript, json, css}, tags};

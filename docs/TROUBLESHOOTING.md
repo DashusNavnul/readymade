@@ -24,17 +24,94 @@ For isolated development or host tests, `launch.sh` and `test-host.sh` accept `R
 
 ## The access code seems wrong
 
-First verify the exact origin. Before the first connection, set **Readymade: Origin** (`readymade.origin`) in Settings. App buttons use that value without an origin prompt; an existing connection or remembered origin takes precedence. Use your own HTTPS ship origin or localhost HTTP, without `/apps/...`, query parameters or credentials embedded in the URL. Authenticate only through the private password prompt. Never paste the code into chat or use it as a command-line argument.
+Choose **Home → Connect your Urbit** and check the address shown on **Your
+Urbit**. Choose a verified running planet, or use **Enter a ship’s web address**
+for a hosted ship. **Refresh running planets** performs another bounded check.
+An empty list means no local planet passed the current checks; old pier folders
+and saved addresses are not presented as running planets. No Settings edit is
+required. Bare remote hostnames use HTTPS and loopback addresses use HTTP.
+Ordinary app/login links are accepted, but query strings, fragments and URL
+credentials are refused. Enter the access code only in the private password
+field. Never paste it into chat or use it as a command-line argument.
 
-The desktop may use an existing private saved-code store or editor secret storage. A stale saved credential can require a different diagnosis from a missing app. Do not dump or delete credential databases as a first step; report whether the failure was authentication, an unavailable page or a coding endpoint.
+The desktop may use an existing private saved-code store or editor secret
+storage. If a saved code is rejected, enter the replacement privately; the new
+code takes precedence and is saved only after the ship accepts it. Canceling or
+entering an incorrect replacement leaves the previous store unchanged. Do not
+dump or delete credential databases as a first step.
 
-Clicking **Groups**, **Landscape**, **Glurff** or **Calls** authenticates for app access. The coding **Connect to Ship** action also requests Pataphor workspace and native coding state. A plain Urbit ship without those endpoints can fail that step even with valid credentials. See [compatibility](COMPATIBILITY.md).
+**Connect to Ship** opens the same connection page. Missing app pages and
+optional coding services are listed separately from sign-in. A plain Urbit
+without Pataphor can still use its installed app pages. **Open coding
+workspace** requires the additional backend; changing a valid access code will
+not install it. See [compatibility](COMPATIBILITY.md).
+
+`secureTransportRequired` while downloading connector source means that the
+CLI app requires HTTPS or an explicitly enabled owner-only loopback test mode.
+It does not mean the login code is wrong. Use the receiving ship's supported
+HTTPS origin; do not disable the transport check or change credentials to fix it.
+
+## HTTPS certificate errors
+
+“The HTTPS certificate does not match this ship address” means the server's
+certificate does not cover the configured origin. Check the address in
+Readymade settings; if it is correct, the host must correct the certificate.
+
+“The HTTPS certificate cannot be verified” means the presented certificate
+chain is not trusted by the client. The host should provide a trusted
+certificate and its complete chain. Changing the ship access code will not
+repair either condition. Do not disable TLS verification to make login pass.
+
+These login failures occur before the HTTP password is delivered. They do not
+settle an earlier unknown submission; retain its journal and observe its exact
+outcome before any further write. Other connection failures retain their
+existing diagnostics.
 
 ## An app page is missing, or media will not start
 
 Landscape, Glurff and Calls target `/apps/landscape/`, `/apps/glurff/` and `/apps/noltbook/`. Tlon Groups targets `/apps/groups/`. The relevant application must already be installed on that ship. This desktop repository does not install it automatically.
 
 Use the app's own controls to join or start a call. Opening a page does not start capture. Check the selected origin and macOS camera/microphone permissions. A working local fixture does not establish real capture, screen/audio sharing or a two-peer call. Record those as separate tests.
+
+In builds with system-permission diagnostics, **Check Media Tab** reports camera,
+microphone and screen access separately from the website's own permission.
+`not-determined` means the system has not recorded a decision for this app;
+`denied` or `restricted` is not a successful capture test. `unavailable` means
+that the status could not be read. A website can report denied while awaiting
+its site permission prompt, so do not infer macOS state from that message alone.
+Use the browser tab's site controls and the normal system permission flow.
+
+When macOS reports screen recording access as denied, the native screen-sharing
+confirmation offers **Open Screen Recording Settings**. That action opens the
+system permission panel and cancels the current capture request; it does not
+grant permission or select a screen. Complete any required authentication
+locally in macOS, then explicitly start sharing again. The normal picker option
+remains available because system status and a per-selection picker grant are
+distinct. A successful Settings launch is not proof of screen capture.
+
+For automated testing in an isolated profile, set `window.dialogStyle` to
+`custom` if the test can inspect editor dialogs but cannot inspect native OS
+dialogs. The packaged editor defaults to native dialogs; a pending microphone
+request with no dialog in the editor DOM does not prove the permission request
+was lost. The custom setting changes dialog presentation, not permission policy.
+Reveal the intended native tab and approve only its visible, exact-origin
+Microphone or Camera prompt. Do not disable permission checks or grant capture
+through a debugging API. The two-peer fresh-install call test passed using this
+normal dialog flow and ended every capture track afterward.
+Checking status itself never grants access or starts recording.
+
+Native bridge status also retains up to 16 permission events per bound media
+page. `checked` records an existing-permission check; `requested` records a
+request reaching the session handler; `delegated` records forwarding to the
+editor; `answered` records its decision. A check returning false without a
+request event is not evidence that a user rejected a prompt. These diagnostics
+preserve permission decisions and exclude credentials and request details.
+
+If a fresh packaged test stalls before opening its browser tab, inspect normal
+macOS dialogs too. A Keychain prompt for “Readymade Workspace Safe Storage” can
+block the main process and cause a browser-connection timeout. The owner must
+handle that prompt locally; never put the login password in logs or chat.
+Dismissing that prompt does not establish microphone or camera acceptance.
 
 Switching between Code and an open app should preserve its page. **Reconnect Media Tab** reloads a tab and can end an active call; it is an explicit action, not the first automatic response to uncertainty. Existing calls in another native application are not automatically transferred into this workspace.
 
@@ -62,3 +139,17 @@ check the app's own diagnostics; closing and recreating the tab starts fresh wor
 Open a new Readymade terminal and type `groups`, or use the Groups sidebar
 control. This opens the same retained app. Use `/usr/bin/groups` if you intended
 the operating system's group-membership command instead.
+
+## A call stays at requesting microphone
+
+Separate native presentation from permission handling. The packaged media bridge's
+read-only `status` response includes `presentation` for each retained binding:
+its matched native view, visibility, bounds and owning window's focus/minimized
+state. Unknown or retired native objects return `null` fields. These diagnostics
+do not grant permissions, reveal unrelated window titles or include credentials.
+
+A ready binding means the expected page loaded; it does not prove the native
+pane is visible or microphone permission completed. A visible pane can still
+have a pending permission request. Retain the page's call stages and the normal
+permission-dialog state before retrying. Do not substitute a readiness check
+for actual received audio/video, or bypass system permissions to obtain a pass.

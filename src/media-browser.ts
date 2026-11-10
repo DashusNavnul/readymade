@@ -8,7 +8,7 @@ export class NativeMediaBrowser implements BrowserAdapter<vscode.BrowserTab> {
   private readonly editors = new WeakMap<vscode.BrowserTab, vscode.Tab>();
   private readonly companionEditors = new Set<vscode.Tab>();
   private readonly created = new Map<string, vscode.BrowserTab>();
-  constructor(private readonly bridge: Pick<MediaClient, 'request'>) {}
+  constructor(private readonly bridge: Pick<MediaClient, 'request'>, private readonly prepare?: (tab: vscode.BrowserTab) => Promise<void>) {}
   private pruneClosed(): void {
     for (const [url, tab] of this.created) if (this.isClosed(tab)) this.created.delete(url);
   }
@@ -32,6 +32,9 @@ export class NativeMediaBrowser implements BrowserAdapter<vscode.BrowserTab> {
         const companion = vscode.window.tabGroups.all.find(group => group.tabs.some(editor => this.companionEditors.has(editor)));
         tab = await vscode.window.openBrowserTab(url, { viewColumn: companion?.viewColumn ?? vscode.ViewColumn.Beside, preserveFocus: false });
         this.created.set(url, tab);
+        // Opening beside an existing browser can leave that old browser active.
+        // Focus the returned native identity before associating its editor handle.
+        if (typeof tab.reveal === 'function') await tab.reveal();
         let editor: vscode.Tab | undefined;
         for (let n = 0; n < 100; n++) {
           const active = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -48,6 +51,7 @@ export class NativeMediaBrowser implements BrowserAdapter<vscode.BrowserTab> {
         this.editors.set(tab, editor); this.companionEditors.add(editor);
         await vscode.commands.executeCommand('workbench.action.keepEditor');
         await this.awaitBootstrap(url, tab);
+        await this.prepare?.(tab);
       } finally {
         if (changed && config.inspect<string>('dataStorage')?.globalValue === 'ephemeral') await config.update('dataStorage', previous, vscode.ConfigurationTarget.Global);
       }
@@ -67,7 +71,7 @@ export class NativeMediaBrowser implements BrowserAdapter<vscode.BrowserTab> {
         })]);
         if (Array.isArray(result.bootstrapViews)) {
           const matches = result.bootstrapViews.filter(row => row !== null && typeof row === 'object' && (row as { url?: unknown }).url === url);
-          if (matches.length === 1 && !this.isClosed(tab)) return;
+          if (matches.length === 1 && (matches[0] as {bootstrapLoaded?: unknown}).bootstrapLoaded === true && !this.isClosed(tab)) return;
           if (matches.length > 1) throw new Error('More than one native browser matches this private bootstrap.');
         }
       } finally { if (timer) clearTimeout(timer); }
@@ -77,6 +81,7 @@ export class NativeMediaBrowser implements BrowserAdapter<vscode.BrowserTab> {
   }
   async reveal(tab: vscode.BrowserTab): Promise<void> {
     if (!vscode.window.browserTabs.includes(tab)) throw new Error('This media tab was closed. Open a new tab explicitly.');
+    if (typeof tab.reveal === 'function') { await tab.reveal(); return; }
     const groups = vscode.window.tabGroups.all;
     if (groups.length > 64 || groups.some(group => group.tabs.length > 512)) throw new Error('Too many editors to safely locate this app.');
     const rememberActive = (): boolean => {
@@ -121,7 +126,14 @@ export class NativeMediaBrowser implements BrowserAdapter<vscode.BrowserTab> {
       }
       if (vscode.window.tabGroups.all.length > 1) {
         await vscode.commands.executeCommand('workbench.action.focusNextGroup');
-        await settle(() => vscode.window.tabGroups.activeTabGroup !== group || vscode.window.tabGroups.all.length === 1 || rememberActive());
+        // Native window focus can absorb this command while groups are moving.
+        // Re-observe the current groups instead of spending the entire lookup
+        // budget waiting for a transition that was never scheduled.
+        const focusDeadline = Math.min(deadline, Date.now() + 250);
+        while (vscode.window.tabGroups.activeTabGroup === group && vscode.window.tabGroups.all.length > 1 && !rememberActive() && Date.now() < focusDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        if (rememberActive()) return;
       } else {
         await settle(rememberActive);
         return;

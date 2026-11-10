@@ -19,9 +19,9 @@ function fixture(request) {
   };
   return { tab, browser: new NativeMediaBrowser({ request }), closes: () => closes };
 }
-test('native bootstrap readiness observes exact native URL before returning, without mutation or reload', async () => {
+test('native bootstrap readiness waits for the exact native navigation to finish before returning, without mutation or reload', async () => {
   const operations = []; let reads = 0;
-  const f = fixture(async op => { operations.push(op); return { bootstrapViews: ++reads < 3 ? [] : [{ url }] }; });
+  const f = fixture(async op => { operations.push(op); return { bootstrapViews: [{ url, bootstrapLoaded: ++reads >= 3 }] }; });
   assert.equal(await f.browser.open(url), f.tab); assert.equal(reads, 3);
   assert.deepEqual(operations, ['status', 'status', 'status']); assert.equal(f.closes(), 0);
   assert.equal(f.browser.isActive(f.tab), true); assert.equal(f.browser.retained(url), undefined);
@@ -41,7 +41,7 @@ test('a hung read expires within the finite readiness window and retains its exa
 });
 test('repeated successful opens do not accumulate handles; failed closed tabs are pruned', async () => {
   let currentURL;
-  const f = fixture(async () => ({ bootstrapViews: [{ url: currentURL }] }));
+  const f = fixture(async () => ({ bootstrapViews: [{ url: currentURL, bootstrapLoaded: true }] }));
   const open = api.window.openBrowserTab;
   api.window.openBrowserTab = async next => { currentURL = next; return open(next); };
   for (let index = 0; index < 100; index++) {
@@ -56,7 +56,7 @@ test('repeated successful opens do not accumulate handles; failed closed tabs ar
 });
 
 test('browser activation waits for its new editor instead of binding the previously active editor', async () => {
-  const f = fixture(async () => ({bootstrapViews: [{url}]}));
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
   const old = {}, fresh = {};
   api.window.tabGroups = {all: [{tabs: [old]}], activeTabGroup: {activeTab: old}};
   api.window.openBrowserTab = async () => {
@@ -68,8 +68,31 @@ test('browser activation waits for its new editor instead of binding the previou
   assert.equal(f.browser.editors.get(f.tab), fresh);
 });
 
+test('opening a second browser reveals its exact identity when the first retains focus', async () => {
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
+  const old = {}, fresh = {}, previousBrowser = {url};
+  const group = {tabs: [old], activeTab: old};
+  api.window.tabGroups = {all: [group], activeTabGroup: group};
+  let reveals = 0;
+  f.tab.reveal = async () => {
+    reveals++;
+    api.window.activeBrowserTab = f.tab;
+    group.activeTab = fresh;
+  };
+  api.window.openBrowserTab = async () => {
+    api.window.browserTabs = [previousBrowser, f.tab];
+    api.window.activeBrowserTab = previousBrowser;
+    group.tabs.push(fresh);
+    return f.tab;
+  };
+  assert.equal(await f.browser.open(url), f.tab);
+  assert.equal(reveals, 1);
+  assert.equal(f.browser.editors.get(f.tab), fresh);
+  assert.equal(f.closes(), 0);
+});
+
 test('moving an app replaces its editor handle without replacing the browser page', async () => {
-  const f = fixture(async () => ({bootstrapViews: [{url}]}));
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
   await f.browser.open(url);
   const old = f.browser.editors.get(f.tab), moved = {label: 'Glurff'};
   const group = {tabs: [moved], activeTab: moved};
@@ -81,7 +104,7 @@ test('moving an app replaces its editor handle without replacing the browser pag
 });
 
 test('reveal finds the moved browser by identity despite another app with the same title and URL', async () => {
-  const f = fixture(async () => ({bootstrapViews: [{url}]}));
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
   await f.browser.open(url);
   const other = {url, title: 'Glurff'}, wrong = {label: 'Glurff'}, moved = {label: 'Glurff'};
   const groups = [{viewColumn: 1, tabs: [wrong], activeTab: wrong}, {viewColumn: 2, tabs: [moved], activeTab: moved}];
@@ -100,7 +123,7 @@ test('reveal finds the moved browser by identity despite another app with the sa
 });
 
 test('reveal skips ordinary files and does not bind stale browser activation to a file tab', {timeout: 1500}, async () => {
-  const f = fixture(async () => ({bootstrapViews: [{url}]}));
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
   await f.browser.open(url);
   const moved = {}, editors = [...Array.from({length: 40}, () => ({input: {uri: 'file:///fixture'}})), moved];
   const group = {tabs: editors, activeTab: editors[0]};
@@ -116,4 +139,53 @@ test('reveal skips ordinary files and does not bind stale browser activation to 
     await f.browser.reveal(f.tab);
     assert.equal(f.browser.editors.get(f.tab), moved); assert.equal(f.closes(), 0);
   } finally { api.commands.executeCommand = execute; }
+});
+
+test('reveal re-observes groups when a focus command makes no transition during a window move', async () => {
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
+  await f.browser.open(url);
+  const file = {input: {uri: 'file:///code'}}, moved = {};
+  const groups = [{tabs: [file], activeTab: file}, {tabs: [moved], activeTab: moved}];
+  api.window.tabGroups = {all: groups, activeTabGroup: groups[0]};
+  api.window.activeBrowserTab = undefined;
+  const execute = api.commands.executeCommand; let focuses = 0;
+  api.commands.executeCommand = async command => {
+    if (command === 'workbench.action.focusNextGroup' && ++focuses === 2) {
+      api.window.tabGroups.activeTabGroup = groups[1]; api.window.activeBrowserTab = f.tab;
+    }
+  };
+  try {
+    await f.browser.reveal(f.tab);
+    assert.equal(focuses, 2); assert.equal(f.browser.editors.get(f.tab), moved);
+    assert.equal(f.closes(), 0);
+  } finally { api.commands.executeCommand = execute; }
+});
+
+test('native reveal selects the retained tab without consulting stale group state or issuing navigation', async () => {
+  const f = fixture(async () => ({bootstrapViews: [{url, bootstrapLoaded: true}]}));
+  await f.browser.open(url); let reveals = 0;
+  f.tab.reveal = async () => { reveals++; };
+  api.window.tabGroups = {all: [], activeTabGroup: {}};
+  await f.browser.reveal(f.tab);
+  assert.equal(reveals, 1); assert.equal(f.closes(), 0);
+  f.tab.reveal = async () => { throw new Error('Missing native editor'); };
+  await assert.rejects(f.browser.reveal(f.tab), /Missing native editor/);
+  api.window.browserTabs = [];
+  await assert.rejects(f.browser.reveal(f.tab), /closed/);
+});
+
+test('native reveal patches only the pinned browser methods and refuses drift or repeat application', () => {
+  const {patchSource} = require('../platform/browser-reveal.cjs');
+  const host = 'startCDPSession(){return i._startCDPSession()},close(){return i._close()}';
+  const main = 'nui=class extends x{constructor(e,t,i,n,r,a){super();this.editorService=t; async $closeBrowserTab(e){let t=this._knownBrowsers.get(e); m(4,Dt),m(5,V)],nui)';
+  assert.match(patchSource(host, 'host'), /reveal\(\).*i\.id/);
+  assert.match(patchSource(main, 'main'), /item.editor===t.input/);
+  assert.match(patchSource(main, 'main'), /matches.length!==1/);
+  assert.match(patchSource(main, 'main'), /focusWindow\(\{targetWindowId:this.editorGroupsService.getPart/);
+  assert.throws(() => patchSource(main.replace('m(5,V)', 'm(5,changed)'), 'main'), /Unexpected/);
+  for (const [kind, source] of [['host', host], ['main', main]]) {
+    assert.throws(() => patchSource(source + source, kind), /Unexpected/);
+    assert.throws(() => patchSource(patchSource(source, kind), kind), /Unexpected/);
+    assert.throws(() => patchSource('changed upstream source', kind), /Unexpected/);
+  }
 });

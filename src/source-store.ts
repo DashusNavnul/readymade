@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { ShipClient } from './ship-client';
+import { codingHistory } from './coding-history';
 import { asRecord, isInteger, isUv, isUx, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
 
-export const FILE_LIMIT = 61_440;
+export const FILE_LIMIT = 1_048_576;
 export interface SourceBasis { readonly id: string; readonly owner: string; readonly desk: string; readonly number: number; readonly root: string; readonly commit: string }
 export interface SourceDescriptor {
   readonly key: string; readonly uri: string; readonly origin: string; readonly ship: string; readonly session: string;
@@ -10,6 +11,11 @@ export interface SourceDescriptor {
   readonly byteLength: number; readonly contentHash: string;
 }
 export interface SourceSnapshot extends SourceDescriptor { readonly text: string }
+export interface SourceProgress {
+  readonly key: string; readonly ship: string; readonly session: string; readonly source: SourceBasis;
+  readonly path: string; readonly blob: string; readonly total: number; readonly next: number | null;
+  readonly lines: number; readonly bytes: number;
+}
 export function digest(value: string): string { return createHash('sha256').update(value, 'utf8').digest('hex'); }
 export function originOf(value: string): string {
   const url = new URL(value);
@@ -85,7 +91,7 @@ export class SourceStore {
   readonly origin: string;
   constructor(private readonly client: Pick<ShipClient, 'origin' | 'codingState'>) { this.origin = originOf(client.origin); }
   async refresh(session = '0x0'): Promise<readonly SourceDescriptor[]> {
-    const state = await this.client.codingState(session);
+    const state = await codingHistory(this.client, await this.client.codingState(session));
     if (originOf(this.client.origin) !== this.origin) throw new Error('Ship origin changed.');
     this.ingest(state); return this.sources();
   }
@@ -108,7 +114,7 @@ export class SourceStore {
       let next: number | null = 1, text = '';
       while (next !== null) {
         const page = pages.get(next); if (!page) break;
-        text += page.text; if (Buffer.byteLength(text) > FILE_LIMIT) throw new Error('Whole-file source exceeds 61,440 UTF-8 bytes.');
+        text += page.text; if (Buffer.byteLength(text) > FILE_LIMIT) throw new Error('Whole-file source exceeds 1 MiB of UTF-8 bytes.');
         next = page.next;
       }
       if (next !== null) continue;
@@ -121,6 +127,19 @@ export class SourceStore {
     for (const item of completed) this.cache.set(item.key, item);
   }
   sources(): readonly SourceDescriptor[] { return [...this.cache.values()].map(({ text: _text, ...descriptor }) => Object.freeze(descriptor)); }
+  progress(): readonly SourceProgress[] {
+    return [...this.pages].map(([group, pages]) => {
+      const first = pages.values().next().value!;
+      let next: number | null = 1, lines = 0, bytes = 0;
+      while (next !== null) {
+        const page = pages.get(next); if (!page) break;
+        lines += page.lines; bytes += Buffer.byteLength(page.text); next = page.next;
+      }
+      return Object.freeze({key: digest(JSON.stringify([this.origin, group])), ship: JSON.parse(group)[0] as string,
+        session: first.session, source: first.source, path: first.path, blob: first.blob,
+        total: first.total, next, lines, bytes});
+    });
+  }
   openSnapshot(descriptor: SourceDescriptor | string): SourceSnapshot {
     const uri = typeof descriptor === 'string' ? descriptor : descriptor.uri, parsed = new URL(uri);
     const key = parsed.pathname.split('/')[1], snapshot = this.cache.get(key);

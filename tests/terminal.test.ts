@@ -189,3 +189,37 @@ test('immediate empty event responses have bounded frequency and close removes t
     assert.equal(transport.calls.length, count);
   } finally { session.close(); }
 });
+
+test('nonce rotation and idle transport disconnect detach control until explicit observation', async () => {
+  for (const changed of [{nonce: '0v3'}, {connected: false}]) {
+    const {transport, session} = await ready();
+    const controlled = {control: {revision: 6, viewer: session.viewer}};
+    transport.steps.push(() => events(state({...controlled, ...changed}), ''));
+    await session.pollOutputOnce();
+    assert.equal(session.attached, false);
+    assert.equal(session.locked, true);
+    transport.steps.push(() => events(state({...controlled, ...changed, connected: true}), ''));
+    await session.pollOutputOnce();
+    assert.equal(session.canInput, false);
+    const count = transport.calls.length;
+    await assert.rejects(session.input('must not resume automatically'));
+    assert.equal(transport.calls.length, count);
+    const fresh = state({...controlled, ...changed, connected: true});
+    transport.steps.push(() => fresh, () => events(fresh, ''));
+    await session.observe(false); assert.equal(session.canInput, false);
+    transport.steps.push(() => fresh); await session.attach();
+    assert.equal(session.canInput, true); session.close();
+  }
+});
+
+test('an acknowledgment from a different nonce cannot settle input or release queued bytes', async () => {
+  const {transport, session} = await ready();
+  transport.steps.push(() => state({nonce: '0v3', inputNext: 4, control: {revision: 6, viewer: session.viewer}}));
+  const before = transport.calls.length;
+  await assert.rejects(session.input('x'.repeat(4096)), /acknowledgment|discarded/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(transport.calls.length, before + 1);
+  assert.equal(session.outcomeUnconfirmed, true);
+  assert.equal(session.state?.nonce, '0v1');
+  assert.equal(session.canInput, false); session.close();
+});

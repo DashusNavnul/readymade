@@ -1,0 +1,2279 @@
+diff --git a/build.zig b/build.zig
+index 0eab14d78c..27122dff5d 100644
+--- a/build.zig
++++ b/build.zig
+@@ -678,11 +678,26 @@ fn buildBinary(
+                 .file = "pkg/noun/palloc_tests.c",
+                 .deps = noun_test_deps,
+             },
++            .{
++                .name = "oom-test",
++                .file = "pkg/noun/oom_tests.c",
++                .deps = noun_test_deps,
++            },
++            .{
++                .name = "toss-test",
++                .file = "pkg/noun/toss_tests.c",
++                .deps = noun_test_deps,
++            },
+             .{
+                 .name = "equality-test",
+                 .file = "pkg/noun/equality_tests.c",
+                 .deps = noun_test_deps,
+             },
++            .{
++                .name = "lazy-bench",
++                .file = "pkg/noun/lazy_bench.c",
++                .deps = noun_test_deps,
++            },
+             .{
+                 .name = "hashtable-test",
+                 .file = "pkg/noun/hashtable_tests.c",
+diff --git a/doc/darwin-page-discard.md b/doc/darwin-page-discard.md
+new file mode 100644
+index 0000000000..b6b2db3606
+--- /dev/null
++++ b/doc/darwin-page-discard.md
+@@ -0,0 +1,58 @@
++# Reclaim unused loom pages on macOS
++
++Darwin's `MADV_DONTNEED` did not release touched anonymous pages in a bounded
++probe. Large transient calculations could therefore retain their peak physical
++footprint after the nouns were freed. A restart reclaimed those pages.
++
++For the ordinary macOS loom, `u3e_toss()` now replaces complete unused pages
++with fresh anonymous mappings at the same addresses. The virtual reservation
++remains intact; physical storage is supplied again when reused. Live nouns,
++partial boundary pages, and the `PROT_NONE` guard are excluded. Every replaced
++page is marked dirty so later reuse is included in checkpointing, including
++pages that previously belonged to an older, larger snapshot.
++
++The range is validated before subtracting page counts. Empty, overlapping,
++reversed, and out-of-loom requests are ignored. Fixed-mapping failure is fatal:
++the process must not continue after a potentially damaged mapping. The swap
++shutdown caller now passes the correct retained south-page count, zero,
++instead of causing an unsigned underflow.
++
++Explicit `--swap` and other operating systems retain their existing advice
++backend. This change does not release live heap data, interior allocator holes,
++or live memo caches. It does not change the loom or checkpoint format.
++
++## Enable event-by-event reclamation
++
++Pass `--toss 0` to the main process. This enables `u3o_toss` and releases the
++unused heap/stack gap after events. The normal checkpoint path also calls
++`u3e_toss()`. The worker prints `--toss 0` even when tossing is disabled;
++verify that its `--runtime-config` includes bit 8192. Bit 128 alone does not
++enable tossing. Defaults remain unchanged.
++
++No reusable-page accounting protocol or allocator recommit hooks are needed.
++Replacing the gap with ordinary zero-fill mappings avoids dependence on
++`MADV_FREE_REUSABLE` / `MADV_FREE_REUSE` lifecycle coverage across every road,
++stack, directory, and post-event allocation path.
++
++## Verify
++
++Run one build at a time:
++
++```sh
++zig build toss-test palloc-test equality-test hashtable-test nock-test serial-test -j1 -Doptimize=ReleaseFast
++zig build toss-test -j1 -Doptimize=ReleaseFast -Dsnapshot-validation=true
++zig fmt --check build.zig
++git diff --check
++```
++
++`toss-test` uses real mappings and the actual snapshot implementation. It checks
++inward rounding, invalid ranges, boundary sentinels, guard protection, dirty
++bits, file-backed gap reuse, repeated physical-footprint and resident-memory
++contraction on macOS, direct live noun contents, both road directions, and
++snapshot reload with demand paging enabled and disabled. The reload test stays
++in-process; a disposable ship restart/replay is a separate integration check.
++
++The build enables `-Wall -Werror`. There is no separate configured C linter.
++Do not infer ship readiness from a successful build alone: validate the native
++connection, mount `%base`, verify its system exports, and check preserved app
++state and actual execution after deployment.
+diff --git a/ext/gmp/build.zig.zon b/ext/gmp/build.zig.zon
+index 41572e338d..b7177c1dac 100644
+--- a/ext/gmp/build.zig.zon
++++ b/ext/gmp/build.zig.zon
+@@ -4,7 +4,7 @@
+     .fingerprint = 0x328f6061a804066a,
+     .dependencies = .{
+         .gmp = .{
+-            .url = "https://ftp.fr.openbsd.org/pub/OpenBSD/distfiles/gmp-6.3.0.tar.xz",
++            .url = "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+             .hash = "N-V-__8AAE5fAwHUYgLBeqNatYSKf3qBK3l8nwdpjyY8igK0",
+         },
+     },
+diff --git a/ext/sigsegv/build.zig.zon b/ext/sigsegv/build.zig.zon
+index 0b1b8b4ca2..11f7338a6b 100644
+--- a/ext/sigsegv/build.zig.zon
++++ b/ext/sigsegv/build.zig.zon
+@@ -9,7 +9,7 @@
+             .lazy = true,
+         },
+         .sigsegv = .{
+-            .url = "https://ftp.fr.openbsd.org/pub/OpenBSD/distfiles/libsigsegv-2.14.tar.gz",
++            .url = "https://ftp.gnu.org/gnu/libsigsegv/libsigsegv-2.14.tar.gz",
+             .hash = "N-V-__8AAHQhHwCCMyKUtQhO0AMsY182In-wQIwXVhenOql5",
+         },
+     },
+diff --git a/pkg/noun/allocate.c b/pkg/noun/allocate.c
+index 68e23f3a19..909693080d 100644
+--- a/pkg/noun/allocate.c
++++ b/pkg/noun/allocate.c
+@@ -108,6 +108,10 @@ u3a_drop_heap(u3_post cap_p, u3_post ear_p)
+ void
+ u3a_mark_init(void)
+ {
++  //  the sweep counts a linked, unmarked page as a leak
++  //
++  _flush_chunks();
++
+   c3_w bit_w = (u3R->hep.len_w + 31) >> 5;
+ 
+   u3a_Mark.bit_w = c3_calloc(sizeof(c3_w) * bit_w);
+@@ -1841,6 +1845,14 @@ u3a_dash(void)
+   _poison_words();
+ }
+ 
++/* u3a_flush(): release emptied chunk pages (before a save: see palloc.c).
++*/
++void
++u3a_flush(void)
++{
++  _flush_chunks();
++}
++
+ /* u3a_sweep(): sweep a fully marked road.
+ */
+ c3_w
+@@ -1858,6 +1870,9 @@ u3a_sweep(void)
+ void
+ u3a_pack_seek(u3a_road* rod_u)
+ {
++  _flush_chunks();
++  _eager_t = 1;
++
+   u3a_pack_init();
+ 
+   //  XX clear cell pool on inner roads?
+@@ -1874,6 +1889,7 @@ u3a_pack_move(u3a_road* rod_u)
+ {
+   //  XX use road argument
+   _pack_move();
++  _eager_t = 0;
+ 
+   u3a_pack_done();
+ 
+diff --git a/pkg/noun/allocate.h b/pkg/noun/allocate.h
+index b9b04c1fd4..b61e228ef4 100644
+--- a/pkg/noun/allocate.h
++++ b/pkg/noun/allocate.h
+@@ -760,6 +760,11 @@ u3a_wait(void);
+ void
+ u3a_dash(void);
+ 
++        /* u3a_flush(): release emptied chunk pages (before a save).
++        */
++          void
++          u3a_flush(void);
++
+         /* u3a_sweep(): sweep a fully marked road.
+         */
+           c3_w
+diff --git a/pkg/noun/equality_tests.c b/pkg/noun/equality_tests.c
+index 83a50263a7..e0a4195efa 100644
+--- a/pkg/noun/equality_tests.c
++++ b/pkg/noun/equality_tests.c
+@@ -7,7 +7,7 @@
+ static void
+ _setup(void)
+ {
+-  u3m_boot_lite(1 << 24);
++  u3m_boot_lite(1 << 26);
+ }
+ 
+ static c3_i
+@@ -120,6 +120,95 @@ _test_unify_inner_home(void)
+   return ret_i;
+ }
+ 
++/* Equal values with sharing on opposite alternating levels. */
++static u3_noun
++_test_crossed_tree(c3_w dep_w, c3_o sha_o)
++{
++  if ( !dep_w ) return u3nc(42, 0);
++
++  u3_noun a = _test_crossed_tree(dep_w - 1, c3n == sha_o ? c3y : c3n);
++  u3_noun b = (c3y == sha_o)
++            ? u3k(a)
++            : _test_crossed_tree(dep_w - 1, c3y);
++  return u3nc(a, b);
++}
++
++static c3_i
++_test_crossed_equality(void)
++{
++  //  Home nouns cannot be unified from a junior road. These comparisons
++  //  cross the fallback threshold while keeping the actual graphs small.
++  //
++  for ( c3_w dep_w = 0; dep_w < 3; dep_w++ ) {
++    u3_noun a = _test_crossed_tree(16, c3n);
++    u3_noun b = _test_crossed_tree(16, c3y);
++    c3_i ret_i = 1;
++
++    for ( c3_w i_w = 0; i_w < dep_w; i_w++ ) u3m_hate(0);
++
++    u3_post cap_p = u3R->cap_p;
++    for ( c3_w i_w = 0; i_w < 3; i_w++ ) {
++      if ( c3y != u3r_sing(a, b) || cap_p != u3R->cap_p ) ret_i = 0;
++    }
++    if ( dep_w && u3h(a) == u3h(b) ) ret_i = 0;
++
++    //  Equal large heads must not hide a later unequal tail. A failed
++    //  comparison must discard its classes before the next comparison.
++    //
++    u3_noun lef = u3nc(u3k(a), 0);
++    u3_noun rit = u3nc(u3k(b), 1);
++    if ( c3n != u3r_sing(lef, rit) || cap_p != u3R->cap_p ) ret_i = 0;
++    if ( c3n != u3r_sing(rit, lef) || cap_p != u3R->cap_p ) ret_i = 0;
++    if ( c3y != u3r_sing(a, b) || cap_p != u3R->cap_p ) ret_i = 0;
++    u3z(lef); u3z(rit);
++
++    for ( c3_w i_w = 0; i_w < dep_w; i_w++ ) u3m_love(0);
++    u3z(a); u3z(b);
++
++    if ( !ret_i ) {
++      fprintf(stderr, "test: crossed equality: road depth %u failed\r\n", dep_w);
++      return 0;
++    }
++  }
++
++  return 1;
++}
++
++/* Saturate comparison bookkeeping with distinct equal list nodes on senior
++** roads in a 64 MiB arena. Equality must not require an unbounded table.
++*/
++static c3_i
++_test_large_equality(void)
++{
++  u3_noun a = 0, b = 0, bad = 1;
++  for ( c3_w i_w = 0; i_w < 600000; i_w++ ) {
++    a = u3nc(i_w, a);
++    b = u3nc(i_w, b);
++    bad = u3nc(i_w, bad);
++  }
++  u3m_hate(0);
++  u3_post cap_p = u3R->cap_p;
++  c3_i ret_i = 1;
++  for ( c3_w i_w = 0; i_w < 3; i_w++ ) {
++    if ( c3y != u3r_sing(a, b) || c3y != u3r_sing(b, a) ||
++         c3n != u3r_sing(a, bad) || c3n != u3r_sing(bad, b) ||
++         cap_p != u3R->cap_p ) ret_i = 0;
++  }
++  //  Fill the comparison table while checking the equal heads, then meet
++  //  an unequal tail. Saturation must not turn a later difference into yes.
++  //
++  u3_noun lef = u3nc(u3k(a), 0);
++  u3_noun rit = u3nc(u3k(b), 1);
++  if ( c3n != u3r_sing(lef, rit) || c3n != u3r_sing(rit, lef) ||
++       cap_p != u3R->cap_p ) ret_i = 0;
++  u3z(lef); u3z(rit);
++  if ( u3t(a) == u3t(b) ) ret_i = 0;
++  u3m_love(0);
++  u3z(a); u3z(b); u3z(bad);
++  if ( !ret_i ) fprintf(stderr, "test: large equality failed\r\n");
++  return ret_i;
++}
++
+ static c3_i
+ _test_equality(void)
+ {
+@@ -140,6 +229,14 @@ _test_equality(void)
+     ret_i = 0;
+   }
+ 
++  if ( !_test_large_equality() ) {
++    ret_i = 0;
++  }
++
++  if ( !_test_crossed_equality() ) {
++    ret_i = 0;
++  }
++
+   return ret_i;
+ }
+ 
+diff --git a/pkg/noun/events.c b/pkg/noun/events.c
+index 3f48b8f9ed..ad6783ee5d 100644
+--- a/pkg/noun/events.c
++++ b/pkg/noun/events.c
+@@ -65,6 +65,7 @@
+ //!  - clean pages only become dirty by being:
+ //!    - modified (and caught by the fault handler)
+ //!    - orphaned due to segment truncation (explicitly dirtied)
++//!    - discarded outside the current watermarks (explicitly dirtied)
+ //!  - at points of quiescence (initialization, after save)
+ //!    - all pages of the image are clean
+ //!    - all other pages are dirty
+@@ -1361,14 +1362,39 @@ u3e_save(u3_post low_p, u3_post hig_p)
+   u3e_toss(low_p, hig_p);
+ }
+ 
+-/* _ce_toss_pages(): discard ephemeral pages.
++/* _ce_toss_range(): discard a nonempty range of fully unused pages.
+ */
+ static void
+-_ce_toss_pages(c3_w nor_w, c3_w sou_w)
++_ce_toss_range(c3_w nor_w, c3_w pgs_w)
+ {
+-  c3_w  pgs_w = u3P.pag_w - (nor_w + sou_w);
+   void* ptr_v = _ce_ptr(nor_w);
+ 
++  #ifdef U3_OS_osx
++  if ( !(u3C.wag_w & u3o_swap) ) {
++    //  Darwin's MADV_DONTNEED retains dirty anonymous pages. Replace only
++    //  dead pages, keeping the loom reserved and leaving the guard intact.
++    //  This also detaches stale snapshot mappings beyond the current heap.
++    //
++    if ( MAP_FAILED == mmap(ptr_v, _ce_len(pgs_w),
++                            (PROT_READ | PROT_WRITE),
++                            (MAP_ANON | MAP_FIXED | MAP_PRIVATE), -1, 0) ) {
++      fprintf(stderr, "loom: discard mmap failed (%u pages at %u): %s\r\n",
++                      pgs_w, nor_w, strerror(errno));
++      //  A failed fixed mapping must never leave a running, damaged loom.
++      //
++      abort();
++    }
++
++    //  Reused pages are writable, so they must participate in the next save
++    //  even when their old snapshot mappings were clean.
++    //
++    for ( c3_w i_w = nor_w; i_w < (nor_w + pgs_w); i_w++ ) {
++      u3P.dit_w[i_w >> 5] |= ((c3_w)1 << (i_w & 31));
++    }
++    return;
++  }
++  #endif
++
+   #ifndef U3_OS_windows
+   if ( -1 == madvise(ptr_v, _ce_len(pgs_w), MADV_DONTNEED) ) {
+       fprintf(stderr, "loom: madv_dontneed failed (%u pages at %u): %s\r\n",
+@@ -1377,11 +1403,44 @@ _ce_toss_pages(c3_w nor_w, c3_w sou_w)
+   #endif
+ }
+ 
++/* _ce_toss_pages(): discard the gap between north and south page counts.
++*/
++static void
++_ce_toss_pages(c3_w nor_w, c3_w sou_w)
++{
++  //  Subtract only after validating both bounds (including shutdown callers).
++  //
++  if ( (nor_w >= u3P.pag_w) || (sou_w >= (u3P.pag_w - nor_w)) ) {
++    return;
++  }
++
++  c3_w end_w = u3P.pag_w - sou_w;
++
++  #if defined(U3_OS_osx) && defined(U3_GUARD_PAGE)
++  if ( !(u3C.wag_w & u3o_swap)
++       && (u3P.gar_w >= nor_w) && (u3P.gar_w < end_w) ) {
++    if ( nor_w < u3P.gar_w ) {
++      _ce_toss_range(nor_w, u3P.gar_w - nor_w);
++    }
++    if ( (u3P.gar_w + 1) < end_w ) {
++      _ce_toss_range(u3P.gar_w + 1, end_w - (u3P.gar_w + 1));
++    }
++    return;
++  }
++  #endif
++
++  _ce_toss_range(nor_w, end_w - nor_w);
++}
++
+ /* u3e_toss(): discard ephemeral pages.
+ */
+ void
+ u3e_toss(u3_post low_p, u3_post hig_p)
+ {
++  if ( (low_p >= hig_p) || (hig_p > u3C.wor_i) ) {
++    return;
++  }
++
+   c3_w nor_w = (low_p + (_ce_len_words(1) - 1)) >> u3a_page;
+   c3_w sou_w = u3P.pag_w - (hig_p >> u3a_page);
+ 
+@@ -1510,7 +1569,7 @@ void
+ u3e_stop(void)
+ {
+   if ( u3P.eph_i ) {
+-    _ce_toss_pages(u3P.img_u.pgs_w, u3P.pag_w);
++    _ce_toss_pages(u3P.img_u.pgs_w, 0);
+     close(u3P.eph_i);
+     unlink(u3C.eph_c);
+   }
+diff --git a/pkg/noun/lazy_bench.c b/pkg/noun/lazy_bench.c
+new file mode 100644
+index 0000000000..d79b8d98ed
+--- /dev/null
++++ b/pkg/noun/lazy_bench.c
+@@ -0,0 +1,47 @@
++/// @file  lazy_bench.c: time u3h_free() of a large table (the _cr_sing_cape pattern)
++
++#include "noun.h"
++#include "events.h"
++
++static c3_w N_w;
++
++static u3_noun
++_build_free(u3_noun arg)
++{
++  u3p(u3h_root) har_p = u3h_new();
++  struct timespec a, b, c;
++  clock_gettime(CLOCK_MONOTONIC, &a);
++
++  for ( c3_w i_w = 0; i_w < N_w; i_w++ ) {
++    //  keys like _cr_sing_cape_keep(): a cell of two offsets
++    u3_noun key = u3nc(i_w * 7 + 1, i_w * 13 + 5);
++    u3h_put(har_p, key, c3y);
++    u3z(key);
++  }
++  clock_gettime(CLOCK_MONOTONIC, &b);
++  u3h_free(har_p);
++  clock_gettime(CLOCK_MONOTONIC, &c);
++
++  fprintf(stderr, "%s road: N=%u  build %.2f s  free %.2f s\r\n",
++          (u3R == &u3H->rod_u) ? "home" : "inner", N_w,
++          (b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) / 1e9,
++          (c.tv_sec - b.tv_sec) + (c.tv_nsec - b.tv_nsec) / 1e9);
++  u3z(arg);
++  return u3_nul;
++}
++
++int
++main(int argc, char* argv[])
++{
++  const c3_c* n_c = getenv("LAZY_N");
++  N_w = n_c ? (c3_w)atoi(n_c) : 1000000;
++
++  u3m_init((size_t)1 << 32);
++  u3e_init();
++  u3m_pave(c3y);
++
++  u3z(u3m_soft(0, _build_free, u3_nul));   //  inner road, as in the deploy
++  u3z(_build_free(u3_nul));                 //  home road
++  fprintf(stderr, "lazy bench: ok\r\n");
++  return 0;
++}
+diff --git a/pkg/noun/manage.c b/pkg/noun/manage.c
+index 723878aa26..345f168a19 100644
+--- a/pkg/noun/manage.c
++++ b/pkg/noun/manage.c
+@@ -109,6 +109,19 @@
+ //
+ static rsignal_jmpbuf u3_Signal;
+ 
++//  Only an explicitly soft timer may return through virtualization. Ordinary
++//  timers and all other signals retain the top-level recovery boundary.
++//  The signal handler only reads the selected frame and longjmps.
++//
++typedef struct _u3m_time_frame {
++  struct _u3m_time_frame* par_u;
++  u3a_road*              rod_u;
++  rsignal_jmpbuf         buf;
++} u3m_time_frame;
++
++static u3m_time_frame*          u3_Time_stack;
++static u3m_time_frame* volatile u3_Time_alarm;
++
+ #ifndef U3_OS_windows
+ #include "sigsegv.h"
+ 
+@@ -411,6 +424,8 @@ _cm_signal_deep(void)
+ static void
+ _cm_signal_done(void)
+ {
++  u3_Time_alarm = NULL;
++  u3_Time_stack = NULL;
+   rsignal_deinstall_handler(SIGINT);
+   rsignal_deinstall_handler(SIGTERM);
+   rsignal_deinstall_handler(SIGVTALRM);
+@@ -447,6 +462,9 @@ _cm_signal_done(void)
+ void
+ u3m_signal(u3_noun sig_l)
+ {
++  if ( (c3__alrm == sig_l) && u3_Time_alarm ) {
++    rsignal_longjmp(u3_Time_alarm->buf, sig_l);
++  }
+   rsignal_longjmp(u3_Signal, sig_l);
+ }
+ 
+@@ -1232,25 +1250,47 @@ _m_renew_timer(u3_atom now)
+ {
+   u3_atom min = u3_nul;
+   u3a_road* rod_u = u3R;
++  u3a_road* own_u = NULL;
++  c3_o soft_o = c3n;
+   c3_t no_timers_t = true;
+   while ( 1 ) {
+     for (u3_noun l = rod_u->tim; l; l = u3t(l)) {
+       no_timers_t = false;
+-      u3_atom fut = u3h(l);
+-      if ( _(u3qa_gth(fut, now)) ) {
+-        min = ( u3_nul == min ) ? u3k(fut) : u3ka_min(min, u3k(fut));
+-      }
+-      else {
+-        //  we are waiting for the signal to come, do nothing
+-        //
++      u3_noun ent = u3h(l);
++      u3_atom fut = _(u3du(ent)) ? u3h(ent) : ent;
++      //  On equal deadlines, an outer timer wins. Within a road an ordinary
++      //  timer wins over a soft one: a local failure cannot weaken a limit.
++      //
++      c3_o sof_o = u3du(ent);
++      if ( (u3_nul == min) || _(u3qa_lth(fut, min)) ||
++           (_(u3r_sing(fut, min)) &&
++            ((own_u != rod_u) || (c3n == sof_o))) ) {
+         u3z(min);
+-        return;
++        min = u3k(fut);
++        own_u = rod_u;
++        soft_o = sof_o;
+       }
+     }
+     if ( !rod_u->par_p ) break;
+     rod_u = u3to(u3_road, rod_u->par_p);
+   }
+ 
++  u3_Time_alarm = NULL;
++  if ( c3y == soft_o ) {
++    //  Find the nearest enclosing virtualization frame for the timer owner.
++    //  This runs synchronously; the asynchronous handler never walks nouns.
++    //
++    for (u3a_road* r_u = own_u; r_u && !u3_Time_alarm;
++         r_u = r_u->par_p ? u3to(u3_road, r_u->par_p) : NULL) {
++      for (u3m_time_frame* f_u = u3_Time_stack; f_u; f_u = f_u->par_u) {
++        if ( r_u == f_u->rod_u ) {
++          u3_Time_alarm = f_u;
++          break;
++        }
++      }
++    }
++  }
++
+   if ( no_timers_t ) {
+     //  no timers: `min` is still u3_nul.
+     //  disarm the timer
+@@ -1270,6 +1310,14 @@ _m_renew_timer(u3_atom now)
+     return;
+   }
+ 
++  if ( !_(u3qa_gth(min, now)) ) {
++    u3z(min);
++    //  Preserve ITIMER_VIRTUAL semantics: wall time may have passed while
++    //  the process was descheduled. Let the already armed CPU timer fire.
++    //
++    return;
++  }
++
+   u3_atom gap = u3ka_sub(min, u3k(now));
+   
+   struct itimerval itm_u;
+@@ -1296,11 +1344,11 @@ _m_renew_now(void)
+   u3z(now);
+ }
+ 
+-/* u3m_timer_set(): push a new timer to the timer stack.
++/* _m_timer_set(): push an ordinary or explicitly soft timer.
+ ** gap is @dr, gap != 0
+ */
+-void
+-u3m_timer_set(u3_atom gap)
++static void
++_m_timer_set(u3_atom gap, c3_o soft_o)
+ {
+   if ( !u3R->par_p ) {
+     //  noop on the home road since we have no jump buffer
+@@ -1312,11 +1360,23 @@ u3m_timer_set(u3_atom gap)
+   gettimeofday(&tim_u, 0);
+   u3_atom now = u3m_time_in_tv(&tim_u);
+   u3_atom fut = u3ka_add(u3k(now), gap);
+-  u3R->tim = u3nc(fut, u3R->tim);
++  u3R->tim = u3nc((c3y == soft_o) ? u3nc(fut, c3__soft) : fut, u3R->tim);
+   _m_renew_timer(now);
+   u3z(now);
+ }
+ 
++void
++u3m_timer_set(u3_atom gap)
++{
++  _m_timer_set(gap, c3n);
++}
++
++void
++u3m_timer_set_soft(u3_atom gap)
++{
++  _m_timer_set(gap, c3y);
++}
++
+ /* u3m_timer_pop(): pop a timer off the timer stack.
+ ** timer stack must be non-empty
+ */
+@@ -1728,6 +1788,30 @@ u3m_soft_run(u3_noun gul,
+   }
+   u3t_on(coy_o);
+ 
++  u3m_time_frame tim_u = { .par_u = u3_Time_stack, .rod_u = u3R };
++  if ( 0 != rsignal_setjmp(tim_u.buf) ) {
++    u3t_init();
++    u3_Time_alarm = NULL;
++    u3_Time_stack = tim_u.par_u;
++    //  Abandon only this virtual computation, retaining its trace. Timers
++    //  on discarded roads must not rearm while we unwind to the caller.
++    //
++    while ( u3R != tim_u.rod_u ) {
++      u3z(u3R->tim);
++      u3R->tim = u3_nul;
++      u3_noun tax = u3m_love(u3R->bug.tax);
++      u3R->bug.tax = u3kb_weld(tax, u3R->bug.tax);
++    }
++    u3z(u3R->tim);
++    u3R->tim = u3_nul;
++    u3_noun tax = u3nc(u3nc(c3__mean,
++                          u3i_string("evaluation-budget-exceeded")),
++                      u3R->bug.tax);
++    pro = u3nc(2, u3m_love(tax));
++    goto done;
++  }
++  u3_Time_stack = &tim_u;
++
+   /* Trap for exceptions.
+   */
+   if ( 0 == (why = (u3_noun)_setjmp(u3R->esc.buf)) ) {
+@@ -1751,10 +1835,14 @@ u3m_soft_run(u3_noun gul,
+ 
+     /* Produce success, on the old road.
+     */
++    if ( u3_Time_alarm == &tim_u ) u3_Time_alarm = NULL;
++    u3_Time_stack = tim_u.par_u;
+     pro = u3nc(0, u3m_love(pro));
+   }
+   else {
+     u3t_init();
++    if ( u3_Time_alarm == &tim_u ) u3_Time_alarm = NULL;
++    u3_Time_stack = tim_u.par_u;
+ 
+     /* Produce - or fall again.
+     */
+@@ -1791,13 +1879,15 @@ u3m_soft_run(u3_noun gul,
+     }
+   }
+ 
+-  /* Release the arguments.
++done:
++  /* Release the arguments before renewing any enclosing deadline.
+   */
+   {
+     u3z(gul);
+     u3z(aga);
+     u3z(agb);
+   }
++  _m_renew_now();
+ 
+   /* Return the product.
+   */
+@@ -2367,12 +2457,18 @@ void
+ u3m_save(void)
+ {
+   u3_post low_p, hig_p;
++
++  u3_assert(u3R == &u3H->rod_u);
++
++  //  zeroes the road's lazy-page count (fut_w[0]); u3m_boot asserts zero
++  //
++  u3a_flush();
++  u3_assert(!u3R->fut_w[0]);
++
+   u3m_water(&low_p, &hig_p);
+ 
+   u3a_wait();
+ 
+-  u3_assert(u3R == &u3H->rod_u);
+-
+   u3e_save(low_p, hig_p);
+ 
+   u3a_dash();
+diff --git a/pkg/noun/manage.h b/pkg/noun/manage.h
+index 89a2b0e91d..fb80fd17f7 100644
+--- a/pkg/noun/manage.h
++++ b/pkg/noun/manage.h
+@@ -305,6 +305,12 @@ extern c3_w u3m_Ford_fresh_road_depth_w;
+         void
+         u3m_timer_set(u3_atom gap);
+ 
++      /* u3m_timer_set_soft(): a timer caught by its enclosing virtual call.
++      ** gap is @dr, gap != 0. Ordinary outer timers still take precedence.
++      */
++        void
++        u3m_timer_set_soft(u3_atom gap);
++
+       /* u3m_timer_pop(): pop a timer off the timer stack.
+       ** timer stack must be non-empty
+       */
+diff --git a/pkg/noun/nock.c b/pkg/noun/nock.c
+index c8220a0fb5..65dc6e5664 100644
+--- a/pkg/noun/nock.c
++++ b/pkg/noun/nock.c
+@@ -2034,7 +2034,14 @@ _n_hint_fore(u3_cell hin, u3_noun bus, u3_noun* clu)
+ 
+   switch ( tag ) {
+     case c3__jinx: {
+-      if ( c3n == u3ud(*clu) || u3_nul == *clu ) {
++      u3_noun gap;
++      if ( _(u3r_p(*clu, c3__soft, &gap)) &&
++           _(u3ud(gap)) && (u3_nul != gap) ) {
++        u3m_timer_set_soft(u3k(gap));
++        u3z(*clu);
++        *clu = c3__jinx;
++      }
++      else if ( c3n == u3ud(*clu) || u3_nul == *clu ) {
+         u3z(*clu);
+         *clu = u3_nul;
+       }
+diff --git a/pkg/noun/nock_tests.c b/pkg/noun/nock_tests.c
+index 8d4a7d23dc..1f1b5e017d 100644
+--- a/pkg/noun/nock_tests.c
++++ b/pkg/noun/nock_tests.c
+@@ -1,6 +1,7 @@
+ /// @file
+ 
+ #include "noun.h"
++#include <time.h>
+ 
+ /* _setup(): prepare for tests.
+ */
+@@ -62,6 +63,227 @@ _test_meme(void)
+   return ret_i;
+ }
+ 
++static u3_noun
++_increment_timer(c3_o soft_o, u3_atom gap)
++{
++  u3_noun dat = (c3y == soft_o) ? u3nc(c3__soft, gap) : gap;
++  return u3nt(11, u3nc(c3__jinx, u3nc(1, dat)),
++              u3nc(4, u3nc(1, 0)));
++}
++
++static u3_noun
++_virtual_nock(u3_noun fol)
++{
++  return u3n_nock_et(u3_nul, u3_nul, u3k(fol));
++}
++
++static c3_o
++_timeout_tone(u3_noun ton)
++{
++  u3_noun tax, tag, msg;
++  if ( !_(u3r_p(ton, 2, &tax)) || !_(u3du(tax)) ||
++       !_(u3r_cell(u3h(tax), &tag, &msg)) ||
++       (tag != c3__mean) || !_(u3ud(msg)) ) return c3n;
++  return u3r_sing_c("evaluation-budget-exceeded", msg);
++}
++
++//  Finite CPU work, long enough to exercise an actual asynchronous timer.
++//
++static u3_noun
++_spin(u3_noun a, u3_noun b)
++{
++  clock_t began = clock();
++  volatile c3_w acc = 1;
++  for (c3_w i = 0; i < 100000000; i++) {
++    acc = (acc * 1664525) + 1013904223;
++    if ( !(i & 4095) && ((clock() - began) >= CLOCKS_PER_SEC / 20) ) break;
++  }
++  return 1;
++}
++
++static u3_noun
++_long_spin(u3_noun a, u3_noun b)
++{
++  u3m_timer_set_soft(u3m_time_gap_in_mil(1000));
++  return _spin(a, b);
++}
++
++static u3_noun
++_short_spin(u3_noun a, u3_noun b)
++{
++  u3m_timer_set_soft(u3m_time_gap_in_mil(5));
++  return _spin(a, b);
++}
++
++static u3_noun
++_allocate_cells(u3_noun a, u3_noun b)
++{
++  u3m_timer_set_soft(u3m_time_gap_in_mil(5));
++  for (c3_w batch = 0; batch < 1024; batch++) {
++    u3_noun list = u3_nul;
++    for (c3_w i = 0; i < 10000; i++) list = u3nc(i, list);
++    u3z(list);
++  }
++  return 1;
++}
++
++static u3_noun
++_allocation_timeout(u3_noun arg)
++{
++  return u3m_soft_run(u3_nul, _allocate_cells, 0, 0);
++}
++
++static u3_noun
++_outer_short(u3_noun a, u3_noun b)
++{
++  u3m_timer_set_soft(u3m_time_gap_in_mil(5));
++  return u3m_soft_run(u3_nul, _long_spin, 0, 0);
++}
++
++static u3_noun
++_outer_continues(u3_noun a, u3_noun b)
++{
++  u3m_timer_set_soft(u3m_time_gap_in_mil(1000));
++  u3_noun ton = u3m_soft_run(u3_nul, _short_spin, 0, 0);
++  c3_o ok_o = _timeout_tone(ton);
++  u3z(ton);
++  u3m_timer_pop();
++  return (c3y == ok_o) ? 7 : 0;
++}
++
++static u3_noun
++_nested_outer(u3_noun arg)
++{
++  return u3m_soft_run(u3_nul, _outer_short, 0, 0);
++}
++
++static u3_noun
++_nested_inner(u3_noun arg)
++{
++  return u3m_soft_run(u3_nul, _outer_continues, 0, 0);
++}
++
++static u3_noun
++_external_limit(u3_noun arg)
++{
++  return u3m_soft_run(u3_nul, _long_spin, 0, 0);
++}
++
++static u3_noun
++_interrupt(u3_noun a, u3_noun b)
++{
++  u3m_timer_set_soft(u3m_time_gap_in_mil(1000));
++  u3m_signal(c3__intr);
++  return 0;
++}
++
++static u3_noun
++_external_interrupt(u3_noun arg)
++{
++  return u3m_soft_run(u3_nul, _interrupt, 0, 0);
++}
++
++static u3_noun
++_unexpired(u3_noun arg)
++{
++  u3_noun fol = _increment_timer(c3y, u3m_time_gap_in_mil(20));
++  u3_noun ton = _virtual_nock(fol);
++  c3_o ok_o = __((u3h(ton) == 0) && (u3t(ton) == 1));
++  u3z(fol);
++  u3z(ton);
++  //  The returned timer must be gone while the caller does more work.
++  _spin(0, 0);
++  return (c3y == ok_o) ? 7 : 0;
++}
++
++static c3_i
++_test_timers(void)
++{
++  u3_noun res, ton;
++  c3_i ok_i = 1;
++
++  res = u3m_soft(0, _virtual_nock, _increment_timer(c3y, 1));
++  if ( !_(u3r_p(res, 0, &ton)) || !_( _timeout_tone(ton)) ) {
++    u3m_p("soft timeout escaped or returned success", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  res = u3m_soft(0, _virtual_nock, u3nc(0, 0));
++  if ( !_(u3r_p(res, 0, &ton)) || (2 != u3h(ton)) ) ok_i = 0;
++  u3z(res);
++
++  res = u3m_soft(0, _virtual_nock, _increment_timer(c3n, 1));
++  if ( c3__alrm != u3h(res) ) {
++    u3m_p("ordinary timer was swallowed", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  res = u3m_soft(0, _nested_outer, 0);
++  if ( !_(u3r_p(res, 0, &ton)) || !_( _timeout_tone(ton)) ) {
++    u3m_p("outer virtual timer was swallowed by child", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  res = u3m_soft(0, _nested_inner, 0);
++  if ( !_(u3r_p(res, 0, &ton)) || !_(u3r_p(ton, 0, &ton)) || (7 != ton) ) {
++    u3m_p("caller did not continue after child timeout", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  res = u3m_soft(5, _external_limit, 0);
++  if ( c3__alrm != u3h(res) ) {
++    u3m_p("outer process timer was swallowed", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  res = u3m_soft(0, _external_interrupt, 0);
++  if ( c3__intr != u3h(res) ) {
++    u3m_p("interrupt was swallowed", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  res = u3m_soft(0, _unexpired, 0);
++  if ( !_(u3r_p(res, 0, &ton)) || (7 != ton) ) {
++    u3m_p("returned timer leaked into caller", res);
++    ok_i = 0;
++  }
++  u3z(res);
++
++  u3_noun kept = u3nc(42, u3i_string("caller-owned-state"));
++  u3m_grab(kept, u3_none);
++  c3_w before_w = u3a_open(u3R);
++  for (c3_w i = 0; i < 64; i++) {
++    res = (i & 1)
++      ? u3m_soft(0, _allocation_timeout, 0)
++      : u3m_soft(0, _virtual_nock, _increment_timer(c3y, 1));
++    if ( !_(u3r_p(res, 0, &ton)) || !_( _timeout_tone(ton)) ) {
++      u3m_p("repeated recovery did not return a timeout", res);
++      ok_i = 0;
++    }
++    u3z(res);
++    res = u3m_soft(0, _virtual_nock, u3nc(4, u3nc(1, 0)));
++    if ( !_(u3r_p(res, 0, &ton)) || !_(u3r_p(ton, 0, &ton)) || (1 != ton) ) ok_i = 0;
++    u3z(res);
++  }
++  u3m_grab(kept, u3_none);
++  if ( (42 != u3h(kept)) ||
++       !_(u3r_sing_c("caller-owned-state", u3t(kept))) ||
++       (u3a_open(u3R) < before_w) ) {
++    fprintf(stderr, "timeout recovery lost caller state or loom space\r\n");
++    ok_i = 0;
++  }
++  u3z(kept);
++
++  fprintf(stderr, "test bounded timers: %s\r\n", ok_i ? "ok" : "failed");
++  return ok_i;
++}
++
+ /* main(): run all test cases.
+ */
+ int
+@@ -69,6 +291,8 @@ main(int argc, char* argv[])
+ {
+   _setup();
+ 
++  if ( !_test_timers() ) exit(1);
++
+   if ( !_test_meme() ) {
+     fprintf(stderr, "test meme: failed\r\n");
+     exit(1);
+diff --git a/pkg/noun/palloc.c b/pkg/noun/palloc.c
+index 4e4f73a118..2698f47df4 100644
+--- a/pkg/noun/palloc.c
++++ b/pkg/noun/palloc.c
+@@ -32,8 +32,29 @@
+   #define HEAP u3R->hep
+ #endif
+ 
++//  fully-free chunk pages left linked in their chunk list, per road.
++//
++//    unlinking a page the moment it empties walks its list from the head
++//    (the list is singly linked), which is quadratic when a large
++//    structure is freed: 13 minutes inside one u3h_free() on ~dashus-navnul
++//    (2026-10-13). instead, an emptied page stays linked (it is a valid
++//    page with every chunk free) and _flush_chunks() releases them all in
++//    one walk once LAZY_MAX have accumulated.
++//
++//    NB: the count lives in the road's futureproof buffer, which must be
++//    zero whenever the loom is saved (u3m_boot asserts it, as a downgrade
++//    check): u3m_save() flushes first.
++//
++#ifndef LAZY
++  #define LAZY (u3R->fut_w[0])
++#endif
++#define LAZY_MAX 1024
++
++static c3_t _eager_t;  //  no lazy pages while packing
++
+ static u3_post _imalloc(c3_w);
+ static void  _ifree(u3_post);
++static void  _flush_chunks(void);
+ 
+ static __inline__ c3_w
+ _abs_dif(c3_w a_w, c3_w b_w)
+@@ -138,23 +159,18 @@ _extend_directory(c3_w siz_w)  // num pages
+     nex_w &= ~((1U << u3a_page) - 1);
+     dif_w = nex_w >> u3a_page; // new pages
+   } while ( dif_w != pif_w );
+-  HEAP.pag_p  = u3R->hat_p;
+-  HEAP.pag_p += HEAP.off_ws * (c3_ws)nex_w;
+-  u3R->hat_p += HEAP.dir_ws * (c3_ws)nex_w; //  XX overflow
+ 
+-  //  XX depend on the guard page for these?
++  //  Bail before changing the directory or road boundary: the error ball
++  //  still needs this allocator, and u3m_fall uses hat_p as the parent's cap.
+   //
+-  if ( 1 == HEAP.dir_ws ) {
+-    if ( u3R->hat_p >= u3R->cap_p ) {
+-      u3m_bail(c3__meme); return;
+-    }
+-  }
+-  else {
+-    if ( u3R->hat_p <= u3R->cap_p ) {
+-      u3m_bail(c3__meme); return;
+-    }
++  if ( nex_w >= u3a_open(u3R) ) {
++    u3m_bail(c3__meme); return;
+   }
+ 
++  HEAP.pag_p  = u3R->hat_p;
++  HEAP.pag_p += HEAP.off_ws * (c3_ws)nex_w;
++  u3R->hat_p += HEAP.dir_ws * (c3_ws)nex_w;
++
+   dir_u = u3to(u3p(u3a_crag), HEAP.pag_p);
+   pag_w = post_to_page(HEAP.pag_p);
+ 
+@@ -194,6 +210,7 @@ static u3_post
+ _extend_heap(c3_w siz_w)  // num pages
+ {
+   u3_post pag_p;
++  c3_d    len_d = (c3_d)siz_w << u3a_page;
+ 
+ #ifdef SANITY
+   assert( HEAP.siz_w >= HEAP.len_w );
+@@ -203,27 +220,26 @@ _extend_heap(c3_w siz_w)  // num pages
+     _extend_directory(siz_w);
+   }
+ 
+-  pag_p  = u3R->hat_p;
+-  pag_p += HEAP.off_ws * (c3_ws)(siz_w << u3a_page);
+-
+-  u3R->hat_p += HEAP.dir_ws * (c3_ws)(siz_w << u3a_page);
+-
+-  //  XX depend on the guard page for these?
++  //  Check the distance before pointer arithmetic (including south-road
++  //  underflow). An oversized allocation must leave a valid road to unwind.
+   //
++  if ( len_d >= u3a_open(u3R) ) {
++    return u3m_bail(c3__meme);
++  }
++
++  c3_w len_w = (c3_w)len_d;
+   if ( 1 == HEAP.dir_ws ) {
+-    if ( u3R->hat_p >= u3R->cap_p ) {
+-      return u3m_bail(c3__meme);
+-    }
++    pag_p = u3R->hat_p;
++    u3R->hat_p += len_w;
+   }
+   else {
+-    if ( u3R->hat_p <= u3R->cap_p ) {
+-      return u3m_bail(c3__meme);
+-    }
++    u3R->hat_p -= len_w;
++    pag_p = u3R->hat_p;
+   }
+ 
+   HEAP.len_w += siz_w;
+ 
+-  ASAN_POISON_MEMORY_REGION(u3a_into(pag_p), siz_w << (u3a_page + 2));
++  ASAN_POISON_MEMORY_REGION(u3a_into(pag_p), (c3_z)len_d << 2);
+ 
+ #ifdef SANITY
+   assert( HEAP.len_w == post_to_page(u3R->hat_p + HEAP.off_ws) );
+@@ -535,8 +551,8 @@ static u3_post
+ _imalloc(c3_w len_w)
+ {
+   if ( len_w > (1U << (u3a_page - 1)) ) {
+-    len_w  += (1U << u3a_page) - 1;
+-    len_w >>= u3a_page;
++    //  Round up without wrapping a near-UINT32_MAX request to zero pages.
++    len_w = 1U + ((len_w - 1U) >> u3a_page);
+     //  XX poison suffix
+     return _alloc_pages(len_w);
+   }
+@@ -845,8 +861,15 @@ _free_words(u3_post som_p, c3_w pag_w, u3_post dir_p)
+       *bit_p = dir_p;
+     }
+     else if ( pag_u->fre_s == hun_u->ful_s ) {
+-      //  page now free
++      //  page now free: leave it linked, release it in a batch
+       //
++      if ( !_eager_t && !u3a_Mark.bit_w ) {
++        if ( ++LAZY >= LAZY_MAX ) {
++          _flush_chunks();
++        }
++        return;
++      }
++
+       while ( *bit_p != dir_p ) {
+         bit_u = u3to(u3a_crag, *bit_p);
+         bit_p = &(bit_u->nex_p);
+@@ -866,6 +889,70 @@ _free_words(u3_post som_p, c3_w pag_w, u3_post dir_p)
+   }
+ }
+ 
++/* _flush_chunks(): unlink and release every fully-free chunk page.
++**
++**   NB: may recurse (releasing pages frees their metadata chunks, which can
++**   empty LAZY_MAX more pages); that's safe, the dead chain is off the lists,
++**   and each level only frees chunks of smaller classes.
++*/
++static void
++_flush_chunks(void)
++{
++  c3_w fun_w;
++
++  do {
++    u3_post   dead_p = 0;
++    u3_post  *bit_p;
++    u3a_crag *pag_u;
++
++    LAZY  = 0;
++    fun_w = 0;
++
++    //  unlink every fully-free page onto a dead chain (no allocation
++    //  happens here, so the lists hold still while they're walked)
++    //
++    for ( c3_g bit_g = 0; bit_g < u3a_crag_no; bit_g++ ) {
++      const u3a_hunk_dose *hun_u = &(u3a_Hunk[bit_g]);
++      bit_p = &(HEAP.wee_p[bit_g]);
++
++      while ( *bit_p ) {
++        u3_post dir_p = *bit_p;
++        pag_u = u3to(u3a_crag, dir_p);
++
++        if ( pag_u->fre_s == hun_u->ful_s ) {
++          *bit_p       = pag_u->nex_p;
++          pag_u->nex_p = dead_p;
++          dead_p       = dir_p;
++          fun_w++;
++        }
++        else {
++          bit_p = &(pag_u->nex_p);
++        }
++      }
++    }
++
++    //  release them, as _free_words() would have; a page whose metadata
++    //  is a separate chunk frees that chunk, which can empty another
++    //  page (counted in LAZY, so the loop goes round again)
++    //
++    while ( dead_p ) {
++      u3_post dir_p = dead_p, som_p;
++      pag_u  = u3to(u3a_crag, dir_p);
++      dead_p = pag_u->nex_p;
++
++      u3to(u3p(u3a_crag), HEAP.pag_p)[pag_u->pag_w] = u3a_head_pg;
++      som_p = page_to_post(pag_u->pag_w);
++      if ( som_p != dir_p ) {
++        _ifree(dir_p);
++      }
++      _ifree(som_p);
++    }
++  }
++  while ( fun_w && LAZY );
++
++  LAZY = 0;
++}
++
+ static void
+ _ifree(u3_post som_p)
+ {
+diff --git a/pkg/noun/retrieve.c b/pkg/noun/retrieve.c
+index 17bb9df2c0..7d93627893 100644
+--- a/pkg/noun/retrieve.c
++++ b/pkg/noun/retrieve.c
+@@ -3,7 +3,6 @@
+ #include "retrieve.h"
+ 
+ #include "allocate.h"
+-#include "hashtable.h"
+ #include "imprison.h"
+ #include "murmur3.h"
+ #include "trace.h"
+@@ -354,41 +353,148 @@ _cr_sing_atom(u3_atom a, u3_noun b)
+   return c3y;
+ }
+ 
+-/* _cr_sing_cape_test(): check for previous comparison of [a] and [b].
++/* Comparison-local union/find table. Keys are shifted noun offsets plus one
++** (zero is empty), never noun references. Raw road storage is reclaimed on a
++** bail; normal returns free it explicitly. No table survives a comparison.
+ */
+-static inline c3_o
+-_cr_sing_cape_test(u3p(u3h_root) har_p, u3_noun a, u3_noun b)
++typedef struct {
++  c3_w key_w;
++  c3_w par_w;
++  c3_w ran_w;
++} eqclass;
++
++typedef struct {
++  eqclass* ent_u;
++  c3_w     len_w;
++  c3_w     use_w;
++} eqtable;
++
++//  Optional comparison bookkeeping, capped at 768 MiB (1.1 GiB while growing).
++//  Once full, keep using proved classes but compare uncached nouns normally.
++//  Dropping an optimization must never invent an equality or raise %meme.
++//
++#define EQTABLE_MAX (1U << 26)
++
++/* _cr_sing_cape_slot(): find the entry or its empty insertion slot.
++*/
++static eqclass*
++_cr_sing_cape_slot(eqtable* tab_u, c3_w key_w)
++{
++  c3_w mix_w = key_w;
++  mix_w ^= mix_w >> 16;
++  mix_w *= 0x7feb352d;
++  mix_w ^= mix_w >> 15;
++  mix_w *= 0x846ca68b;
++  mix_w ^= mix_w >> 16;
++  c3_w i_w = mix_w & (tab_u->len_w - 1);
++
++  while ( tab_u->ent_u[i_w].key_w &&
++          tab_u->ent_u[i_w].key_w != key_w ) {
++    i_w = (i_w + 1) & (tab_u->len_w - 1);
++  }
++  return &tab_u->ent_u[i_w];
++}
++
++/* _cr_sing_cape_grow(): reserve space for inserts, or decline optional caching.
++*/
++static c3_o
++_cr_sing_cape_grow(eqtable* tab_u, c3_w add_w)
++{
++  if ( (tab_u->use_w + add_w) <= (tab_u->len_w >> 1) ) return c3y;
++
++  //  Keep ample room for allocator metadata and the comparison stack. The
++  //  old table remains allocated until rehashing completes. Saturation does
++  //  not discard its classes, so their parent references remain valid.
++  //
++  if ( (tab_u->len_w >= EQTABLE_MAX) ||
++       ((c3_d)tab_u->len_w * 2 * c3_wiseof(eqclass) >=
++        (u3a_open(u3R) >> 1)) ) return c3n;
++  eqtable nex_u = {0};
++  nex_u.len_w = tab_u->len_w << 1;
++  nex_u.use_w = tab_u->use_w;
++  nex_u.ent_u = u3a_calloc(nex_u.len_w, sizeof(eqclass));
++  for ( c3_w i_w = 0; i_w < tab_u->len_w; i_w++ ) {
++    eqclass ent_u = tab_u->ent_u[i_w];
++    if ( ent_u.key_w ) *_cr_sing_cape_slot(&nex_u, ent_u.key_w) = ent_u;
++  }
++  u3a_free(tab_u->ent_u);
++  *tab_u = nex_u;
++  return c3y;
++}
++
++/* _cr_sing_cape_root(): find an equality class, compressing its parent path.
++** An absent key is a singleton root of rank zero.
++*/
++static c3_w
++_cr_sing_cape_root(eqtable* tab_u, c3_w key_w)
+ {
+-  u3_noun key = u3nc(u3a_to_off(a) >> u3a_vits,
+-                     u3a_to_off(b) >> u3a_vits);
+-  u3_noun val;
++  c3_w rot_w = key_w;
++  eqclass* ent_u = _cr_sing_cape_slot(tab_u, rot_w);
++  while ( ent_u->key_w && rot_w != ent_u->par_w ) {
++    rot_w = ent_u->par_w;
++    ent_u = _cr_sing_cape_slot(tab_u, rot_w);
++  }
++  while ( key_w != rot_w ) {
++    ent_u = _cr_sing_cape_slot(tab_u, key_w);
++    c3_w par_w = ent_u->par_w;
++    ent_u->par_w = rot_w;
++    ent_u->ran_w = 0;
++    key_w = par_w;
++  }
++  return rot_w;
++}
+ 
++/* _cr_sing_cape_test(): check for an already proved equality of [a] and [b].
++*/
++static inline c3_o
++_cr_sing_cape_test(eqtable* tab_u, u3_noun a, u3_noun b)
++{
+   u3t_off(euq_o);
+-  val = u3h_git(har_p, key);
++  c3_w lef_w = _cr_sing_cape_root(tab_u, (u3a_to_off(a) >> u3a_vits) + 1);
++  c3_w rit_w = _cr_sing_cape_root(tab_u, (u3a_to_off(b) >> u3a_vits) + 1);
+   u3t_on(euq_o);
+-
+-  u3z(key);
+-  return ( u3_none != val ) ? c3y : c3n;
++  return (lef_w == rit_w) ? c3y : c3n;
+ }
+ 
+-/* _cr_sing_cape_keep(): store [a] and [b] to short-circuit subsequent tests.
+-**                   NB: [a] and [b] (which MUST be equal nouns)
+-**                       are cons'd as offsets (direct atoms) to avoid refcount churn.
++/* _cr_sing_cape_keep(): merge only proved equal nouns, using union by rank.
++** Equal-rank ties keep the left root, as in the noun-table implementation.
+ */
+ static inline void
+-_cr_sing_cape_keep(u3p(u3h_root) har_p, u3_noun a, u3_noun b)
++_cr_sing_cape_keep(eqtable* tab_u, u3_noun a, u3_noun b)
+ {
+-  //  only store if [a] and [b] are copies of each other
+-  //
+   if ( a != b ) {
+-    c3_dessert( (c3n == u3a_is_cat(a)) && (c3n == u3a_is_cat(b)) );
+-
+-    u3_noun key = u3nc(u3a_to_off(a) >> u3a_vits,
+-                       u3a_to_off(b) >> u3a_vits);
++    c3_dessert((c3n == u3a_is_cat(a)) && (c3n == u3a_is_cat(b)));
+     u3t_off(euq_o);
+-    u3h_put(har_p, key, c3y);
++    c3_w lef_w = _cr_sing_cape_root(tab_u, (u3a_to_off(a) >> u3a_vits) + 1);
++    c3_w rit_w = _cr_sing_cape_root(tab_u, (u3a_to_off(b) >> u3a_vits) + 1);
++    if ( lef_w != rit_w ) {
++      c3_w add_w = !_cr_sing_cape_slot(tab_u, lef_w)->key_w
++                 + !_cr_sing_cape_slot(tab_u, rit_w)->key_w;
++      if ( c3n == _cr_sing_cape_grow(tab_u, add_w) ) {
++        u3t_on(euq_o);
++        return;
++      }
++      eqclass* lef_u = _cr_sing_cape_slot(tab_u, lef_w);
++      if ( !lef_u->key_w ) {
++        *lef_u = (eqclass){lef_w, lef_w, 0};
++        tab_u->use_w++;
++      }
++      eqclass* rit_u = _cr_sing_cape_slot(tab_u, rit_w);
++      if ( !rit_u->key_w ) {
++        *rit_u = (eqclass){rit_w, rit_w, 0};
++        tab_u->use_w++;
++      }
++      if ( lef_u->ran_w < rit_u->ran_w ) {
++        lef_u->par_w = rit_w;
++        lef_u->ran_w = 0;
++      }
++      else {
++        rit_u->par_w = lef_w;
++        if ( lef_u->ran_w == rit_u->ran_w ) lef_u->ran_w++;
++        rit_u->ran_w = 0;
++      }
++    }
+     u3t_on(euq_o);
+-    u3z(key);
+   }
+ }
+ 
+@@ -404,7 +510,7 @@ _cr_sing_wed(u3_noun *restrict a, u3_noun *restrict b)
+  *                  (tightly coupled to _cr_sing)
+  */
+ static c3_o
+-_cr_sing_cape(u3a_pile* pil_u, u3p(u3h_root) har_p)
++_cr_sing_cape(u3a_pile* pil_u, eqtable* tab_u)
+ {
+   eqframe* fam_u = u3a_peek(pil_u);
+   u3_noun   a, b;
+@@ -449,7 +555,7 @@ _cr_sing_cape(u3a_pile* pil_u, u3p(u3h_root) har_p)
+           }
+           //  short-circuiting re-comparison check
+           //
+-          else if ( c3y == _cr_sing_cape_test(har_p, a, b) ) {
++          else if ( c3y == _cr_sing_cape_test(tab_u, a, b) ) {
+             fam_u = u3a_pop(pil_u);
+             continue;
+           }
+@@ -490,9 +596,9 @@ _cr_sing_cape(u3a_pile* pil_u, u3p(u3h_root) har_p)
+       } break;
+     }
+ 
+-    //  track equal pairs to short-circuit possible (re-)comparison
++    //  merge proved equality classes to short-circuit (re-)comparison
+     //
+-    _cr_sing_cape_keep(har_p, a, b);
++    _cr_sing_cape_keep(tab_u, a, b);
+ 
+     fam_u = u3a_pop(pil_u);
+   }
+@@ -595,12 +701,13 @@ _cr_sing(u3_noun a, u3_noun b)
+ 
+     //  [ovr_s] counts comparisons, if it overflows, we've likely hit
+     //  a pathological case (highly duplicated tree), so we de-duplicate
+-    //  subsequent comparisons by maintaining a set of equal pairs.
++    //  subsequent comparisons by maintaining classes of equal nouns.
+     //
+-    if ( 0 == ++ovr_s ) {
+-      u3p(u3h_root) har_p = u3h_new();
+-      c3_o ret_o = _cr_sing_cape(&pil_u, har_p);
+-      u3h_free(har_p);
++    if ( (0 == ++ovr_s) &&
++         (u3a_open(u3R) > 2 * 1024 * c3_wiseof(eqclass)) ) {
++      eqtable tab_u = {u3a_calloc(1024, sizeof(eqclass)), 1024, 0};
++      c3_o ret_o = _cr_sing_cape(&pil_u, &tab_u);
++      u3a_free(tab_u.ent_u);
+       u3R->cap_p = pil_u.top_p;
+       return ret_o;
+     }
+diff --git a/pkg/noun/toss_tests.c b/pkg/noun/toss_tests.c
+new file mode 100644
+index 0000000000..dc31bee230
+--- /dev/null
++++ b/pkg/noun/toss_tests.c
+@@ -0,0 +1,315 @@
++/// Real loom mappings: dead-page discard must preserve live data and tracking.
++#include "noun.h"
++#include "events.h"
++#include "options.h"
++#include <fcntl.h>
++#include <signal.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <sys/wait.h>
++#include <unistd.h>
++#ifdef __APPLE__
++#include <mach/mach.h>
++#include <mach/mach_vm.h>
++#endif
++
++#define PAGE_WORDS ((c3_w)1 << u3a_page)
++#define PAGE_BYTES ((size_t)PAGE_WORDS * sizeof(c3_w))
++#define CHECK(x) do { if (!(x)) { \
++  fprintf(stderr, "toss-test:%d: %s\n", __LINE__, #x); exit(1); \
++} } while (0)
++
++static void* _page(c3_w p) { return (void*)(u3_Loom + p * PAGE_WORDS); }
++static void _setup(void) {
++  u3m_init(1 << 26); // bytes: 64 MiB virtual loom, at most 24 MiB touched
++  u3C.wag_w &= ~u3o_swap;
++  u3e_init();
++  u3m_pave(c3y);
++}
++static void _free_gap(c3_w first, c3_w count) {
++  u3_post low, high;
++  u3m_water(&low, &high);
++  CHECK(low <= first * PAGE_WORDS);
++  CHECK((first + count) * PAGE_WORDS <= high);
++}
++static void _strings(u3_noun live, const char* head, const char* tail) {
++  CHECK(c3y == u3du(live));
++  CHECK(c3y == u3ud(u3h(live)) && c3y == u3ud(u3t(live)));
++  char* h = u3r_string(u3h(live));
++  char* t = u3r_string(u3t(live));
++  CHECK(strcmp(h, head) == 0 && strcmp(t, tail) == 0);
++  free(h); free(t);
++}
++static int _dirty(c3_w p) {
++  return !!(u3P.dit_w[p >> 5] & ((c3_w)1 << (p & 31)));
++}
++static void _clean(c3_w p) {
++  u3P.dit_w[p >> 5] &= ~((c3_w)1 << (p & 31));
++}
++static void _guard(void) {
++#if defined(__APPLE__) && defined(U3_GUARD_PAGE)
++  mach_vm_address_t address = (mach_vm_address_t)_page(u3P.gar_w);
++  mach_vm_size_t size = 0;
++  vm_region_basic_info_data_64_t info;
++  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
++  mach_port_t object = MACH_PORT_NULL;
++  CHECK(KERN_SUCCESS == mach_vm_region(mach_task_self(), &address, &size,
++    VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object));
++  CHECK(address <= (mach_vm_address_t)_page(u3P.gar_w));
++  CHECK(address + size > (mach_vm_address_t)_page(u3P.gar_w));
++  CHECK(info.protection == VM_PROT_NONE);
++  if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
++#endif
++}
++
++static void _bounds(void) {
++  _setup();
++  _free_gap(128, 5);
++  c3_w* a = _page(128);
++  c3_w* b = _page(132);
++  memset(a, 0xa5, 5 * PAGE_BYTES);
++  _clean(129); _clean(130); _clean(131);
++  u3e_toss(128 * PAGE_WORDS + 1, 132 * PAGE_WORDS + PAGE_WORDS - 1);
++  CHECK(a[0] == 0xa5a5a5a5);
++  CHECK(a[PAGE_WORDS - 1] == 0xa5a5a5a5);
++  CHECK(b[0] == 0xa5a5a5a5);
++  CHECK(b[PAGE_WORDS - 1] == 0xa5a5a5a5);
++#ifdef __APPLE__
++  for (c3_w p = 129; p <= 131; p++) {
++    c3_w* words = _page(p);
++    for (c3_w j = 0; j < PAGE_WORDS; j++) CHECK(words[j] == 0);
++    CHECK(_dirty(p));
++  }
++#endif
++  c3_w bitmap = u3P.dit_w[128 >> 5];
++  u3e_toss(133 * PAGE_WORDS, 128 * PAGE_WORDS);
++  u3e_toss(128 * PAGE_WORDS, 128 * PAGE_WORDS);
++  u3e_toss(128 * PAGE_WORDS + 2, 128 * PAGE_WORDS + 3);
++  u3e_toss(UINT32_MAX, UINT32_MAX);
++  u3e_toss(0, UINT32_MAX);
++  u3e_toss(u3C.wor_i + 1, u3C.wor_i + 2);
++  CHECK(a[0] == 0xa5a5a5a5 && b[0] == 0xa5a5a5a5);
++  CHECK(bitmap == u3P.dit_w[128 >> 5]);
++  _guard();
++#ifdef U3_GUARD_PAGE
++  c3_w guard = u3P.gar_w;
++  CHECK(guard > 133 && guard + 2 < u3P.pag_w);
++  memset(_page(guard - 1), 0x71, PAGE_BYTES);
++  memset(_page(guard + 1), 0x72, PAGE_BYTES);
++  u3e_toss((guard - 1) * PAGE_WORDS, (guard + 2) * PAGE_WORDS);
++  CHECK(guard == u3P.gar_w && _dirty(guard));
++  _guard();
++#ifdef __APPLE__
++  CHECK(*(c3_w*)_page(guard - 1) == 0);
++  CHECK(*(c3_w*)_page(guard + 1) == 0);
++#endif
++#endif
++}
++
++static void _file_gap(void) {
++  _setup();
++  _free_gap(160, 3);
++  char path[] = "/tmp/vere-toss-file-XXXXXX";
++  int fd = mkstemp(path);
++  CHECK(fd >= 0);
++  CHECK(unlink(path) == 0);
++  unsigned char* bytes = malloc(PAGE_BYTES * 3);
++  CHECK(bytes != NULL);
++  memset(bytes, 0x6d, PAGE_BYTES * 3);
++  CHECK(write(fd, bytes, PAGE_BYTES * 3) == (ssize_t)(PAGE_BYTES * 3));
++  void* gap = _page(160);
++  CHECK(gap == mmap(gap, PAGE_BYTES * 3, PROT_READ,
++                    MAP_FIXED | MAP_PRIVATE, fd, 0));
++  for (c3_w p = 160; p < 163; p++) _clean(p);
++  u3e_toss(160 * PAGE_WORDS, 163 * PAGE_WORDS);
++#ifdef __APPLE__
++  for (c3_w p = 160; p < 163; p++) {
++    CHECK(*(c3_w*)_page(p) == 0 && _dirty(p));
++    memset(_page(p), 0x81, PAGE_BYTES); // regrowth must be writable
++  }
++#endif
++  CHECK(pread(fd, bytes, PAGE_BYTES * 3, 0) == (ssize_t)(PAGE_BYTES * 3));
++  for (size_t i = 0; i < PAGE_BYTES * 3; i++) CHECK(bytes[i] == 0x6d);
++  close(fd); free(bytes);
++  _guard();
++}
++
++#ifdef __APPLE__
++static task_vm_info_data_t _memory(void) {
++  task_vm_info_data_t info;
++  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
++  CHECK(KERN_SUCCESS == task_info(mach_task_self(), TASK_VM_INFO,
++                                  (task_info_t)&info, &count));
++  return info;
++}
++#endif
++static void _repeated(void) {
++  _setup();
++  const c3_w first = 128, pages = 1536; // 24 MiB; below midpoint guard
++#ifdef U3_GUARD_PAGE
++  CHECK(first + pages < u3P.gar_w);
++#endif
++  u3_noun live = u3nc(u3i_string("live-north"), u3i_string("live-south"));
++  c3_w hash = u3r_mug(live);
++  _free_gap(first, pages);
++  for (unsigned n = 0; n < 3; n++) {
++    memset(_page(first), 0x51 + n, pages * PAGE_BYTES);
++#ifdef __APPLE__
++    task_vm_info_data_t before = _memory();
++#endif
++    u3e_toss(first * PAGE_WORDS, (first + pages) * PAGE_WORDS);
++    CHECK(hash == u3r_mug(live));
++    _strings(live, "live-north", "live-south");
++#ifdef __APPLE__
++    task_vm_info_data_t after = _memory();
++    fprintf(stderr, "toss cycle %u footprint %llu -> %llu resident %llu -> %llu\n",
++      n, (unsigned long long)before.phys_footprint,
++      (unsigned long long)after.phys_footprint,
++      (unsigned long long)before.resident_size,
++      (unsigned long long)after.resident_size);
++    CHECK(before.phys_footprint > after.phys_footprint + pages * PAGE_BYTES / 2);
++    CHECK(before.resident_size > after.resident_size + pages * PAGE_BYTES / 2);
++#endif
++    _guard();
++  }
++  u3z(live);
++}
++
++static void _snapshot(void) {
++  _setup();
++  char dir[] = "/tmp/vere-toss-snapshot-XXXXXX";
++  CHECK(mkdtemp(dir) != NULL);
++  char urb[256], chk[256], image[256];
++  snprintf(urb, sizeof urb, "%s/.urb", dir);
++  snprintf(chk, sizeof chk, "%s/.urb/chk", dir);
++  snprintf(image, sizeof image, "%s/image.bin", chk);
++  CHECK(mkdir(urb, 0700) == 0 && mkdir(chk, 0700) == 0);
++  CHECK(c3y == u3e_live(c3y, dir));
++  u3_noun live = u3nc(u3i_string("snapshot-live"), u3i_string("unchanged"));
++  c3_w hash = u3r_mug(live);
++  const c3_w atom_bytes = 256 * 1024;
++  c3_y* payload = malloc(atom_bytes);
++  CHECK(payload != NULL);
++  memset(payload, 0x39, atom_bytes);
++  u3_atom large = u3i_bytes(atom_bytes, payload);
++  u3_post low, high;
++  u3m_water(&low, &high);
++  u3e_toss(low, high);
++  CHECK(hash == u3r_mug(live));
++  _strings(live, "snapshot-live", "unchanged");
++  u3e_save(low, high);
++  c3_w old_image = u3P.img_u.pgs_w;
++  u3z(large);
++  u3a_flush();
++  u3m_water(&low, &high);
++  c3_w first_dead = (low + PAGE_WORDS - 1) >> u3a_page;
++  c3_w end_dead = high >> u3a_page;
++  if (end_dead > old_image) end_dead = old_image;
++  // Fail rather than claim coverage if allocator metadata pins the image.
++  CHECK(first_dead < end_dead);
++  c3_w clean_dead = first_dead;
++  while (clean_dead < end_dead && _dirty(clean_dead)) clean_dead++;
++  CHECK(clean_dead < end_dead);
++  fprintf(stderr, "snapshot old image %u pages, dead [%u,%u), clean witness %u\n",
++          old_image, first_dead, end_dead, clean_dead);
++  u3e_toss(low, high);
++#ifdef __APPLE__
++  CHECK(_dirty(clean_dead));
++  CHECK(*(c3_w*)_page(clean_dead) == 0);
++#endif
++  // Keep the old image: an intervening smaller save would itself dirty or
++  // remap these pages, masking a missing dirty-bit update in toss.
++  CHECK(u3P.img_u.pgs_w == old_image);
++  memset(payload, 0x7b, atom_bytes);
++  large = u3i_bytes(atom_bytes, payload);
++  u3m_water(&low, &high);
++  CHECK(low > clean_dead * PAGE_WORDS);
++  u3r_bytes(0, atom_bytes, payload, large);
++  for (c3_w i = 0; i < atom_bytes; i++) CHECK(payload[i] == 0x7b);
++  u3e_save(low, high);
++  u3e_stop();
++  // This is an in-process reload, not exec: restore the writable loom that
++  // a fresh process supplies before no-demand read() copies image bytes.
++  // Keep the guard protected; u3e_live restores snapshot page protections.
++  CHECK(c3y == u3e_yolo());
++  // Reload the actual saved mapping; the noun's loom offset must survive.
++  CHECK(c3n == u3e_live(c3n, dir));
++  CHECK(hash == u3r_mug(live));
++  _strings(live, "snapshot-live", "unchanged");
++  CHECK(u3r_met(3, large) == atom_bytes);
++  u3r_bytes(0, atom_bytes, payload, large);
++  for (c3_w i = 0; i < atom_bytes; i++) CHECK(payload[i] == 0x7b);
++  free(payload);
++  _guard();
++  u3e_stop();
++  CHECK(unlink(image) == 0);
++  CHECK(rmdir(chk) == 0 && rmdir(urb) == 0 && rmdir(dir) == 0);
++}
++
++static void _snapshot_no_demand(void) {
++  u3C.wag_w |= u3o_no_demand;
++  _snapshot();
++}
++
++static u3_noun _road_leaf(u3_noun arg) {
++  CHECK(c3y == u3a_is_north(u3R));
++  u3_noun live = u3nc(u3i_string("inner-north"), u3i_string("retained"));
++  u3_post low, high;
++  u3m_water(&low, &high);
++  u3e_toss(low, high);
++  _strings(live, "inner-north", "retained");
++  u3z(arg);
++  return live;
++}
++
++static u3_noun _road_outer(u3_noun arg) {
++  CHECK(c3y == u3a_is_south(u3R));
++  u3_noun live = u3nc(u3i_string("inner-south"), u3i_string("retained"));
++  for (unsigned n = 0; n < 3; n++) {
++    // u3m_soft is a home-road boundary. Nested roads use its lower-level
++    // hate/love pair, which preserves the parent's cap and copies the result.
++    u3m_hate(1 << 18);
++    u3_noun result = _road_leaf(u3_nul);
++    result = u3m_love(result);
++    CHECK(c3y == u3a_is_south(u3R));
++    _strings(result, "inner-north", "retained");
++    _strings(live, "inner-south", "retained");
++    u3z(result);
++    u3_post low, high;
++    u3m_water(&low, &high);
++    u3e_toss(low, high);
++    _strings(live, "inner-south", "retained");
++  }
++  u3z(arg);
++  return live;
++}
++
++static void _roads(void) {
++  _setup();
++  u3_noun live = u3nc(u3i_string("home-north"), u3i_string("retained"));
++  for (unsigned n = 0; n < 3; n++) {
++    u3_noun result = u3m_soft(0, _road_outer, u3_nul);
++    CHECK(c3y == u3du(result) && u3h(result) == 0);
++    _strings(u3t(result), "inner-south", "retained");
++    _strings(live, "home-north", "retained");
++    u3z(result);
++    _guard();
++  }
++  u3z(live);
++}
++
++int main(void) {
++  void (*cases[])(void) = {
++    _bounds, _file_gap, _repeated, _snapshot, _snapshot_no_demand, _roads
++  };
++  for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
++    pid_t pid = fork();
++    CHECK(pid >= 0);
++    if (!pid) { cases[i](); _exit(0); }
++    int status;
++    CHECK(waitpid(pid, &status, 0) == pid);
++    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++  }
++  fprintf(stderr, "toss-test: all cases passed\n");
++  return 0;
++}
+diff --git a/pkg/vere/io/conn.c b/pkg/vere/io/conn.c
+index 6ee6eb30ca..949e9ff09e 100644
+--- a/pkg/vere/io/conn.c
++++ b/pkg/vere/io/conn.c
+@@ -288,6 +288,11 @@ _conn_close_chan(u3_shan* san_u, u3_chan* can_u)
+   u3_chan*  inn_u;
+   u3_cran*  ran_u;
+ 
++  if ( uv_is_closing((uv_handle_t*)&can_u->mor_u.pyp_u) ) {
++    return;
++  }
++  can_u->liv_o = c3n;
++
+   //  unset chan on all pending requests.
+   //
+   for ( ran_u = can_u->ran_u; ran_u; ran_u = ran_u->nex_u ) {
+@@ -338,9 +343,9 @@ _conn_moor_bail(void* ptr_v, ssize_t err_i, const c3_c* err_c)
+   if ( err_i != UV_EOF ) {
+     u3l_log("conn: moor bail %zd %s", err_i, err_c);
+     if ( _(can_u->liv_o) ) {
++      can_u->liv_o = c3n;
+       _conn_send_noun(can_u, u3nq(0, c3__bail, u3i_word(err_i),
+                       u3i_string(err_c)));
+-      can_u->liv_o = c3n;
+     }
+   }
+ 
+@@ -710,7 +715,7 @@ _conn_sock_cb(uv_stream_t* sem_u, c3_i tas_i)
+   can_u->mor_u.ptr_v = can_u;
+   can_u->mor_u.pok_f = _conn_moor_poke;
+   can_u->mor_u.bal_f = _conn_moor_bail;
+-  can_u->mor_u.fag_w = 1; // XX cleanup, nonzero means ignore EOF
++  can_u->mor_u.fag_w = 1; // defer EOF until the response write drains
+   can_u->coq_l = san_u->nex_l++;
+   can_u->san_u = san_u;
+   err_i = uv_timer_init(u3L, &can_u->mor_u.tim_u);
+@@ -874,10 +879,6 @@ _conn_ef_handle(u3_conn*  con_u,
+       can_u->mor_u.bal_f(can_u, -4, "handle-unknown");
+       u3_king_bail();
+     }
+-
+-    if ( !uv_is_readable((uv_stream_t*)&con_u->san_u->pyp_u) ) {
+-      _conn_close_chan(con_u->san_u, can_u);
+-    }
+   }
+   else {
+     u3l_log("conn: handle-no-coq %" PRIx32 " %" PRIu32,
+diff --git a/pkg/vere/newt.c b/pkg/vere/newt.c
+index 6e8623fa46..4438d4f4aa 100644
+--- a/pkg/vere/newt.c
++++ b/pkg/vere/newt.c
+@@ -17,6 +17,17 @@
+ 
+ #include "noun.h"
+ 
++enum {
++  _newt_fag_defer_eof = 1,
++  _newt_fag_eof_seen = 2,
++  _newt_fag_request = 4
++};
++
++#define _newt_fag_pipe_closed  (1U << 30)
++#define _newt_fag_timer_closed (1U << 31)
++#define _newt_fag_closed       \
++  (_newt_fag_pipe_closed | _newt_fag_timer_closed)
++
+ /* _newt_mess_head(): await next msg header.
+ */
+ static void
+@@ -52,6 +63,10 @@ _newt_meat_plan(u3_moat* mot_u, u3_meat* met_u)
+   else {
+     mot_u->ent_u = mot_u->ext_u = met_u;
+   }
++
++  if ( mot_u->fag_w & _newt_fag_defer_eof ) {
++    mot_u->fag_w += _newt_fag_request;
++  }
+ }
+ 
+ static void
+@@ -181,8 +196,13 @@ _newt_read_cb(uv_stream_t*    str_u,
+       fprintf(stderr, "newt: read failed %s\r\n", uv_strerror(len_i));
+       mot_u->bal_f(mot_u->ptr_v, len_i, uv_strerror(len_i));
+     }
+-    else if ( !mot_u->fag_w ) {
+-      mot_u->bal_f(mot_u->ptr_v, len_i, uv_strerror(len_i));
++    else {
++      mot_u->fag_w |= _newt_fag_eof_seen;
++
++      if ( !(mot_u->fag_w & _newt_fag_defer_eof) ||
++           (mot_u->fag_w < _newt_fag_request) ) {
++        mot_u->bal_f(mot_u->ptr_v, len_i, uv_strerror(len_i));
++      }
+     }
+ 
+   }
+@@ -252,7 +272,18 @@ static void
+ _moat_stop_cb(uv_handle_t* han_u)
+ {
+   u3_moat* mot_u = han_u->data;
+-  mot_u->bal_f(mot_u->ptr_v, -1, "");
++
++  if ( han_u == (uv_handle_t*)&mot_u->pyp_u ) {
++    mot_u->fag_w |= _newt_fag_pipe_closed;
++  }
++  else {
++    u3_assert(han_u == (uv_handle_t*)&mot_u->tim_u);
++    mot_u->fag_w |= _newt_fag_timer_closed;
++  }
++
++  if ( _newt_fag_closed == (mot_u->fag_w & _newt_fag_closed) ) {
++    mot_u->bal_f(mot_u->ptr_v, -1, "");
++  }
+ }
+ 
+ /* u3_newt_moat_stop(); newt stop/close input stream.
+@@ -260,14 +291,18 @@ _moat_stop_cb(uv_handle_t* han_u)
+ void
+ u3_newt_moat_stop(u3_moat* mot_u, u3_moor_bail bal_f)
+ {
++  if ( uv_is_closing((uv_handle_t*)&mot_u->pyp_u) ) {
++    return;
++  }
+   mot_u->pyp_u.data = mot_u;
++  mot_u->tim_u.data = mot_u;
+ 
+   if ( bal_f ) {
+     mot_u->bal_f = bal_f;
+   }
+ 
+   uv_close((uv_handle_t*)&mot_u->pyp_u, _moat_stop_cb);
+-  uv_close((uv_handle_t*)&mot_u->tim_u, 0);
++  uv_close((uv_handle_t*)&mot_u->tim_u, _moat_stop_cb);
+ 
+   //  dispose in-process message
+   //
+@@ -347,6 +382,10 @@ _newt_write_cb(uv_write_t* wri_u, c3_i sas_i)
+   c3_free(req_u->buf_y);
+   c3_free(req_u);
+ 
++  if ( uv_is_closing((uv_handle_t*)&moj_u->pyp_u) ) {
++    return;
++  }
++
+   if ( 0 != sas_i ) {
+     if ( UV_ECANCELED == sas_i ) {
+       fprintf(stderr, "newt: write canceled\r\n");
+@@ -356,6 +395,18 @@ _newt_write_cb(uv_write_t* wri_u, c3_i sas_i)
+       moj_u->bal_f(moj_u->ptr_v, sas_i, uv_strerror(sas_i));
+     }
+   }
++  else if ( moj_u->fag_w & _newt_fag_defer_eof ) {
++    if ( moj_u->fag_w >= _newt_fag_request ) {
++      moj_u->fag_w -= _newt_fag_request;
++    }
++
++    if ( (moj_u->fag_w & _newt_fag_eof_seen) &&
++         (moj_u->fag_w < _newt_fag_request) &&
++         (0 == uv_stream_get_write_queue_size(
++                 (uv_stream_t*)&moj_u->pyp_u)) ) {
++      moj_u->bal_f(moj_u->ptr_v, UV_EOF, uv_strerror(UV_EOF));
++    }
++  }
+ }
+ 
+ /* _mojo_stop_cb(): finalize stop/close output stream..
+@@ -372,6 +423,9 @@ _mojo_stop_cb(uv_handle_t* han_u)
+ void
+ u3_newt_mojo_stop(u3_mojo* moj_u, u3_moor_bail bal_f)
+ {
++  if ( uv_is_closing((uv_handle_t*)&moj_u->pyp_u) ) {
++    return;
++  }
+   moj_u->pyp_u.data = moj_u;
+ 
+   if ( bal_f ) {
+@@ -411,6 +465,7 @@ u3_newt_send(u3_mojo* moj_u, c3_d len_d, c3_y* byt_y)
+                                 buf_u, 2,
+                                 _newt_write_cb)) )
+     {
++      c3_free(req_u->buf_y);
+       c3_free(req_u);
+       fprintf(stderr, "newt: write failed %s\r\n", uv_strerror(sas_i));
+       moj_u->bal_f(moj_u->ptr_v, sas_i, uv_strerror(sas_i));
+diff --git a/pkg/vere/newt_tests.c b/pkg/vere/newt_tests.c
+index f8c5d4d300..c3bc21cabe 100644
+--- a/pkg/vere/newt_tests.c
++++ b/pkg/vere/newt_tests.c
+@@ -3,11 +3,22 @@
+ #include "noun.h"
+ #include "vere.h"
+ 
++#ifndef _WIN32
++# include <errno.h>
++# include <fcntl.h>
++# include <signal.h>
++# include <sys/socket.h>
++# include <unistd.h>
++#endif
++
+ /* _setup(): prepare for tests.
+ */
+ static void
+ _setup(void)
+ {
++#ifndef _WIN32
++  signal(SIGPIPE, SIG_IGN);
++#endif
+   u3m_init(1 << 20);
+   u3m_pave(c3y);
+ }
+@@ -335,6 +346,181 @@ _test_newt_vast(void)
+   u3z(a);
+ }
+ 
++static c3_w _stop_cb_count_w;
++
++static void
++_test_stop_cb(void* ptr_v, ssize_t err_i, const c3_c* err_c)
++{
++  _stop_cb_count_w++;
++}
++
++/* _test_newt_stop_idempotent(): repeated close requests close each stream once.
++*/
++static void
++_test_newt_stop_idempotent(void)
++{
++  u3_moat mot_u;
++  u3_mojo moj_u;
++
++  memset(&mot_u, 0, sizeof(mot_u));
++  memset(&moj_u, 0, sizeof(moj_u));
++  u3_Host.lup_u = uv_default_loop();
++
++  if ( 0 != uv_pipe_init(u3L, &mot_u.pyp_u, 0) ||
++       0 != uv_timer_init(u3L, &mot_u.tim_u) ||
++       0 != uv_pipe_init(u3L, &moj_u.pyp_u, 0) ) {
++    fprintf(stderr, "newt stop setup fail\n");
++    exit(1);
++  }
++
++  _stop_cb_count_w = 0;
++  u3_newt_moat_stop(&mot_u, _test_stop_cb);
++  u3_newt_moat_stop(&mot_u, _test_stop_cb);
++  u3_newt_mojo_stop(&moj_u, _test_stop_cb);
++  u3_newt_mojo_stop(&moj_u, _test_stop_cb);
++  uv_run(u3L, UV_RUN_DEFAULT);
++
++  if ( 2 != _stop_cb_count_w ) {
++    fprintf(stderr, "newt stop callback count fail: %u\n", _stop_cb_count_w);
++    exit(1);
++  }
++}
++
++#ifndef _WIN32
++typedef struct {
++  u3_moor  mor_u;
++  c3_w     pok_w;
++  c3_w     bal_w;
++  c3_w     cls_w;
++  ssize_t  err_i;
++} _test_chan;
++
++static void
++_test_chan_close(void* ptr_v, ssize_t err_i, const c3_c* err_c)
++{
++  _test_chan* can_u = ptr_v;
++  can_u->cls_w++;
++}
++
++static void
++_test_chan_bail(void* ptr_v, ssize_t err_i, const c3_c* err_c)
++{
++  _test_chan* can_u = ptr_v;
++
++  can_u->bal_w++;
++  can_u->err_i = err_i;
++  u3_newt_moat_stop((u3_moat*)&can_u->mor_u, _test_chan_close);
++}
++
++static c3_o
++_test_chan_poke(void* ptr_v, c3_d len_d, c3_y* byt_y)
++{
++  _test_chan* can_u = ptr_v;
++  c3_y*       out_y = c3_malloc(1);
++
++  can_u->pok_w++;
++  *out_y = 0;
++  u3_newt_send((u3_mojo*)&can_u->mor_u, 1, out_y);
++  return c3y;
++}
++
++static void
++_test_chan_open(_test_chan* can_u, c3_i* loc_i, c3_i* per_i)
++{
++  c3_i fid_i[2];
++
++  memset(can_u, 0, sizeof(*can_u));
++  if ( 0 != socketpair(AF_UNIX, SOCK_STREAM, 0, fid_i) ||
++       0 != uv_pipe_init(u3L, &can_u->mor_u.pyp_u, 0) ||
++       0 != uv_timer_init(u3L, &can_u->mor_u.tim_u) ||
++       0 != uv_pipe_open(&can_u->mor_u.pyp_u, fid_i[0]) ) {
++    fprintf(stderr, "newt channel setup fail\n");
++    exit(1);
++  }
++
++  *loc_i = fid_i[0];
++  *per_i = fid_i[1];
++  can_u->mor_u.ptr_v = can_u;
++  can_u->mor_u.bal_f = _test_chan_bail;
++  can_u->mor_u.pok_f = _test_chan_poke;
++  can_u->mor_u.fag_w = 1;
++  u3_newt_read((u3_moat*)&can_u->mor_u);
++}
++
++static void
++_test_chan_request(c3_i per_i)
++{
++  c3_y req_y[6] = { 0, 1, 0, 0, 0, 0 };
++
++  if ( sizeof(req_y) != write(per_i, req_y, sizeof(req_y)) ) {
++    fprintf(stderr, "newt request write fail\n");
++    exit(1);
++  }
++}
++
++static void
++_test_chan_closed(_test_chan* can_u, c3_i loc_i,
++                  c3_w pok_w, ssize_t err_i, const c3_c* cap_c)
++{
++  errno = 0;
++  if ( pok_w != can_u->pok_w ||
++       1 != can_u->bal_w ||
++       1 != can_u->cls_w ||
++       err_i != can_u->err_i ||
++       -1 != fcntl(loc_i, F_GETFD) ||
++       EBADF != errno ||
++       uv_loop_alive(u3L) ) {
++    fprintf(stderr,
++            "newt %s cleanup fail: poke=%u bail=%u close=%u err=%zd "
++            "fd-errno=%d\n",
++            cap_c, can_u->pok_w, can_u->bal_w, can_u->cls_w,
++            can_u->err_i, errno);
++    exit(1);
++  }
++}
++
++/* _test_newt_write_failure_close(): failed output releases the channel and FD.
++*/
++static void
++_test_newt_write_failure_close(void)
++{
++  _test_chan can_u;
++  c3_i       loc_i;
++  c3_i       per_i;
++
++  _test_chan_open(&can_u, &loc_i, &per_i);
++  _test_chan_request(per_i);
++  close(per_i);
++
++  uv_run(u3L, UV_RUN_DEFAULT);
++
++  _test_chan_closed(&can_u, loc_i, 1, UV_EPIPE, "write failure");
++}
++
++/* _test_newt_peer_eof_close(): deferred EOF closes after output is flushed.
++*/
++static void
++_test_newt_peer_eof_close(void)
++{
++  _test_chan can_u;
++  c3_i       loc_i;
++  c3_i       per_i;
++
++  _test_chan_open(&can_u, &loc_i, &per_i);
++  _test_chan_request(per_i);
++  _test_chan_request(per_i);
++
++  if ( 0 != shutdown(per_i, SHUT_WR) ) {
++    fprintf(stderr, "newt peer shutdown fail\n");
++    exit(1);
++  }
++  uv_run(u3L, UV_RUN_DEFAULT);
++  close(per_i);
++
++  _test_chan_closed(&can_u, loc_i, 2, UV_EOF, "peer EOF");
++}
++#endif
++
+ /* main(): run all test cases.
+ */
+ int
+@@ -344,6 +530,11 @@ main(int argc, char* argv[])
+ 
+   _test_newt_smol();
+   _test_newt_vast();
++  _test_newt_stop_idempotent();
++#ifndef _WIN32
++  _test_newt_write_failure_close();
++  _test_newt_peer_eof_close();
++#endif
+ 
+   //  GC
+   //
+diff --git a/pkg/noun/oom_tests.c b/pkg/noun/oom_tests.c
+new file mode 100644
+index 0000000000..9492a0bd1e
+--- /dev/null
++++ b/pkg/noun/oom_tests.c
+@@ -0,0 +1,107 @@
++/// Allocation failure must preserve the road and return a recoverable error.
++#include "noun.h"
++#include <sys/resource.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#define CHECK(x) do { if (!(x)) { \
++  fprintf(stderr, "oom-test:%d: %s\n", __LINE__, #x); exit(1); \
++} } while (0)
++
++static c3_w _mode_w;
++
++static u3_noun
++_allocate_too_much(u3_noun depth, u3_noun unused)
++{
++  if ( depth ) {
++    return u3m_soft_run(u3_nul, _allocate_too_much, depth - 1, u3_nul);
++  }
++
++  c3_w gap_w = u3a_open(u3R);
++  c3_w len_w;
++  switch ( _mode_w ) {
++    case 0: len_w = gap_w + (1U << u3a_page); break;
++    case 1: len_w = gap_w + (1U << 26); break;
++    case 2: {
++      // Leave one page, then request enough to grow the page directory.
++      // Payload is never touched; only a few KiB of metadata are written.
++      c3_w fit_w = (gap_w & ~((1U << u3a_page) - 1)) - (1U << u3a_page);
++      u3a_walloc(fit_w);
++      CHECK(u3a_open(u3R) <= (2U << u3a_page));
++      len_w = u3R->hep.siz_w << u3a_page;
++    } break;
++    default: len_w = UINT32_MAX; break;
++  }
++  fprintf(stderr, "oom-test: mode %u %s (request=%u, gap=%u words)\n",
++          _mode_w, (c3y == u3a_is_north(u3R)) ? "north" : "south",
++          len_w, u3a_open(u3R));
++  u3a_walloc(len_w);
++  CHECK(!"oversized allocation succeeded");
++  return u3_nul;
++}
++
++static u3_noun
++_nested_failure(u3_noun depth)
++{
++  return u3m_soft_run(u3_nul, _allocate_too_much, depth, u3_nul);
++}
++
++static u3_noun
++_success(u3_noun unused)
++{
++  return u3nc(u3i_string("still alive"), 42);
++}
++
++static void
++_recover(c3_w depth_w)
++{
++  // A 64 MiB virtual loom; no ship, checkpoint, network or large payload.
++  u3m_boot_lite(1U << 26);
++  struct rlimit lim_u = {0, 0};
++  CHECK(0 == setrlimit(RLIMIT_CORE, &lim_u));
++  u3_noun live = u3i_string("parent data survives");
++  c3_w mug_w = u3r_mug(live);
++  u3_post cap_p = u3R->cap_p;
++
++  for ( c3_w i_w = 0; i_w < 2; i_w++ ) {
++    u3_noun err = u3m_soft(0, _nested_failure, depth_w);
++    CHECK(c3y == u3du(err) && c3__meme == u3h(err));
++    CHECK(u3R == &u3H->rod_u && cap_p == u3R->cap_p);
++    CHECK(mug_w == u3r_mug(live));
++    CHECK(c3y == u3r_sing_c("parent data survives", live));
++    u3z(err);
++
++    u3_noun pro = u3m_soft(0, _success, u3_nul);
++    CHECK(c3y == u3du(pro) && 0 == u3h(pro));
++    CHECK(c3y == u3du(u3t(pro)) && 42 == u3t(u3t(pro)));
++    CHECK(c3y == u3r_sing_c("still alive", u3h(u3t(pro))));
++    u3z(pro);
++  }
++  u3z(live);
++}
++
++int
++main(void)
++{
++  c3_i ret_i = 0;
++  for ( c3_w case_w = 0; case_w < 8; case_w++ ) {
++    c3_w depth_w = case_w & 1;
++    pid_t pid_i = fork();
++    CHECK(pid_i >= 0);
++    if ( !pid_i ) {
++      _mode_w = case_w >> 1;
++      struct rlimit lim_u = {5, 5};
++      CHECK(0 == setrlimit(RLIMIT_CPU, &lim_u));
++      _recover(depth_w);
++      _exit(0);
++    }
++    int status_i;
++    CHECK(pid_i == waitpid(pid_i, &status_i, 0));
++    if ( !WIFEXITED(status_i) || WEXITSTATUS(status_i) ) {
++      fprintf(stderr, "oom-test: case %u failed (status=%d)\n", case_w, status_i);
++      ret_i = 1;
++    }
++  }
++  if ( !ret_i ) fprintf(stderr, "oom-test: all cases passed\n");
++  return ret_i;
++}

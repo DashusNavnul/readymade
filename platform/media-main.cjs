@@ -16,14 +16,14 @@ function createController(electron) {
       try {
         const url = wc.getURL(); if (!/^about:blank#readymade-[a-f0-9]{32}$/.test(url)) continue;
         const session = wc.session, prefs = wc.getLastWebPreferences();
-        result.push({ id: wc.id, url, sandbox: prefs.sandbox ?? null, contextIsolation: prefs.contextIsolation ?? null,
+        result.push({ id: wc.id, url, bootstrapLoaded: context.bootstrapLoads.get(wc)?.url === url && context.bootstrapLoads.get(wc)?.state === 'ready', sandbox: prefs.sandbox ?? null, contextIsolation: prefs.contextIsolation ?? null,
           nodeIntegration: prefs.nodeIntegration ?? null, ephemeral: typeof session.getStoragePath === 'function' && !session.getStoragePath(),
           hooked: context.sessions.has(session), sameSessionViews: views.filter(other => !other.isDestroyed() && other.session === session).length });
       } catch { /* A view disappearing during diagnostics contributes no native properties. */ }
     }
     return result;
   };
-  const context = { electron, sessions: new Map(), bindings: new Map(), byContents: new Map(),
+  const context = { electron, bootstrapLoads: new WeakMap(), sessions: new Map(), bindings: new Map(), byContents: new Map(),
     capture: (request, wc) => hooks.chooseCapture(electron, request, wc),
     emit: (bound, event) => { for (const send of watchers.get(bound.bindingId) || []) send(event); },
     changed: bound => context.emit(bound, { type: 'state', ...state(bound) }),
@@ -44,10 +44,50 @@ function createController(electron) {
       })();
       return bound.cleanup;
     } };
+  const systemMediaPermissions = () => Object.fromEntries(['camera', 'microphone', 'screen'].map(kind => {
+    let status = 'unavailable';
+    try {
+      const observed = electron.systemPreferences?.getMediaAccessStatus?.(kind);
+      if (['not-determined', 'granted', 'denied', 'restricted', 'unknown'].includes(observed)) status = observed;
+    } catch { /* Unsupported system queries must not break app observation. */ }
+    return [kind, status];
+  }));
+  // Inspect only retained media identities; never include unrelated window titles,
+  // URLs or session data. Missing/retired native objects remain unknown.
+  const presentation = bound => {
+    const result = {matches: 0, viewVisible: null, bounds: null, windowId: null,
+      windowVisible: null, windowMinimized: null, windowFocused: null, contentsFocused: null};
+    try {
+      if (bound.wc.isDestroyed()) return result;
+      const windows = electron.BrowserWindow?.getAllWindows?.();
+      if (!Array.isArray(windows) || windows.length > 64) return result;
+      const matches = [], seen = new Set();
+      for (const window of windows) {
+        const queue = [...(window.contentView?.children ?? [])];
+        while (queue.length) {
+          const view = queue.shift();
+          if (seen.has(view)) continue;
+          seen.add(view); if (seen.size > 512) return result;
+          if (view.webContents === bound.wc) matches.push({window, view});
+          queue.push(...(view.children ?? []));
+        }
+      }
+      result.matches = matches.length;
+      if (matches.length !== 1) return result;
+      const {window, view} = matches[0], bounds = view.getBounds();
+      const boolean = value => typeof value === 'boolean' ? value : null;
+      return {...result, viewVisible: boolean(view.getVisible()),
+        bounds: ['x', 'y', 'width', 'height'].every(key => Number.isFinite(bounds?.[key]))
+          ? Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, bounds[key]])) : null,
+        windowId: Number.isInteger(window.id) ? window.id : null,
+        windowVisible: boolean(window.isVisible()), windowMinimized: boolean(window.isMinimized()),
+        windowFocused: boolean(window.isFocused()), contentsFocused: boolean(bound.wc.isFocused())};
+    } catch { return result; }
+  };
   async function request(op, payload = {}, send = () => {}) {
-    if (op === 'status') return { protocol: 1, nativeName: electron.app?.getName?.() ?? null,
+    if (op === 'status') return { protocol: 1, systemMediaPermissions: systemMediaPermissions(), nativeName: electron.app?.getName?.() ?? null,
       nativeWindowCount: electron.BrowserWindow?.getAllWindows?.().length ?? null,
-      bindings: [...context.bindings.values()].map(state), bootstrapViews: bootstrapViews() };
+      bindings: [...context.bindings.values()].map(bound => ({...state(bound), presentation: presentation(bound), permissionEvents: (context.permissionDiagnostics?.get(bound.wc) || []).map(event => ({...event, mediaTypes: [...event.mediaTypes]}))})), bootstrapViews: bootstrapViews() };
     if (op === 'bind') {
       const data = policy.binding(payload);
       if (context.bindings.has(data.bindingId)) throw new Error('alreadyBound');
@@ -55,6 +95,8 @@ function createController(electron) {
       const candidates = electron.webContents.getAllWebContents().filter(wc => !wc.isDestroyed() && wc.getURL() === data.bootstrapURL);
       if (candidates.length !== 1) throw new Error('bootstrapNotFound');
       const wc = candidates[0], wcId = wc.id, session = wc.session, prefs = wc.getLastWebPreferences();
+      const bootstrap = context.bootstrapLoads.get(wc);
+      if (bootstrap?.url !== data.bootstrapURL || bootstrap.state !== 'ready') throw new Error('bootstrapNotFound');
       if (prefs.sandbox !== true || prefs.contextIsolation !== true || prefs.nodeIntegration !== false ||
           context.byContents.has(wcId) || !context.sessions.has(session) ||
           typeof session.getStoragePath !== 'function' || session.getStoragePath() ||

@@ -97,9 +97,12 @@ mkdir -p "$extension/dist"
 cp "$workspace_dir/package.json" "$extension/package.json"
 cp "$workspace_dir/LICENSE" "$workspace_dir/THIRD_PARTY_NOTICES.md" "$extension/"
 mkdir "$extension/platform"
-cp "$workspace_dir/platform/urbit.svg" "$extension/platform/urbit.svg"
+cp "$workspace_dir/platform/urbit.svg" "$workspace_dir/platform/hoon-language.json" "$workspace_dir/platform/hoon.tmLanguage" "$extension/platform/"
 ditto "$dist_dir/src" "$extension/dist/src"
 kernel_app="$inner_app/Contents/Resources/app"
+node "$workspace_dir/platform/browser-reveal.cjs" "$kernel_app"
+node "$workspace_dir/platform/task-terminal.cjs" "$kernel_app"
+node "$workspace_dir/platform/nested-cli.cjs" "$kernel_app/bin/codium"
 mkdir "$kernel_app/out/readymade-media"
 cp "$workspace_dir/platform/"*.cjs "$kernel_app/out/readymade-media/"
 cp "$kernel_app/package.json" "$kernel_app/out/readymade-media/upstream-package.json"
@@ -302,13 +305,14 @@ for (const name of ['media-main.cjs', 'media-session.cjs', 'media-policy.cjs']) 
 platform.bootstrap = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'out/readymade-main.mjs'))).digest('hex');
 platform.product = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'product.json'))).digest('hex');
 platform.entry = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'package.json'))).digest('hex');
+platform.upstreamCLI = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'bin/codium'))).digest('hex');
 fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), upstream: { version: '1.143.17232', codeOSS: '1.143.1', url, sha256 },
   bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, platform,
   extension: { id: 'pataphor.readymade-ship-workspace', sourceFingerprint, hashes },
   signing: 'local ad-hoc; codesign --verify --deep --strict passed',
   isolation: 'Native Finder/CLI launchers default to private ~/.cache/readymade/workspace-v02/{user,extensions,shared-data}; CLI overrides require owned private directories; fresh settings disable updates and use ephemeral browser storage; previous preview profiles and encrypted secret databases are never changed.',
   nativeIdentity: { name: 'Readymade Workspace', credentialNamespace: 'Readymade Workspace Safe Storage', helpers: 'Readymade Workspace Helper{, (GPU), (Plugin), (Renderer)}', preservedInnerBundleIdentifier: 'com.vscodium' },
-  limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Original core JavaScript is unchanged; a bounded media bootstrap runs before the original main entry.',
+  limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; a bounded media bootstrap runs before the original main entry.',
     'Not notarized or approved for public distribution; upstream update/default internal product settings remain.',
     'Packaging does not establish Finder launch, extension-host acceptance, feature parity or live ship behavior.'] }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
 NODE

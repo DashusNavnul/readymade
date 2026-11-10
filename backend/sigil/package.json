@@ -1,0 +1,1 @@
+{"name":"readymade-sigil-reconstruction","private":true,"version":"1.0.0","dependencies":{"@urbit/sigil-js":"2.2.0"},"devDependencies":{"esbuild":"0.28.2"}}

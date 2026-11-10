@@ -1,0 +1,379 @@
+{
+  "schema": "readymade-noltbook-document-receipts-overlay-v1",
+  "upstreamCommit": "7124b6119c99d1d5f78ae922f66bfd83cf90d96d",
+  "baseMediaOverlaySHA256": "662fd1fafcad2cce0df2a8c7e288b02311a520af9ba8602572ece38e38497c8a",
+  "sourceFileCount": 40,
+  "changes": {
+    "app/noltbook.hoon": {
+      "inputSha256": "5e209439568f80c91be804a6e39899dce8a9d3903a20f1f31f1e484fa33c8830",
+      "outputSha256": "bcc5fb986a0da922fa468394246169d7cf6281da18fa3d54c8c24ecec4c768fb",
+      "outputBytes": 773614,
+      "edits": [
+        {
+          "start": 1,
+          "end": 2,
+          "old": [
+            "/+  default-agent, dbug, server\n"
+          ],
+          "new": [
+            "/+  default-agent, dbug, server, dr=noltbook-document-receipts\n"
+          ]
+        },
+        {
+          "start": 317,
+          "end": 317,
+          "old": [],
+          "new": [
+            "+$  state-79  [%79 legacy=state-78 receipts=document-receipts:noltbook]\n"
+          ]
+        },
+        {
+          "start": 3714,
+          "end": 3714,
+          "old": [],
+          "new": [
+            "::  One additive receipt-bearing save. Legacy policy and body mutation gates\n",
+            "::  remain shared. No model, file-source or application-install authority.\n",
+            "++  doc-receipted-host\n",
+            "  |=  [b=bowl:gall i=document-save-intent:noltbook body=@t st=state-78 rs=document-receipts:noltbook]\n",
+            "  ^-  [next=state-78 saved=document-receipts:noltbook answer=document-receipt-reply:noltbook cards=(list card)]\n",
+            "  ?.  &((valid:dr i) =(host.i our.b) =(body-hash.i (shax body)))\n",
+            "    [st rs [i %refused ~] ~]\n",
+            "  =/  old  (lookup:dr i rs)\n",
+            "  ?.  =(%missing status.old)  [st rs old ~]\n",
+            "  =/  nt  (~(get by notes.st) note-id.i)\n",
+            "  ?~  nt  [st rs [i %refused ~] ~]\n",
+            "  ?.  &(=(creator.u.nt our.b) (can-edit-document note-id.i actor.i notes.st note-admins.st note-muted.st))\n",
+            "    [st rs [i %refused ~] ~]\n",
+            "  =/  started  (begin:dr i rs)\n",
+            "  ?:  ?=(%| -.started)  [st rs p.started ~]\n",
+            "  =/  out\n",
+            "    (doc-apply-save now.b note-id.i actor.i body expected.i documents.st document-history.st)\n",
+            "  =/  receipt=document-save-receipt:noltbook  [i res.out now.b]\n",
+            "  =/  rs  (finish:dr receipt p.started)\n",
+            "  =/  changed=?  ?=(%saved -.res.out)\n",
+            "  =/  next=state-78  st(documents docs.out, document-history hist.out)\n",
+            "  ?.  changed  [next rs [i %recorded `receipt] ~]\n",
+            "  =/  doc  (~(got by documents.next) note-id.i)\n",
+            "  =/  fan=(list card)\n",
+            "    %+  murn  ~(tap in users.u.nt)\n",
+            "    |=  who=@p\n",
+            "    ?:  =(who our.b)  ~\n",
+            "    `(rpoke /doc-out/(scot %p who)/[note-id.i] who `remote:noltbook`[%remote-document-updated note-id.i doc])\n",
+            "  =/  next=state-78\n",
+            "    %=  next\n",
+            "      note-activity  (put-activity note-activity.next note-id.i now.b)\n",
+            "      note-unread-activity\n",
+            "        ?:  =(actor.i our.b)  note-unread-activity.next\n",
+            "        (put-unread-activity note-unread-activity.next note-id.i now.b)\n",
+            "    ==\n",
+            "  :-  next\n",
+            "  :-  rs\n",
+            "  :-  [i %recorded `receipt]\n",
+            "  %+  weld  fan\n",
+            "  :~  (gf-notes [%document-updated note-id.i doc (doc-stats-of note-id.i document-history.next)])\n",
+            "      (activity-fact note-id.i now.b)\n",
+            "  ==\n"
+          ]
+        },
+        {
+          "start": 3982,
+          "end": 3982,
+          "old": [],
+          "new": [
+            "        %remote-document-save-receipted  `state\n",
+            "        %remote-document-receipt-request  `state\n",
+            "        %remote-document-receipt  `state\n"
+          ]
+        },
+        {
+          "start": 8036,
+          "end": 8036,
+          "old": [],
+          "new": [
+            "=|  receipts=document-receipts:noltbook\n"
+          ]
+        },
+        {
+          "start": 8050,
+          "end": 8051,
+          "old": [
+            "++  on-save   !>(state)\n"
+          ],
+          "new": [
+            "++  on-save   !>([%79 state receipts])\n"
+          ]
+        },
+        {
+          "start": 8054,
+          "end": 8054,
+          "old": [],
+          "new": [
+            "  =/  retained=document-receipts:noltbook\n",
+            "    ?.  ?=([%79 *] q.old)  *document-receipts:noltbook\n",
+            "    =/  wrapped  !<(state-79 old)\n",
+            "    receipts.wrapped\n",
+            "  ?>  (sane:dr retained)\n",
+            "  =/  old=vase\n",
+            "    ?.  ?=([%79 *] q.old)  old\n",
+            "    =/  wrapped  !<(state-79 old)\n",
+            "    !>(legacy.wrapped)\n"
+          ]
+        },
+        {
+          "start": 8140,
+          "end": 8141,
+          "old": [
+            "  [:(weld prof-cards call-cards (ensure-data-desk bowl)) this(state loaded)]\n"
+          ],
+          "new": [
+            "  [:(weld prof-cards call-cards (ensure-data-desk bowl)) this(state loaded, receipts retained)]\n"
+          ]
+        },
+        {
+          "start": 8543,
+          "end": 8543,
+          "old": [],
+          "new": [
+            "      [%x %api %document-receipts ~]\n",
+            "    ?.  =(src.bowl our.bowl)  ~\n",
+            "    =/  value=json\n",
+            "      %-  pairs:enjs:format\n",
+            "      :~  ['schema' s+'noltbook-document-receipts-capability-v1']\n",
+            "          ['ship' s+(scot %p our.bowl)]\n",
+            "          ['version' (numb:enjs:format 1)]\n",
+            "          ['capacity' (numb:enjs:format 256)]\n",
+            "          ['retained' (numb:enjs:format ~(wyt by receipts))]\n",
+            "      ==\n",
+            "    ``[%json !>(value)]\n",
+            "      [%x %api %document-receipts @ @ @ ~]\n",
+            "    ?.  =(src.bowl our.bowl)  ~\n",
+            "    =/  host=(unit @p)  (slaw %p i.t.t.t.path)\n",
+            "    =/  req=(unit @ud)  (slaw %ud i.t.t.t.t.t.path)\n",
+            "    ?~  host  ~\n",
+            "    ?~  req  ~\n",
+            "    ?.  &(=(i.t.t.t.path (scot %p u.host)) =(i.t.t.t.t.t.path (scot %ud u.req)))  ~\n",
+            "    =/  held  (~(get by receipts) [u.host our.bowl u.req])\n",
+            "    ?~  held  ~\n",
+            "    ?.  =(i.t.t.t.t.path note-id.intent.u.held)  ~\n",
+            "    ``[%json !>((json:dr (lookup:dr intent.u.held receipts)))]\n"
+          ]
+        },
+        {
+          "start": 10690,
+          "end": 10690,
+          "old": [],
+          "new": [
+            "        %save-document-receipted\n",
+            "      =/  i=document-save-intent:noltbook\n",
+            "        [host.act our.bowl note-id.act request.act expected.act (shax body.act)]\n",
+            "      =/  prior  (lookup:dr i receipts)\n",
+            "      ?.  =(%missing status.prior)\n",
+            "        :_(this ~[(gf-notes [%document-save-receipt prior])])\n",
+            "      =/  nt  (~(get by notes) note-id.act)\n",
+            "      ?~  nt  :_(this ~[(gf-notes [%document-save-receipt [i %refused ~]])])\n",
+            "      ?:  (is-write-blocked note-id.act host-status notes our.bowl)\n",
+            "        :_(this ~[(gf-notes [%document-save-receipt [i %refused ~]])])\n",
+            "      ?.  &(=(host.act creator.u.nt) (can-edit-document note-id.act our.bowl notes note-admins note-muted))\n",
+            "        :_(this ~[(gf-notes [%document-save-receipt [i %refused ~]])])\n",
+            "      ?:  =(host.act our.bowl)\n",
+            "        =/  out  (doc-receipted-host bowl i body.act state receipts)\n",
+            "        :_  this(state next.out, receipts saved.out)\n",
+            "        (weld cards.out ~[(gf-notes [%document-save-receipt answer.out])])\n",
+            "      =/  started  (begin:dr i receipts)\n",
+            "      ?:  ?=(%| -.started)\n",
+            "        :_(this ~[(gf-notes [%document-save-receipt p.started])])\n",
+            "      :_  this(receipts p.started)\n",
+            "      ~[(rpoke /doc-save-receipted/[note-id.act]/(scot %ud request.act) host.act `remote:noltbook`[%remote-document-save-receipted i body.act])]\n",
+            "        %request-document-save-receipt\n",
+            "      =/  i  intent.act\n",
+            "      ?.  =(actor.i our.bowl)  `this\n",
+            "      =/  found  (lookup:dr i receipts)\n",
+            "      ?:  |(=(host.i our.bowl) !=(%pending status.found))\n",
+            "        :_(this ~[(gf-notes [%document-save-receipt found])])\n",
+            "      :_  this\n",
+            "      ~[(rpoke /doc-receipt-request/[note-id.i]/(scot %ud request.i) host.i `remote:noltbook`[%remote-document-receipt-request i])]\n"
+          ]
+        },
+        {
+          "start": 14335,
+          "end": 14335,
+          "old": [],
+          "new": [
+            "    ?:  ?=(%remote-document-save-receipted -.rem)\n",
+            "      =/  i  intent.rem\n",
+            "      ?.  &(=(actor.i src.bowl) =(host.i our.bowl))  `this\n",
+            "      =/  out  (doc-receipted-host bowl i body.rem state receipts)\n",
+            "      :_  this(state next.out, receipts saved.out)\n",
+            "      %+  weld  cards.out\n",
+            "      ~[(rpoke /doc-receipt/(scot %p src.bowl)/[note-id.i] src.bowl `remote:noltbook`[%remote-document-receipt answer.out])]\n",
+            "    ?:  ?=(%remote-document-receipt-request -.rem)\n",
+            "      =/  i  intent.rem\n",
+            "      ?.  &(=(actor.i src.bowl) =(host.i our.bowl))  `this\n",
+            "      :_  this\n",
+            "      ~[(rpoke /doc-receipt/(scot %p src.bowl)/[note-id.i] src.bowl `remote:noltbook`[%remote-document-receipt (lookup:dr i receipts)])]\n",
+            "    ?:  ?=(%remote-document-receipt -.rem)\n",
+            "      =/  answer  reply.rem\n",
+            "      =/  i  intent.answer\n",
+            "      ?.  &(=(actor.i our.bowl) =(host.i src.bowl))  `this\n",
+            "      =/  held  (lookup:dr i receipts)\n",
+            "      ?.  =(%pending status.held)  `this\n",
+            "      ?:  =(%recorded status.answer)\n",
+            "        ?~  receipt.answer  `this\n",
+            "        ?.  =(intent.u.receipt.answer i)  `this\n",
+            "        :_  this(receipts (finish:dr u.receipt.answer receipts))\n",
+            "        ~[(gf-notes [%document-save-receipt answer])]\n",
+            "      :_(this ~[(gf-notes [%document-save-receipt answer])])\n"
+          ]
+        }
+      ]
+    },
+    "sur/noltbook.hoon": {
+      "inputSha256": "840437900412d1465ebe56cf627238dc4825cdeefaf69d7a8acd5c1303fbb25e",
+      "outputSha256": "11e04dd2b1069ab159124b56612c9cfe321385199e5c331fba12968ef9c15713",
+      "outputBytes": 63416,
+      "edits": [
+        {
+          "start": 55,
+          "end": 55,
+          "old": [],
+          "new": [
+            "  ==\n",
+            "\n",
+            "::  Additive durable document-save protocol. Existing save-document is unchanged.\n",
+            "+$  document-save-intent\n",
+            "  $:  host=@p  actor=@p  note-id=@ta  request=@ud\n",
+            "      expected=@ud  body-hash=@ux\n",
+            "  ==\n",
+            "+$  document-save-receipt\n",
+            "  $:  intent=document-save-intent  result=document-save-result  at=@da\n",
+            "  ==\n",
+            "+$  document-receipt-entry\n",
+            "  [intent=document-save-intent receipt=(unit document-save-receipt)]\n",
+            "+$  document-receipt-key  [host=@p actor=@p request=@ud]\n",
+            "+$  document-receipts  (map document-receipt-key document-receipt-entry)\n",
+            "+$  document-receipt-reply\n",
+            "  $:  intent=document-save-intent\n",
+            "      status=?(%recorded %pending %missing %refused %capacity)\n",
+            "      receipt=(unit document-save-receipt)\n"
+          ]
+        },
+        {
+          "start": 461,
+          "end": 462,
+          "old": [
+            "  $%  [%remote-invite note-id=@ta name=@t type=note-type creator=@p users=(set @p) visibility=note-visibility writable=?]\n"
+          ],
+          "new": [
+            "  $%  [%remote-document-save-receipted intent=document-save-intent body=@t]\n",
+            "      [%remote-document-receipt-request intent=document-save-intent]\n",
+            "      [%remote-document-receipt reply=document-receipt-reply]\n",
+            "      [%remote-invite note-id=@ta name=@t type=note-type creator=@p users=(set @p) visibility=note-visibility writable=?]\n"
+          ]
+        },
+        {
+          "start": 702,
+          "end": 703,
+          "old": [
+            "  $%  [%create-note name=@t parent=(unit @ta)]\n"
+          ],
+          "new": [
+            "  $%  [%save-document-receipted host=@p note-id=@ta body=@t expected=@ud request=@ud]\n",
+            "      [%request-document-save-receipt intent=document-save-intent]\n",
+            "      [%create-note name=@t parent=(unit @ta)]\n"
+          ]
+        },
+        {
+          "start": 1038,
+          "end": 1039,
+          "old": [
+            "  $%  [%api-result =api-result]\n"
+          ],
+          "new": [
+            "  $%  [%document-save-receipt reply=document-receipt-reply]\n",
+            "      [%api-result =api-result]\n"
+          ]
+        }
+      ]
+    },
+    "lib/noltbook-document-receipts.hoon": {
+      "inputSha256": null,
+      "outputSha256": "00fe581d4ef68b561b0ecde75e8e443b265e522f1cdb51fe94466f82e3041a27",
+      "outputBytes": 3071,
+      "create": "::  Immutable request identities; bounded without evicting unknown deliveries.\n/-  n=noltbook\n|%\n++  key\n  |=  i=document-save-intent:n\n  ^-  document-receipt-key:n\n  [host.i actor.i request.i]\n++  valid\n  |=  i=document-save-intent:n\n  ^-  ?\n  ?&  (gte (met 3 note-id.i) 1)  (lte (met 3 note-id.i) 128)\n      (gth request.i 0)  (lte (met 0 request.i) 53)\n      (lth expected.i 9.007.199.254.740.991)  (lte (met 0 body-hash.i) 256)\n  ==\n++  receipt-valid\n  |=  r=document-save-receipt:n\n  ^-  ?\n  ?&  (valid intent.r)\n      ?-  -.result.r\n        %saved  =(revision.result.r +(expected.intent.r))\n        %no-change  =(revision.result.r expected.intent.r)\n        %conflict  !=(current.result.r expected.intent.r)\n        %too-large  =(limit.result.r 1.048.576)\n        %denied  %.y\n        %no-such-note  %.y\n      ==\n  ==\n++  lookup\n  |=  [i=document-save-intent:n store=document-receipts:n]\n  ^-  document-receipt-reply:n\n  ?.  (valid i)  [i %refused ~]\n  =/  held  (~(get by store) (key i))\n  ?~  held  [i %missing ~]\n  ?.  =(i intent.u.held)  [i %refused ~]\n  [i ?~(receipt.u.held %pending %recorded) receipt.u.held]\n++  begin\n  |=  [i=document-save-intent:n store=document-receipts:n]\n  ^-  (each document-receipts:n document-receipt-reply:n)\n  =/  found  (lookup i store)\n  ?.  =(%missing status.found)  [%| found]\n  ?:  (gte ~(wyt by store) 256)  [%| [i %capacity ~]]\n  [%& (~(put by store) (key i) [i ~])]\n++  finish\n  |=  [r=document-save-receipt:n store=document-receipts:n]\n  ^-  document-receipts:n\n  ?>  (receipt-valid r)\n  =/  held  (~(got by store) (key intent.r))\n  ?>  =(intent.r intent.held)\n  ?^  receipt.held\n    ?>  =(r u.receipt.held)\n    store\n  (~(put by store) (key intent.r) [intent.r `r])\n++  sane\n  |=  store=document-receipts:n\n  ^-  ?\n  ?&  (lte ~(wyt by store) 256)\n      %+  levy  ~(tap by store)\n      |=  [k=document-receipt-key:n e=document-receipt-entry:n]\n      ?&  =((key intent.e) k)  (valid intent.e)\n          ?~(receipt.e %.y &(=(intent.e intent.u.receipt.e) (receipt-valid u.receipt.e)))\n      ==\n  ==\n++  json\n  |=  reply=document-receipt-reply:n\n  ^-  ^json\n  =/  i  intent.reply\n  =/  terminal=^json\n    ?~  receipt.reply  ~\n    =/  r  result.u.receipt.reply\n    %-  pairs:enjs:format\n    :~  ['result' s+(scot %tas -.r)]\n        :-  'revision'\n        ?-  -.r\n          %saved  (numb:enjs:format revision.r)\n          %no-change  (numb:enjs:format revision.r)\n          %conflict  (numb:enjs:format current.r)\n          %too-large  ~\n          %denied  ~\n          %no-such-note  ~\n        ==\n        ['limit' ?:(?=(%too-large -.r) (numb:enjs:format limit.r) ~)]\n        ['recordedAt' s+(scot %da at.u.receipt.reply)]\n    ==\n  %-  pairs:enjs:format\n  :~  ['schema' s+'noltbook-document-receipt-v1']\n      ['host' s+(scot %p host.i)]\n      ['requester' s+(scot %p actor.i)]\n      ['noteId' s+note-id.i]\n      ['requestId' (numb:enjs:format request.i)]\n      ['expected' (numb:enjs:format expected.i)]\n      ['bodyHash' s+(scot %ux body-hash.i)]\n      ['status' s+(scot %tas status.reply)]\n      ['receipt' terminal]\n  ==\n--\n"
+    },
+    "mar/noltbook/action.hoon": {
+      "inputSha256": "2162fffa443e96886a6a41e552002fa10a70c51d721aeecb96636bd85926eca2",
+      "outputSha256": "f7921d3a56979f335628dbafbd4905b008e720009e7850303c61f49c5ad288d3",
+      "outputBytes": 27994,
+      "edits": [
+        {
+          "start": 16,
+          "end": 16,
+          "old": [],
+          "new": [
+            "    ::  New durable save protocol: canonical finite numeric selectors.\n",
+            "    ?:  |(=('save-document-receipted' tag) =('request-document-save-receipt' tag))\n",
+            "      ?>  =(2 ~(wyt by obj))\n",
+            "      ?>  =(?:(=('save-document-receipted' tag) 5 6) ~(wyt by d))\n",
+            "      =/  text-field\n",
+            "        |=  key=@t\n",
+            "        ^-  @t\n",
+            "        =/  node  (need (~(get by d) key))\n",
+            "        ?>  ?=([%s *] node)\n",
+            "        p.node\n",
+            "      =/  number-field\n",
+            "        |=  key=@t\n",
+            "        ^-  @ud\n",
+            "        =/  node  (need (~(get by d) key))\n",
+            "        ?>  ?=([%n *] node)\n",
+            "        =/  val=@ud  (rash p.node dem)\n",
+            "        ?>  &(=(node (numb:enjs:format val)) (lte (met 0 val) 53))\n",
+            "        val\n",
+            "      =/  host-text  (text-field 'host')\n",
+            "      =/  host=@p  (slav %p host-text)\n",
+            "      ?>  =(host-text (scot %p host))\n",
+            "      =/  nid=@ta  `@ta`(text-field 'noteId')\n",
+            "      ?>  &((gte (met 3 nid) 1) (lte (met 3 nid) 128))\n",
+            "      =/  expected  (number-field 'expected')\n",
+            "      =/  req  (number-field 'requestId')\n",
+            "      ?>  (gth req 0)\n",
+            "      ?:  =('save-document-receipted' tag)\n",
+            "        [%save-document-receipted host nid (text-field 'body') expected req]\n",
+            "      =/  actor-text  (text-field 'requester')\n",
+            "      =/  actor=@p  (slav %p actor-text)\n",
+            "      ?>  =(actor-text (scot %p actor))\n",
+            "      =/  digest-text  (text-field 'bodyHash')\n",
+            "      =/  digest=@ux  (slav %ux digest-text)\n",
+            "      ?>  &(=(digest-text (scot %ux digest)) (lte (met 0 digest) 256))\n",
+            "      [%request-document-save-receipt [host actor nid req expected digest]]\n"
+          ]
+        }
+      ]
+    },
+    "mar/noltbook/update.hoon": {
+      "inputSha256": "676d709bbe508143f6eec74c4273016780fce9c2c9c8958946b1c145b6d726bd",
+      "outputSha256": "c0f02e83db2a82c036d9ca7bbb155ea5ebdf7b2f6b5e759f306818e739c2f3c8",
+      "outputBytes": 29729,
+      "edits": [
+        {
+          "start": 1,
+          "end": 1,
+          "old": [],
+          "new": [
+            "/+  dr=noltbook-document-receipts\n"
+          ]
+        },
+        {
+          "start": 14,
+          "end": 14,
+          "old": [],
+          "new": [
+            "        %document-save-receipt\n",
+            "      (frond 'document-save-receipt' (json:dr reply.upd))\n"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { SourceStore, snapshotFrom, type SourceSnapshot } from '../src/source-store';
 import { DraftStore } from '../src/draft-store';
+import { SourcePager, type PageJournal } from '../src/source-pager';
 import type { CodingSnapshot, JsonObject } from '../src/protocol';
 
 const origin = 'https://files.example';
@@ -42,6 +43,113 @@ function privateDirectory(t: { after(fn: () => void): void }): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'readymade-source-draft-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true })); return path.join(root, 'drafts');
 }
+
+function pageJournal(): PageJournal {
+  const values = new Map<string, unknown>();
+  return {get: <T>(key: string) => values.get(key) as T | undefined,
+    update: async (key, value) => { values.set(key, value); }};
+}
+
+test('page progress follows contiguous evidence, including out-of-order and empty files', () => {
+  const store = new SourceStore({origin, codingState: async () => state()});
+  store.ingest(state([read(page('last', 3, 3), 2)]));
+  const key = store.progress()[0].key;
+  assert.equal(store.progress()[0].next, 1); assert.equal(store.progress()[0].lines, 0);
+  store.ingest(state([read(page('α\n', 1, 3, 2))]));
+  assert.equal(store.progress()[0].key, key); assert.equal(store.progress()[0].next, 2);
+  assert.equal(store.progress()[0].bytes, 3);
+  store.ingest(state([read(page('middle\n', 2, 3, 3), 1)]));
+  assert.equal(store.progress()[0].next, null); assert.equal(store.progress()[0].lines, 3);
+  assert.equal(store.openSnapshot(store.sources()[0]).text, 'α\nmiddle\nlast');
+  const empty = new SourceStore({origin, codingState: async () => state()});
+  empty.ingest(state([read(page('', 1, 0))])); assert.equal(empty.progress()[0].next, null);
+});
+
+test('next-page request binds fresh source and completes the exact immutable file', async () => {
+  const initial = state([read(page('first\n', 1, 2, 2))]); initial.sessions[0].project = 'demo';
+  let posts = 0;
+  const client = {origin, codingState: async () => initial, codingTool: async (session: string, source: string, input: string) => {
+    posts++; assert.equal(session, '0x1'); assert.equal(source, basis.id); assert.equal(input, '/read /lib/test/hoon 2 200');
+    return state([read(page('last', 2, 2), 1)]);
+  }};
+  const store = new SourceStore(client); store.ingest(initial);
+  const pager = new SourcePager(client, store, pageJournal()), key = store.progress()[0].key;
+  await assert.rejects(pager.next(key, 'private'), /project changed/); assert.equal(posts, 0);
+  initial.sessions[0].source = {...basis, commit: '0v3'};
+  await assert.rejects(pager.next(key, 'demo'), /source or project changed/); assert.equal(posts, 0);
+  initial.sessions[0].source = basis;
+  await pager.next(key, 'demo'); assert.equal(posts, 1);
+  assert.equal(store.openSnapshot(store.sources()[0]).text, 'first\nlast');
+  await pager.next(key, 'demo'); assert.equal(posts, 1);
+});
+
+test('lost page delivery survives pager reconstruction and cannot replay until evidence advances', async () => {
+  let posts = 0; const initial = state([read(page('first\n', 1, 3, 2))]);
+  const client = {origin, codingState: async () => initial, codingTool: async () => { posts++; throw new Error('lost reply'); }};
+  const store = new SourceStore(client); store.ingest(initial); const journal = pageJournal(), key = store.progress()[0].key;
+  await assert.rejects(new SourcePager(client, store, journal).next(key), /lost reply/);
+  await assert.rejects(new SourcePager(client, store, journal).next(key), /already requested/); assert.equal(posts, 1);
+  store.ingest(state([read(page('second\n', 2, 3, 3), 1)]));
+  await assert.rejects(new SourcePager(client, store, journal).next(key), /lost reply/); assert.equal(posts, 2);
+});
+
+test('failed durable page marker refuses network submission', async () => {
+  let posts = 0; const initial = state([read(page('first\n', 1, 2, 2))]);
+  const client = {origin, codingState: async () => initial, codingTool: async () => { posts++; return state(); }};
+  const store = new SourceStore(client); store.ingest(initial);
+  const pager = new SourcePager(client, store, {get: () => undefined, update: async () => { throw new Error('disk full'); }});
+  await assert.rejects(pager.next(store.progress()[0].key), /disk full/); assert.equal(posts, 0);
+});
+
+test('only an exact retained size refusal permits a smaller explicit page request', async () => {
+  let observed = state([read(page('first\n', 1, 2, 2))]);
+  let posts = 0;
+  const refusal = state([{kind: 'tool', text: JSON.stringify({version: 'native-coding-tool-result-v1', call_id: '0x777',
+    context: {request: '0x777', session: '0x1', source: basis}, output: {kind: 'refused', reason: 'read-page-too-large'}})}]);
+  refusal.commandReceipt = {version: 'native-coding-command-receipt-v1', target: 'viki', session: '0x1', source: basis.id, request: '0x777', delivery: '0xa'};
+  const client = {origin, codingState: async () => observed, codingTool: async (_session: string, _source: string, input: string) => {
+    posts++;
+    if (posts === 1) { assert.ok(input.endsWith(' 200')); return refusal; }
+    assert.ok(input.endsWith(' 100')); return state([read(page('last', 2, 2), 1)]);
+  }};
+  const store = new SourceStore(client); store.ingest(observed); const journal = pageJournal(), key = store.progress()[0].key;
+  await assert.rejects(new SourcePager(client, store, journal).next(key), /fewer lines/);
+  observed = structuredClone(refusal);
+  const wrong = JSON.parse(observed.records[0].text as string); wrong.context.source.commit = '0v3';
+  observed.records[0].text = JSON.stringify(wrong);
+  await assert.rejects(new SourcePager(client, store, journal).next(key), /already requested/); assert.equal(posts, 1);
+  wrong.context.source = basis; wrong.context.request = '0x888'; observed.records[0].text = JSON.stringify(wrong);
+  await assert.rejects(new SourcePager(client, store, journal).next(key), /already requested/); assert.equal(posts, 1);
+  observed = refusal;
+  await new SourcePager(client, store, journal).next(key); assert.equal(posts, 2);
+  assert.equal(store.progress()[0].next, null);
+});
+
+test('first-page size refusal recovers from a fresh observation without needing partial bytes', async () => {
+  let observed = state(), posts = 0;
+  const refused = state([{kind: 'tool', text: JSON.stringify({version: 'native-coding-tool-result-v1', call_id: '0x777',
+    context: {request: '0x777', session: '0x1', source: basis}, output: {kind: 'refused', reason: 'read-page-too-large'}})}]);
+  refused.commandReceipt = {version: 'native-coding-command-receipt-v1', target: 'viki', session: '0x1', source: basis.id, request: '0x777'};
+  const client = {origin, codingState: async () => observed, codingTool: async (_s: string, _b: string, input: string) => {
+    posts++; assert.equal(input, `/read /lib/test/hoon 1 ${posts === 1 ? 200 : 100}`);
+    observed = posts === 1 ? refused : state([read()]); return observed;
+  }};
+  const store = new SourceStore(client), disk = pageJournal();
+  await assert.rejects(new SourcePager(client, store, disk).start('0x1', basis, '/lib/test/hoon'), /fewer lines/);
+  assert.equal(store.progress().length, 0);
+  await new SourcePager(client, store, disk).start('0x1', basis, '/lib/test/hoon');
+  assert.equal(store.openSnapshot(store.sources()[0]).text, 'old\n');
+  await new SourcePager(client, store, disk).start('0x1', basis, '/lib/test/hoon'); assert.equal(posts, 2);
+});
+
+test('changing initial page size cannot replay unknown delivery', async () => {
+  let posts = 0;
+  const client = {origin, codingState: async () => state(), codingTool: async () => { posts++; throw new Error('lost'); }};
+  const store = new SourceStore(client), disk = pageJournal();
+  await assert.rejects(new SourcePager(client, store, disk).start('0x1', basis, '/lib/test/hoon'), /lost/);
+  await assert.rejects(new SourcePager(client, store, disk).start('0x1', basis, '/lib/test/hoon', undefined, 1), /already requested/);
+  assert.equal(posts, 1);
+});
 
 test('canonical projection assembles only exact complete pages; browsing copies bytes without POST', async () => {
   let gets = 0;
@@ -100,7 +208,7 @@ test('private saves preserve exact UTF8/source identity, restart and permissions
   assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
   assert.equal(fs.statSync(path.join(directory, `${created.id}.json`)).mode & 0o777, 0o600);
   assert.throws(() => drafts.save(created.id, '\ud800'));
-  assert.throws(() => drafts.save(created.id, '🙂'.repeat(15_361)));
+  assert.throws(() => drafts.save(created.id, '🙂'.repeat(262_145)));
   assert.equal(drafts.get(created.id).text, text);
   Reflect.set(recovered.snapshot.source, 'number', 99);
   assert.equal(drafts.get(created.id).snapshot.source.number, 1, 'External mutation changed stored source identity');

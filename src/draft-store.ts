@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { candidateCommand } from './candidate-command';
+import { mergeDraft, type DraftMerge } from './draft-merge';
 import type { ShipClient } from './ship-client';
 import { asRecord, isInteger, isUv, isUx, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
 import { digest, FILE_LIMIT, originOf, sameBasis, snapshotFrom, sourceBasis, type SourceSnapshot } from './source-store';
@@ -10,6 +12,7 @@ export interface CandidateIntent {
   request?: string; candidate?: string; reason?: string;
 }
 export interface DraftRecord { id: string; uri: string; snapshot: SourceSnapshot; text: string; updatedAt: number; pending?: CandidateIntent }
+export type DraftReconciliation = {kind: 'merged'; draft: DraftRecord} | Extract<DraftMerge, {kind: 'conflict'}>;
 interface Saved extends DraftRecord { version: 1 }
 type CandidateClient = Pick<ShipClient, 'origin' | 'snapshot' | 'codingTool'>;
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
@@ -24,7 +27,7 @@ function secure(info: fs.Stats, directory = false): void {
 }
 function readPrivate(file: string): Buffer {
   secure(fs.lstatSync(file)); const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try { const info = fs.fstatSync(fd); secure(info); if (info.size > 524_288) throw new Error('Private draft journal is oversized.'); return fs.readFileSync(fd); }
+  try { const info = fs.fstatSync(fd); secure(info); if (info.size > 32 * 1024 * 1024) throw new Error('Private draft journal is oversized.'); return fs.readFileSync(fd); }
   finally { fs.closeSync(fd); }
 }
 function validSaved(value: unknown): Saved {
@@ -34,7 +37,7 @@ function validSaved(value: unknown): Saved {
   if (row.pending !== undefined) {
     const pending = asRecord(row.pending);
     if (!isUv(pending.nonce) || typeof pending.text !== 'string' || !editable(pending.text) || Buffer.byteLength(pending.text) > FILE_LIMIT ||
-        pending.input !== `/replace ${snapshot.path} ${snapshot.blob} ${snapshot.mark}\n${pending.text}` ||
+        pending.input !== candidateCommand(snapshot, pending.text) ||
         typeof pending.phase !== 'string' || !['issued', 'submitted', 'unknown', 'candidate', 'refused'].includes(pending.phase) ||
         (pending.request !== undefined && (!isUx(pending.request) || pending.request === '0x0')) ||
         (pending.candidate !== undefined && (!isUx(pending.candidate) || pending.candidate === '0x0')) ||
@@ -86,11 +89,42 @@ export class DraftStore {
     this.commit(row); return clone(row);
   }
   save(id: string, text: string): DraftRecord {
-    if (!validUnicode(text) || Buffer.byteLength(text) > FILE_LIMIT) throw new Error('Draft exceeds 61,440 UTF-8 bytes or contains invalid Unicode.');
+    if (!validUnicode(text) || Buffer.byteLength(text) > FILE_LIMIT) throw new Error('Draft exceeds 1 MiB of UTF-8 bytes or contains invalid Unicode.');
     const row = this.current(id); this.commit({ ...row, text, updatedAt: Math.max(Date.now(), row.updatedAt + 1) }); return this.get(id);
   }
+  /** Creates a separate local draft. The supplied observation must be freshly read by the caller. */
+  reconcile(id: string, value: SourceSnapshot, localText: string, observed: CodingSnapshot, project: string): DraftReconciliation {
+    const old = this.current(id), snapshot = snapshotFrom(value), base = old.snapshot;
+    if (old.pending) throw new Error('Observe the retained candidate intent before reconciling this draft.');
+    if (snapshot.origin !== base.origin || snapshot.ship !== base.ship || snapshot.session !== base.session ||
+        snapshot.path !== base.path || snapshot.mark !== base.mark || snapshot.source.owner !== base.source.owner ||
+        snapshot.source.desk !== base.source.desk) throw new Error('Reconciliation requires the same ship, session, source desk and file.');
+    const sessions = observed.sessions.filter(row => row.id === base.session);
+    if (!observed.ready || observed.owner !== base.ship || observed.session !== base.session || !project ||
+        sessions.length !== 1 || sessions[0].project !== project ||
+        !sameBasis(snapshot.source, sessions[0].source) || sourceBasis(sessions[0].source).id !== snapshot.source.id) {
+      throw new Error('Observe the current project source before reconciling.');
+    }
+    if (snapshot.source.id === base.source.id || sameBasis(base.source, {...snapshot.source, id: undefined})) throw new Error('Read a changed source revision before reconciling.');
+    const target = digest(snapshot.uri);
+    if (this.records.has(target)) throw new Error('A draft for the current source already exists. Review it without overwriting it.');
+    if (this.records.size >= 64) throw new Error('64 private draft buffers are retained.');
+    this.ensureDirectory();
+    const file = path.join(this.directory, `${old.id}.json`), lock = `${file}.lock`;
+    const guard = fs.openSync(lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
+    try {
+      const baseline = this.baselines.get(old.id);
+      if (!baseline || !readPrivate(file).equals(baseline)) throw new Error('Original draft changed outside this editor. Reopen it before reconciling.');
+      const result = mergeDraft(base.text, localText, snapshot.text);
+      if (result.kind === 'conflict') return result;
+      const next: Saved = {version: 1, id: target, uri: `readymade-draft:/${target}${snapshot.path}`,
+        snapshot, text: result.text, updatedAt: Date.now()};
+      this.commit(next);
+      return {kind: 'merged', draft: clone(next)};
+    } finally { fs.closeSync(guard); fs.unlinkSync(lock); }
+  }
   private commit(next: Saved): void {
-    const bytes = Buffer.from(JSON.stringify(next), 'utf8'); if (bytes.length > 524_288) throw new Error('Private draft journal capacity exceeded.');
+    const bytes = Buffer.from(JSON.stringify(next), 'utf8'); if (bytes.length > 32 * 1024 * 1024) throw new Error('Private draft journal capacity exceeded.');
     validSaved(next); this.ensureDirectory();
     const file = path.join(this.directory, `${next.id}.json`), lock = `${file}.lock`, temporary = path.join(this.directory, `.${randomUUID()}.tmp`);
     const guard = fs.openSync(lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
@@ -112,7 +146,7 @@ export class DraftStore {
     const sessions = current.sessions.filter(item => item.id === snapshot.session);
     if (sessions.length !== 1 || !sameBasis(snapshot.source, sessions[0].source) || sourceBasis(sessions[0].source).id !== snapshot.source.id) throw new Error('Draft source changed. Read the current source first.');
     if (row.text === snapshot.text || !editable(row.text) || !editable(snapshot.text)) throw new Error('A changed LF-only draft without control characters is required. Original bytes are retained.');
-    const input = `/replace ${snapshot.path} ${snapshot.blob} ${snapshot.mark}\n${row.text}`;
+    const input = candidateCommand(snapshot, row.text);
     if (Buffer.byteLength(input) > 65_536) throw new Error('Candidate command exceeds the native byte limit.');
     const pending: CandidateIntent = { nonce: current.nonce, input, text: row.text, phase: 'issued' };
     this.commit({ ...row, pending, updatedAt: Date.now() });

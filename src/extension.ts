@@ -1,13 +1,44 @@
 import * as vscode from 'vscode';
 import { delimiter, join } from 'node:path';
+import { homedir } from 'node:os';
+import {ProjectInvitationsView} from './project-invitations-view';
+import {InvitationJournal} from './project-invitation-journal';
+import {ProjectInboxView} from './project-inbox-view';
+import {NoltbookDocumentsView} from './noltbook-documents-view';
+import {NoltbookDocumentStore} from './noltbook-document-store';
+import {RemoteSuggestionJournal} from './remote-suggestion-journal';
+import {RemoteDraftStore} from './remote-draft-store';
+import {RemoteDraftProvider} from './remote-draft-provider';
+import {RemoteSourceView} from './remote-source-view';
+import { EditingActivityView } from './editing-activity-view';
 import { existsSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
-import { ShipClient } from './ship-client';
+import { ShipClient, ShipClientError } from './ship-client';
+import { restoredSession, sessionSelection, sessionSelectionKey, projectSessionSelectionKey } from './session-selection';
 import { JsonObject, asRecord } from './protocol';
-import { SourceStore, SourceDescriptor } from './source-store';
+import { SourceStore, SourceDescriptor, sourceBasis, sameBasis, validPath, type SourceBasis } from './source-store';
+import { DirectoryView } from './directory-view';
+import { CheckView } from './check-view';
+import {EvaluationView} from './evaluation-view';
+import {EvaluationStore} from './evaluation-store';
+import { CheckDocumentJournal } from './check-document-journal';
+import { ReviewPolicyView } from './review-policy-view';
+import { ReviewPolicyJournal } from './review-policy-journal';
+import { ProjectSharingView } from './project-sharing-view';
+import { SharingJournal } from './project-sharing-journal';
+import { CandidateView } from './candidate-view';
+import { CandidateJournal } from './candidate-journal';
+import { CompletionView } from './completion-view';
+import { CompletionJournal } from './completion-journal';
 import { SourceProvider } from './source-provider';
+import { SourcePager } from './source-pager';
+import { SourceLoader } from './source-loader';
+import { DurablePageJournal } from './page-journal';
 import { DraftStore } from './draft-store';
 import { DraftProvider } from './draft-provider';
+import { openSavedDraft } from './draft-open-view';
+import { reconcileDraftView } from './draft-reconcile-view';
+import { DraftReviewView, readDraftReviewContext } from './draft-review-view';
 import { ConversationStore } from './conversation-store';
 import { ConversationView } from './conversation-view';
 import { ShipTerminalSession, terminalApps } from './terminal-session';
@@ -15,6 +46,9 @@ import { ShipTerminalView } from './terminal-view';
 import { MediaWorkbench, type MediaTreeRow } from './media-workbench';
 import { WorkspaceRequestView } from './workspace-request-view';
 import { installAppCommand } from './landscape-command';
+import { SetupView } from './setup-view';
+import { WelcomeView } from './welcome-view';
+import { PlanetSetupView } from './planet-setup-view';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -35,10 +69,31 @@ class WorkspaceTree implements vscode.TreeDataProvider<Row> {
 
 export class ReadymadeWorkspace implements vscode.Disposable {
   readonly media: MediaWorkbench;
+  readonly home: WelcomeView;
+  readonly planetSetup: PlanetSetupView;
+  readonly setup: SetupView;
   readonly workspaceRequests: WorkspaceRequestView;
+  readonly files: DirectoryView;
+  readonly checks: CheckView;
+  readonly evaluations: EvaluationView;
+  readonly codeReview: CandidateView;
+  readonly reviewPolicy: ReviewPolicyView;
+  readonly projectSharing: ProjectSharingView;
+  readonly inbox: ProjectInboxView;
+  readonly documents: NoltbookDocumentsView;
+  readonly invitations: ProjectInvitationsView;
+  readonly activity: EditingActivityView;
+  readonly remoteSource: RemoteSourceView;
+  readonly remoteDrafts: RemoteDraftStore;
+  readonly answerReview: CompletionView;
   client?: ShipClient;
   sources?: SourceStore;
+  private pager?: SourcePager;
+  private loader?: SourceLoader;
+  private disposed = false;
+  private readonly pageJournal: DurablePageJournal;
   readonly drafts: DraftStore;
+  readonly changes: DraftReviewView;
   journal?: ConversationStore;
   snapshot?: JsonObject;
   readonly terminals = new Map<vscode.Terminal, ShipTerminalView>();
@@ -50,11 +105,21 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   private connecting = false;
   private selectedSession = '0x0';
   private selectedProject?: string;
+  private projectSelectionEpoch = 0;
+  private reviewContextJSON = '';
   get project(): string | undefined { return this.selectedProject; }
   async enableTerminalCommand(): Promise<void> {
-    const apps = ['landscape', 'groups'] as const;
+    const apps = ['landscape', 'groups', 'lattice', 'glurff', 'noltbook'] as const;
     const uris = apps.map(app => vscode.Uri.from({ scheme: vscode.env.uriScheme, authority: this.context.extension.id, path: '/' + app }));
     this.registrations.push(vscode.window.registerUriHandler({ handleUri: async incoming => {
+      if (incoming.path === '/join-project') {
+        try {await this.invitations.join(incoming);} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Project invitation could not open.');}
+        return;
+      }
+      if (incoming.path === '/shared-project') {
+        try {await this.remoteSource.open(incoming);} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Shared project could not open.');}
+        return;
+      }
       const index = uris.findIndex(uri => incoming.toString() === uri.toString());
       if (index < 0) return;
       try { await this.media.open(apps[index]); }
@@ -68,22 +133,147 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     let bin = '';
     for (const [index, app] of apps.entries()) bin = await installAppCommand(app, directory, executable, userData, uris[index].toString());
     const environment = this.context.environmentVariableCollection;
-    environment.persistent = false; environment.description = 'Adds landscape and groups to open retained ship app tabs.';
+    environment.persistent = false; environment.description = 'Adds landscape, groups, lattice, glurff and noltbook to open retained ship app tabs.';
     environment.prepend('PATH', bin + delimiter);
     this.registrations.push({ dispose: () => environment.clear() });
   }
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.pageJournal = new DurablePageJournal(join(context.globalStorageUri.fsPath, 'file-pages'), context.workspaceState);
+    this.answerReview = new CompletionView(new CompletionJournal(join(context.globalStorageUri.fsPath, 'answer-decisions')), () => this.selectedProject, () => this.render());
+    this.checks = new CheckView(() => this.selectedProject, () => this.render(), new CheckDocumentJournal(join(context.globalStorageUri.fsPath, 'check-documents')), async (report, path) => {
+      const client = this.client, sources = this.sources, loader = this.loader;
+      const active = () => !this.disposed && this.client === client && this.sources === sources && this.selectedProject === report.project && client?.origin === report.origin && client.snapshot?.owner === report.owner;
+      if (!client || !sources || !loader || !active()) return;
+      const retained = sources.sources().find(row => row.session === report.session && row.path === path && sameBasis(report.source, row.source));
+      if (retained) return sources.openSnapshot(retained);
+      const state = await client.codingState(report.session);
+      const sessions = state.sessions.filter(row => row.id === report.session && row.project === report.project && sameBasis(report.source, row.source));
+      if (!active() || state.owner !== report.owner || sessions.length !== 1) return;
+      const loaded = await loader.load(report.session, report.source, path, report.project, {active, progress: () => {}});
+      if (loaded && active()) return sources.openSnapshot(loaded);
+    });
+    this.evaluations = new EvaluationView(new EvaluationStore(join(context.globalStorageUri.fsPath, 'evaluations')), () => this.client,
+      () => this.selectedProject, () => {
+        const uri = vscode.window.activeTextEditor?.document.uri;
+        if (!uri || uri.scheme !== 'urbit-source' || !this.sources || this.disposed) return;
+        try {const source = this.sources.openSnapshot(uri.toString()); return source.session === this.selectedSession ? source : undefined;}
+        catch {return;}
+      }, () => this.render());
+    this.codeReview = new CandidateView(() => this.selectedProject, () => this.render(), new CandidateJournal(join(context.globalStorageUri.fsPath, 'code-reviews')),
+      undefined, new CheckDocumentJournal(join(context.globalStorageUri.fsPath, 'candidate-documents')));
+    this.reviewPolicy = new ReviewPolicyView(() => this.selectedProject, () => this.render(), new ReviewPolicyJournal(join(context.globalStorageUri.fsPath, 'review-policies')));
+    this.projectSharing = new ProjectSharingView(() => this.selectedProject, () => this.render(), new SharingJournal(join(context.globalStorageUri.fsPath, 'project-sharing')));
+    this.files = new DirectoryView(this.pageJournal, () => this.selectedProject, () => this.render());
     this.media = new MediaWorkbench(context, () => this.client, () => this.render());
+    this.documents = new NoltbookDocumentsView(new NoltbookDocumentStore(join(context.globalStorageUri.fsPath, 'noltbook-documents')), () => this.media.connectedClient, () => this.render(),
+      (client, peer, url) => this.media.open('noltbook', url, {client, peer}));
+    this.remoteDrafts = new RemoteDraftStore(join(context.globalStorageUri.fsPath, 'remote-drafts'));
+    const remoteProvider = new RemoteDraftProvider(this.remoteDrafts);
+    this.registrations.push(remoteProvider,
+      vscode.workspace.registerFileSystemProvider('readymade-remote-draft', remoteProvider, {isCaseSensitive: true}),
+      vscode.workspace.registerFileSystemProvider('readymade-remote-original', remoteProvider, {isCaseSensitive: true, isReadonly: true}));
+    const draftErrors = new Set<string>();
+    this.registrations.push(vscode.workspace.onDidChangeTextDocument(event => {
+      if (event.document.uri.scheme !== 'readymade-remote-draft' || !event.contentChanges.length) return;
+      const uri = event.document.uri.toString();
+      try {this.remoteDrafts.save(uri, event.document.getText()); draftErrors.delete(uri);}
+      catch (error) {if (!draftErrors.has(uri)) {draftErrors.add(uri); void vscode.window.showErrorMessage('Shared draft could not be retained: ' + (error instanceof Error ? error.message : 'Private storage unavailable'));}}
+    }));
+    this.remoteSource = new RemoteSourceView(context.extension.id, () => this.media.connectedClient, async retainedOrigin => {
+      if (this.media.connectedClient) return this.media.connectedClient;
+      if (retainedOrigin) return this.media.connectClient(retainedOrigin);
+      const origin = await vscode.window.showInputBox({title: 'Connect your ship for shared projects', prompt: 'Your exact HTTPS ship origin, or localhost HTTP', value: context.workspaceState.get<string>('readymade.origin')});
+      return origin ? this.media.connectClient(origin) : undefined;
+    }, () => {if (!this.disposed) this.render();}, this.remoteDrafts, new RemoteSuggestionJournal(join(context.globalStorageUri.fsPath, 'remote-suggestions')));
+    this.invitations = new ProjectInvitationsView(context.extension.id, () => this.media.connectedClient, () => this.selectedProject, async () => {
+      if (this.media.connectedClient) return this.media.connectedClient;
+      const origin = await vscode.window.showInputBox({title: 'Connect your ship to join a project', prompt: 'Your exact HTTPS ship origin, or localhost HTTP', value: context.workspaceState.get<string>('readymade.origin')});
+      return origin ? this.media.connectClient(origin) : undefined;
+    }, new InvitationJournal(join(context.globalStorageUri.fsPath, 'project-invitations')), () => {if (!this.disposed) this.render();});
     this.workspaceRequests = new WorkspaceRequestView(context, () => this.render(), session => this.refresh(session));
     this.drafts = new DraftStore(join(context.globalStorageUri.fsPath, 'drafts'));
+    this.changes = new DraftReviewView(this.drafts);
+    this.activity = new EditingActivityView(this.drafts, () => ({client: this.client, project: this.selectedProject}),
+      () => {if (!this.disposed) this.render();}, join(homedir(), '.cache', 'readymade', 'activity-publishers'));
+    this.inbox = new ProjectInboxView(() => this.client && this.selectedProject && this.sources && this.loader ?
+      {client: this.client, project: this.selectedProject, sources: this.sources, loader: this.loader, drafts: this.drafts} : undefined,
+    (client, project, receipt) => client.projectInbox(project, receipt), () => this.activity.contextChanged(), () => {if (!this.disposed) this.render();});
+    const retainedReview = readDraftReviewContext(context.workspaceState.get('readymade.reviewContext'));
+    if (retainedReview) this.changes.refresh(retainedReview);
+    const connection = () => {
+      const client = this.media.connectedClient;
+      const cookies = client?.browserCookies(client.origin).filter(cookie => cookie.name.startsWith('urbauth-')) ?? [];
+      const ship = cookies.length === 1 && /^urbauth-~[a-z-]{3,128}$/.test(cookies[0].name) ? cookies[0].name.slice('urbauth-'.length) : undefined;
+      return {ship, origin: ship ? client?.origin : undefined, project: client && this.client === client ? this.selectedProject : undefined};
+    };
+    this.planetSetup = new PlanetSetupView(connection, () => this.connectApps());
+    this.home = new WelcomeView(connection, async action => {
+      if (action === 'openProject') return vscode.commands.executeCommand('workbench.action.files.openFolder');
+      if (action === 'connect') {if (await this.connectApps()) await this.setup.show(this.media.connectedClient); return;}
+      if (action === 'getUrbit') return this.planetSetup.show();
+      if (action === 'join') return this.invitations.join();
+      if (await this.connectApps()) return this.media.open(action);
+    });
+    const homeStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 101);
+    homeStatus.name = 'Readymade Home'; homeStatus.text = '$(home) Home'; homeStatus.command = 'readymade.home';
+    homeStatus.tooltip = 'Get a planet, connect your Urbit, or open a project'; homeStatus.show();
+    this.registrations.push(this.home, this.planetSetup, homeStatus);
     this.registrations.push(vscode.workspace.registerFileSystemProvider('readymade-draft', new DraftProvider(this.drafts), { isCaseSensitive: true }));
     this.registrations.push(vscode.window.registerTreeDataProvider('readymade.workspace', this.tree));
     this.registrations.push(vscode.window.onDidCloseTerminal(t => { this.terminals.get(t)?.close(); this.terminals.delete(t); }));
     this.status.text = '$(plug) Connect'; this.status.command = 'readymade.connect'; this.status.show();
     const command = (name: string, handler: (...args: unknown[]) => unknown) => this.registrations.push(vscode.commands.registerCommand('readymade.' + name, async (...args: unknown[]) => {
-      try { return await handler(...args); } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Readymade operation failed'); throw error; }
+      try { return await handler(...args); } catch (error) { if (error instanceof ShipClientError && error.code === 'cancelled') return; void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Readymade operation failed'); throw error; }
     }));
-    command('connect', origin => this.connect(typeof origin === 'string' ? origin : undefined));
+    command('home', () => this.home.show());
+    command('getUrbit', () => this.planetSetup.show());
+    command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
+    command('openSharedProject', link => this.remoteSource.open(typeof link === 'string' ? link : undefined));
+    command('resumeSharedProject', id => this.remoteSource.resume(typeof id === 'string' ? id : undefined));
+    command('refreshSharedProject', () => this.remoteSource.refresh());
+    command('checkSharedProject', () => this.remoteSource.check());
+    command('refreshSharedActivity', () => this.remoteSource.refreshActivity());
+    command('openSharedActivityFile', ship => this.remoteSource.openActivityFile(String(ship)));
+    command('openSharedSource', uri => this.remoteSource.openFile(uri));
+    command('editSharedDraft', path => this.remoteSource.editDraft(typeof path === 'string' ? path : undefined));
+    command('openSharedDraft', id => this.remoteSource.openDraft(String(id)));
+    command('compareSharedDraft', id => this.remoteSource.compare(typeof id === 'string' ? id : undefined));
+    command('reconcileSharedDraft', id => this.remoteSource.reconcile(typeof id === 'string' ? id : undefined));
+    command('sendSharedSuggestion', id => this.remoteSource.sendSuggestion(typeof id === 'string' ? id : undefined));
+    command('checkSharedSuggestion', request => this.remoteSource.checkSuggestion(String(request)));
+    command('inviteCollaborator', target => this.invitations.invite(typeof target === 'string' ? target : undefined));
+    command('joinProject', link => this.invitations.join(typeof link === 'string' ? link : undefined));
+    command('checkProjectInvitation', request => this.invitations.check(String(request)));
+    command('copyProjectJoinLink', request => this.invitations.copyLink(String(request)));
+    command('projectMembers', () => this.invitations.observe('members'));
+    command('projectInvitations', () => this.invitations.observe('invitations'));
+    command('nextProjectMembers', kind => this.invitations.observe(kind === 'invitations' ? 'invitations' : 'members', true));
+    command('closeProjectInvitation', (id, expired) => this.invitations.closeInvitation(String(id), expired === true));
+    command('projectInbox', () => this.inbox.observe());
+    command('openInboxSuggestion', receipt => this.inbox.show(String(receipt)));
+    command('openDocument', async id => {
+      if (typeof id !== 'string' && !this.media.connectedClient) await this.media.connectClient();
+      return this.documents.open(typeof id === 'string' ? id : undefined);
+    });
+    command('publishDocument', id => this.documents.publish(typeof id === 'string' ? id : undefined));
+    command('checkDocument', id => this.documents.check(typeof id === 'string' ? id : undefined));
+    command('reconcileDocument', id => this.documents.reconcile(typeof id === 'string' ? id : undefined));
+    command('compareDocument', id => this.documents.compare(typeof id === 'string' ? id : undefined));
+    command('documentHistory', id => this.documents.history(typeof id === 'string' ? id : undefined));
+    command('openDocumentInNoltbook', id => this.documents.openInNoltbook(typeof id === 'string' ? id : undefined));
+    command('restoreDocumentVersion', id => this.documents.restore(typeof id === 'string' ? id : undefined));
+    command('importInboxSuggestion', receipt => this.inbox.import(String(receipt)));
+    command('savedChecks', () => this.checks.openSaved());
+    this.setup = new SetupView(async () => {
+      if (!await this.connectApps()) return undefined;
+      return this.media.connectedClient;
+    }, async action => {
+      if (action === 'coding') return this.connect(this.media.connectedClient?.origin);
+      if (action === 'guide') return vscode.env.openExternal(vscode.Uri.parse('https://github.com/DashusNavnul/readymade/blob/main/docs/LLM_SETUP.md'));
+      if (action === 'newWindow') return vscode.commands.executeCommand('workbench.action.newWindow');
+      return this.media.open(action);
+    });
+    this.registrations.push(this.setup); command('checkSetup', () => this.setup.show());
     command('refresh', () => this.refresh());
     command('selectProject', project => this.selectProject(typeof project === 'string' ? project : undefined));
     command('selectSession', async session => {
@@ -92,8 +282,61 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (selected) await this.refresh(selected);
     });
     command('openSource', uri => this.openSource(typeof uri === 'string' ? uri : undefined));
-    command('readFile', () => this.readFile());
+    command('readFile', (path, session, basis) => this.readFile(typeof path === 'string' ? path : undefined, typeof session === 'string' ? session : undefined, basis === undefined ? undefined : sourceBasis(basis)));
+    command('browseFiles', (session, directory) => this.files.open(typeof session === 'string' ? session : undefined, typeof directory === 'string' ? directory : undefined));
+    command('refreshFiles', () => this.files.refresh());
+    command('moreFiles', () => this.files.next());
+    command('checks', session => this.checks.observe(typeof session === 'string' ? session : undefined));
+    command('showCheck', key => this.checks.show(String(key)));
+    command('runExpression', expression => this.evaluations.run(typeof expression === 'string' ? expression : undefined));
+    command('showEvaluation', id => this.evaluations.show(String(id)));
+    command('observeEvaluation', id => this.evaluations.observe(String(id)));
+    command('reviewCode', session => this.codeReview.observe(typeof session === 'string' ? session : undefined));
+    command('showCandidate', id => this.codeReview.show(String(id)));
+    command('savedCandidates', () => this.codeReview.openSaved());
+    command('startCodeReview', id => this.codeReview.start(String(id)));
+    command('applyCandidate', id => this.codeReview.apply(String(id)));
+    command('checkAppliedCandidate', (session, id) => this.codeReview.checkApplied(String(session), String(id)));
+    command('recoverCodeReview', (session, id) => this.codeReview.recover(String(session), String(id)));
+    command('reviewPolicy', session => this.reviewPolicy.observe(typeof session === 'string' ? session : undefined));
+    command('configureReviewer', () => this.reviewPolicy.configure());
+    command('disableReviewer', () => this.reviewPolicy.configure(true));
+    command('recoverReviewer', previous => this.reviewPolicy.recover(String(previous)));
+    command('projectSharing', peer => this.projectSharing.observe(typeof peer === 'string' ? peer : undefined));
+    command('shareActivity', () => this.activity.share());
+    command('stopActivity', () => this.activity.stop());
+    command('refreshActivity', () => this.activity.refresh());
+    command('openActivityFile', ship => this.activity.openFile(String(ship), async (file, active) => {
+      const client = this.requireClient();
+      if (!active() || client.origin !== file.origin || this.selectedProject !== file.project) throw new Error('Activity project changed.');
+      const state = await client.codingState();
+      if (!active() || this.client !== client || state.owner !== file.actor) throw new Error('Activity connection changed.');
+      const sessions = state.sessions.filter(row => row.project === file.project && typeof row.id === 'string')
+        .map(row => ({id: String(row.id), source: sourceBasis(row.source)})).filter(row => row.source.owner === file.owner && row.source.desk === file.desk);
+      const session = sessions.find(row => row.id === this.selectedSession) ?? (sessions.length === 1 ? sessions[0] : undefined);
+      if (!session) throw new Error('Select a coding session for this project and source desk before opening this file.');
+      await this.readFile(file.path, session.id, sourceBasis(session.source));
+    }));
+    command('copySharedProjectLink', () => this.projectSharing.copyLink(this.context.extension.id));
+    command('copySharedFileLink', () => this.projectSharing.copyLink(this.context.extension.id, true));
+    command('grantProjectAccess', () => this.projectSharing.change());
+    command('revokeProjectAccess', () => this.projectSharing.change(true));
+    command('recoverProjectAccess', request => this.projectSharing.recover(String(request)));
+    command('reviewAnswer', session => this.answerReview.observe(typeof session === 'string' ? session : undefined));
+    command('acceptAnswer', () => this.answerReview.accept());
+    command('recoverAnswer', proposal => this.answerReview.recover(String(proposal)));
+    command('readNextPage', key => this.readNextPage(typeof key === 'string' ? key : undefined));
     command('createDraft', () => this.createDraft());
+    command('reconcileDraft', () => {
+      const client = this.requireClient(), project = this.selectedProject;
+      if (!project) throw new Error('Choose the draft project first.');
+      return reconcileDraftView({drafts: this.drafts, sources: this.sources!, loader: this.loader!, client, project,
+        active: () => !this.disposed && this.client === client && this.selectedProject === project, changed: () => this.render()});
+    });
+    command('changes', () => this.changes.reveal());
+    command('openSavedDraft', id => openSavedDraft(this.drafts, () => !this.disposed, typeof id === 'string' ? id : undefined));
+    command('reviewDraft', id => this.changes.review(typeof id === 'string' ? id : undefined));
+    command('reviewSubmitted', id => this.changes.review(typeof id === 'string' ? id : undefined, true));
     command('prepareCandidate', () => this.prepareCandidate());
     command('conversation', () => this.showConversation());
     command('request', () => this.request());
@@ -102,42 +345,83 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('terminalControl', () => this.terminalControl());
     this.render();
   }
+  private async connectApps(): Promise<boolean> {
+    if (this.media.connectedClient) return true;
+    try {await this.media.connectClient(); this.render(); return true;}
+    catch (error) {if (error instanceof ShipClientError && error.code === 'cancelled') return false; throw error;}
+  }
   async connect(origin?: string, credentials?: (origin: string) => Promise<string | undefined>): Promise<void> {
     if (this.connecting) throw new Error('Connection already in progress');
     const selected = origin ?? await vscode.window.showInputBox({ title: 'Connect Readymade to Urbit', value: this.media.connectedClient?.origin ?? this.context.workspaceState.get<string>('readymade.origin') ?? vscode.workspace.getConfiguration('readymade').get<string>('origin'), prompt: 'Exact HTTPS ship origin, or localhost HTTP' });
     if (!selected) return;
     this.connecting = true;
     try {
+      await this.activity.contextChanged();
       const client = await this.media.connectClient(selected, credentials);
       if (this.client) { await this.refresh(); return; }
       const snapshot = await client.workspaceState();
       if (typeof snapshot.ship !== 'string' || !snapshot.ship.startsWith('~')) throw new Error('Invalid ship identity');
-      const selectedSession = this.drafts.list().find(d => d.pending && d.snapshot.origin === client.origin)?.snapshot.session ?? '0x0';
+      const pendingSession = this.drafts.list().find(d => d.pending && d.snapshot.origin === client.origin && d.snapshot.ship === snapshot.ship)?.snapshot.session;
+      let selectedSession = pendingSession ?? '0x0';
       const sources = new SourceStore(client); await sources.refresh(selectedSession);
       if (client.snapshot?.owner !== snapshot.ship) throw new Error('Workspace and coding ship identities disagree');
+      if (!pendingSession) {
+        const project = this.context.workspaceState.get<string>(`readymade.project:${client.origin}:${snapshot.ship}`);
+        const retained = this.context.workspaceState.get(sessionSelectionKey(client.origin, snapshot.ship));
+        const session = restoredSession(retained, client.snapshot, snapshot.ship, project);
+        if (session !== '0x0') {
+          await sources.refresh(session);
+          if (restoredSession(retained, client.snapshot!, snapshot.ship, project) !== session) throw new Error('Saved coding session changed while connecting. Choose the session again.');
+          selectedSession = session;
+        }
+      }
       const journal = new ConversationStore(join(this.context.globalStorageUri.fsPath, 'requests'), client.origin);
       this.sourceRegistration = vscode.workspace.registerFileSystemProvider('urbit-source', new SourceProvider(sources), { isCaseSensitive: true, isReadonly: true });
       this.client = client; this.sources = sources; this.snapshot = snapshot; this.journal = journal;
+      this.pager = new SourcePager(client, sources, this.pageJournal);
+      this.loader = new SourceLoader(sources, this.pager);
+      this.files.connect(client);
+      this.checks.connect(client);
+      this.codeReview.connect(client);
+      this.reviewPolicy.connect(client);
+      this.projectSharing.connect(client);
+      this.answerReview.connect(client);
       this.selectedSession = selectedSession;
       this.workspaceRequests.connect(client, snapshot.ship);
       const savedProject = this.context.workspaceState.get<string>(this.projectKey());
       this.selectedProject = client.snapshot?.projects.some(p => p.id === savedProject) ? savedProject : undefined;
       const pendingProject = client.snapshot?.sessions.find(s => s.id === selectedSession)?.project;
       if (typeof pendingProject === 'string') this.selectedProject = pendingProject;
+      const preference = sessionSelection(client.snapshot!, this.selectedProject, selectedSession);
+      if (preference) await this.context.workspaceState.update(projectSessionSelectionKey(client.origin, snapshot.ship, preference.project), preference);
       for (const draft of this.drafts.list()) if (draft.pending && draft.snapshot.origin === client.origin && draft.snapshot.session === selectedSession) this.drafts.observe(draft.id, client.snapshot!);
       this.status.text = `$(remote) ${snapshot.ship}`; this.status.command = 'readymade.refresh'; this.render();
     } finally { this.connecting = false; }
   }
   async refresh(session = this.selectedSession): Promise<void> {
-    const client = this.requireClient();
+    const epoch = ++this.projectSelectionEpoch, client = this.requireClient();
+    const active = () => !this.disposed && this.client === client && this.projectSelectionEpoch === epoch;
+    await this.activity.contextChanged();
+    if (!active()) return;
     const snapshot = await client.workspaceState();
+    if (!active()) return;
     if (snapshot.unchanged !== true && snapshot.ship !== this.snapshot?.ship) throw new Error('Ship identity changed; open a new window and verify the connection');
     if (snapshot.unchanged !== true) this.snapshot = snapshot;
-    await this.sources!.refresh(session); this.selectedSession = session;
+    await this.sources!.refresh(session);
+    if (!active()) return;
+    await this.activity.contextChanged();
+    if (!active()) return;
+    this.selectedSession = session;
     if (client.snapshot?.owner !== this.snapshot?.ship) throw new Error('Workspace and coding ship identities disagree');
     const project = client.snapshot?.sessions.find(s => s.id === session)?.project;
     if (typeof project === 'string') this.selectedProject = project;
+    const preference = sessionSelection(client.snapshot!, this.selectedProject, session);
     await this.context.workspaceState.update(this.projectKey(), this.selectedProject);
+    if (!active()) return;
+    await this.context.workspaceState.update(sessionSelectionKey(client.origin, String(this.snapshot?.ship)), preference);
+    if (!active()) return;
+    if (preference) await this.context.workspaceState.update(projectSessionSelectionKey(client.origin, String(this.snapshot?.ship), preference.project), preference);
+    if (!active()) return;
     for (const draft of this.drafts.list()) {
       if (draft.pending && draft.snapshot.origin === client.origin && draft.snapshot.session === session) this.drafts.observe(draft.id, client.snapshot!);
     }
@@ -147,32 +431,85 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   private requireJournal(): ConversationStore { if (!this.journal) throw new Error('Connect to a ship first'); return this.journal; }
   private projectKey(): string { return `readymade.project:${this.requireClient().origin}:${String(this.snapshot?.ship)}`; }
   async selectProject(project?: string): Promise<void> {
-    const client = this.requireClient(); await client.codingState();
+    const epoch = ++this.projectSelectionEpoch;
+    await this.activity.contextChanged();
+    const client = this.requireClient(), owner = String(this.snapshot?.ship); await client.codingState();
+    const active = () => !this.disposed && this.client === client && this.projectSelectionEpoch === epoch && client.snapshot?.owner === owner;
+    if (!active()) throw new Error('Project selection changed.');
     const projects = client.snapshot!.projects;
     const selected = project ?? (await vscode.window.showQuickPick(projects.map(p => ({ label: String(p.title ?? p.id), description: String(p.id), project: String(p.id) })), { title: 'Choose project' }))?.project;
     if (!selected) return;
-    if (!projects.some(p => p.id === selected)) throw new Error('Project is no longer available');
-    this.selectedProject = selected; this.selectedSession = '0x0';
-    await this.context.workspaceState.update(this.projectKey(), selected); this.render();
+    await this.activity.contextChanged();
+    if (!active()) throw new Error('Project selection changed.');
+    await client.codingState();
+    if (!active() || !client.snapshot?.projects.some(p => p.id === selected)) throw new Error('Project is no longer available');
+    const key = projectSessionSelectionKey(client.origin, owner, selected), retained = this.context.workspaceState.get(key);
+    const session = restoredSession(retained, client.snapshot, owner, selected);
+    if (session !== '0x0') {
+      await this.sources!.refresh(session);
+      if (!active() || restoredSession(retained, client.snapshot!, owner, selected) !== session) throw new Error('Saved project session changed. Select the project again.');
+    }
+    if (!active()) throw new Error('Project selection changed.');
+    const preference = sessionSelection(client.snapshot!, selected, session);
+    this.selectedProject = selected; this.selectedSession = session;
+    await this.context.workspaceState.update(this.projectKey(), selected);
+    if (!active()) throw new Error('Project selection changed.');
+    await this.context.workspaceState.update(sessionSelectionKey(client.origin, owner), preference);
+    if (!active()) throw new Error('Project selection changed.');
+    if (!preference) await this.context.workspaceState.update(key, undefined);
+    this.render();
   }
   private projectSources(): readonly SourceDescriptor[] {
     const sessions = this.client?.snapshot?.sessions ?? [];
     return (this.sources?.sources() ?? []).filter(source => !this.selectedProject || sessions.some(s => s.id === source.session && s.project === this.selectedProject));
   }
   private render(): void {
-    const rows: Row[] = [{ label: this.snapshot ? String(this.snapshot.ship) : this.media.connectedClient?.origin ?? 'Connect to your ship', command: { command: 'readymade.connect', title: 'Connect' } }, ...this.media.rows()];
+    this.home?.refresh();
+    this.planetSetup?.refresh();
+    if (this.client && this.snapshot) {
+      const retained = {origin: this.client.origin, ship: String(this.snapshot.ship), project: this.selectedProject, sessions: (this.client.snapshot?.sessions ?? []).map(s => [String(s.id), String(s.project)])};
+      const review = readDraftReviewContext(retained);
+      if (review) {
+        this.changes.refresh(review);
+        const encoded = JSON.stringify(retained);
+        if (encoded !== this.reviewContextJSON) { this.reviewContextJSON = encoded; void this.context.workspaceState.update('readymade.reviewContext', retained); }
+      } else this.changes.clearContext();
+    } else if (this.media.connectedClient) this.changes.constrainOrigin(this.media.connectedClient.origin);
+    const rows: Row[] = [{id: 'home', label: 'Home', icon: 'home', command: {command: 'readymade.home', title: 'Readymade Home'}},
+      { label: this.snapshot ? String(this.snapshot.ship) : this.media.connectedClient?.origin ?? 'Connect to your ship', command: { command: 'readymade.connect', title: 'Connect' } }, ...this.media.rows()];
+    rows.push(...this.remoteSource.rows());
+    rows.push(...this.documents.rows());
+    rows.push(...this.invitations.rows());
+    rows.push({ id: 'changes', label: 'Changes', icon: 'diff', command: { command: 'readymade.changes', title: 'Changes' } });
+    if (this.drafts.list().length) rows.push({id: 'saved-drafts', label: 'Open saved draft…', icon: 'files',
+      command: {command: 'readymade.openSavedDraft', title: 'Open saved local draft'}});
     if (this.snapshot) {
       rows.unshift({ id: 'project', label: this.selectedProject ?? 'Choose project…', icon: 'folder', command: { command: 'readymade.selectProject', title: 'Choose project' } });
       rows.push(...this.workspaceRequests.rows(this.selectedProject));
+      rows.push(...this.files.rows());
+      rows.push(...this.checks.rows());
+      rows.push(...this.evaluations.rows());
+      rows.push(...this.codeReview.rows());
+      rows.push(...this.reviewPolicy.rows());
+      rows.push(...this.projectSharing.rows());
+      rows.push(...this.inbox.rows());
+      rows.push(...this.activity.rows());
+      rows.push(...this.answerReview.rows());
       rows.push({ label: 'Pataphor conversation and receipts', command: { command: 'readymade.conversation', title: 'Conversation' } });
       rows.push({ label: 'Read ship file…', command: { command: 'readymade.readFile', title: 'Read file' } });
       const sessions = (this.client?.snapshot?.sessions ?? []).filter(s => !this.selectedProject || s.project === this.selectedProject);
-      rows.push({ label: `Coding sessions (${sessions.length})`, children: sessions.map(s => ({ label: String(s.id), description: String(s.project ?? ''), command: { command: 'readymade.selectSession', title: 'Observe session', arguments: [s.id] } })) });
+      rows.push({ label: `Coding sessions (${sessions.length})`, children: sessions.map(s => ({ label: String(s.id), description: s.id === this.selectedSession ? 'Current session' : String(s.project ?? ''), command: { command: 'readymade.selectSession', title: 'Observe session', arguments: [s.id] } })) });
       for (const source of this.projectSources()) rows.push({ label: source.path, description: 'canonical · read-only', command: { command: 'readymade.openSource', title: 'Open source', arguments: [source.uri] } });
+      for (const file of this.sources!.progress().filter(p => p.next !== null && p.ship === this.snapshot?.ship && sessions.some(s => s.id === p.session))) {
+        rows.push({label: file.path, description: `${file.lines}/${file.total} lines · ${file.bytes}/1,048,576 bytes`, children: [
+          {label: 'Read next page', command: {command: 'readymade.readNextPage', title: 'Read next page', arguments: [file.key]}},
+          {label: 'Refresh retained result', command: {command: 'readymade.selectSession', title: 'Refresh', arguments: [file.session]}}
+        ]});
+      }
       rows.push({ label: 'Observe ship terminal…', command: { command: 'readymade.terminal', title: 'Terminal' } });
     }
-    for (const draft of this.drafts.list()) rows.push({ label: draft.snapshot.path, description: draft.pending ? `${draft.pending.phase} ${draft.pending.candidate ?? draft.pending.request ?? 'intent retained'}` : 'local draft', command: { command: 'vscode.open', title: 'Open draft', arguments: [vscode.Uri.parse(draft.uri)] } });
-    const primary = new Set(['project', 'workspace-requests', 'code', 'groups', 'glurff', 'noltbook', 'landscape']);
+    for (const draft of this.drafts.list().filter(d => d.snapshot.origin === this.client?.origin && d.snapshot.ship === this.snapshot?.ship && (!this.selectedProject || this.client?.snapshot?.sessions.some(s => s.id === d.snapshot.session && s.project === this.selectedProject)))) rows.push({ label: draft.snapshot.path, description: draft.pending ? `${draft.pending.phase} ${draft.pending.candidate ?? draft.pending.request ?? 'intent retained'}` : 'local draft', command: { command: 'vscode.open', title: 'Open draft', arguments: [vscode.Uri.parse(draft.uri)] } });
+    const primary = new Set(['home', 'project', 'shared-project', 'shared-documents', 'workspace-requests', 'ship-files', 'checks', 'evaluations', 'code-review', 'review-policy', 'project-sharing', 'project-activity', 'answer-review', 'changes', 'saved-drafts', 'code', 'groups', 'lattice', 'glurff', 'noltbook', 'landscape']);
     this.tree.rows = [...rows.filter(row => row.id && primary.has(row.id)),
       {id: 'more', label: 'More', icon: 'ellipsis', children: rows.filter(row => !row.id || !primary.has(row.id))}];
     this.tree.refresh();
@@ -186,19 +523,49 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.requireClient(); const source = uri ?? (await this.pickSource())?.uri; if (!source) return;
     const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(source)); await vscode.window.showTextDocument(document);
   }
-  private async readFile(): Promise<void> {
-    const client = this.requireClient(); const state = await client.codingState();
+  private async readFile(requestedPath?: string, requestedSession?: string, expectedSource?: SourceBasis): Promise<void> {
+    const client = this.requireClient(), project = this.selectedProject;
+    const current = () => !this.disposed && this.client === client && this.selectedProject === project;
+    await this.activity.contextChanged();
+    const state = await client.codingState();
+    if (!current()) return;
     const choices = state.sessions.filter(s => (!this.selectedProject || s.project === this.selectedProject) && typeof s.id === 'string' && s.source && typeof s.source === 'object').map(s => ({ label: String(s.id), description: String(s.project ?? ''), session: s }));
     if (!choices.length) { void vscode.window.showInformationMessage('This project has no coding session yet.'); return; }
-    const selected = await vscode.window.showQuickPick(choices, { title: 'Choose a ship coding session for the explicit file read' }); if (!selected) return;
+    const selected = requestedSession ? choices.find(s => s.label === requestedSession) : await vscode.window.showQuickPick(choices, { title: 'Choose a ship coding session for the explicit file read' });
+    if (!selected) { if (requestedSession) throw new Error('File session is outside the selected project.'); return; }
+    await this.activity.contextChanged();
     const session = String(selected.session.id); const fresh = await client.codingState(session);
+    if (!current()) return;
     const row = fresh.sessions.find(s => s.id === session); if (!row) throw new Error('Session changed');
+    if (project !== undefined && row.project !== project) throw new Error('File session changed project.');
     const source = asRecord(row.source);
-    const path = await vscode.window.showInputBox({ title: 'Read ship file', prompt: 'Urbit source path, e.g. /lib/example/hoon. This explicitly submits a read tool to the selected ship session.' });
-    if (!path) return; if (!/^\/(?:[a-z0-9-]+\/)*[a-z0-9-]+$/.test(path)) throw new Error('Invalid source path');
-    await client.codingTool(session, String(source.id), `/read ${path} 1 200`);
+    if (expectedSource && !sameBasis(expectedSource, source)) throw new Error('Listed source changed. Browse the current revision again.');
+    const path = requestedPath ?? await vscode.window.showInputBox({ title: 'Read ship file', prompt: 'Urbit source path, e.g. /lib/example/hoon. This explicitly submits a read tool to the selected ship session.' });
+    if (!path || !current()) return; if (!validPath(path)) throw new Error('Invalid source path');
+    const retained = this.sources!.sources().find(s => s.session === session && s.path === path && sameBasis(s.source, source));
+    if (retained) { await this.openSource(retained.uri); return; }
+    const complete = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification,
+      title: `Opening ${path}`, cancellable: true}, (progress, token) => this.loader!.load(session, sourceBasis(source), path, project, {
+        active: () => current() && !token.isCancellationRequested,
+        progress: value => progress.report({message: value ? `${value.lines}/${value.total} lines · ${value.bytes.toLocaleString()} bytes` : 'Reading from your ship…'})
+      }));
+    if (!complete || !current()) return;
     this.selectedSession = session; await this.refresh(session);
-    void vscode.window.showInformationMessage('Read submitted. Refresh this session after its native result is retained. Only complete retained files are editable as drafts.');
+    if (current()) await this.openSource(complete.uri);
+  }
+  private async readNextPage(key?: string): Promise<void> {
+    const client = this.requireClient();
+    const files = this.sources!.progress().filter(p => p.next !== null && p.ship === this.snapshot?.ship &&
+      (!this.selectedProject || client.snapshot?.sessions.some(s => s.id === p.session && s.project === this.selectedProject)));
+    const file = key ? files.find(p => p.key === key) : (await vscode.window.showQuickPick(files.map(p => ({
+      label: p.path, description: `${p.lines}/${p.total} lines`, file: p
+    })), {title: 'Continue reading a ship file'}))?.file;
+    if (!file) return;
+    await this.pager!.next(file.key, this.selectedProject);
+    await this.refresh(file.session);
+    const source = this.sources!.sources().find(s => s.session === file.session && s.source.id === file.source.id && s.path === file.path && s.blob === file.blob);
+    if (source) await this.openSource(source.uri);
+    else void vscode.window.showInformationMessage('Page requested. Refresh its retained result before continuing.');
   }
   private async createDraft(): Promise<void> {
     this.requireClient(); const active = vscode.window.activeTextEditor?.document.uri;
@@ -211,6 +578,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     if (editor.document.isDirty && !await editor.document.save()) throw new Error('Save the local draft before preparing a candidate');
     const uri = editor.document.uri.toString(), draft = this.drafts.get(uri), client = this.requireClient();
     if (draft.snapshot.origin !== client.origin) throw new Error('Draft belongs to another ship');
+    await this.activity.contextChanged();
     this.selectedSession = draft.snapshot.session;
     await client.codingState(draft.snapshot.session);
     await this.drafts.prepare(uri, client); this.render();
@@ -248,14 +616,28 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.render();
   }
   dispose(): void {
+    const closingClient = this.client, activityStopped = this.activity.contextChanged();
+    this.disposed = true;
+    this.activity.dispose();
+    this.remoteSource.dispose();
+    this.checks.dispose();
+    this.evaluations.dispose();
+    this.codeReview.dispose();
+    this.reviewPolicy.dispose();
+    this.projectSharing.dispose();
+    this.inbox.dispose();
+    this.documents.dispose();
+    this.invitations.dispose();
+    this.answerReview.dispose();
+    this.changes.dispose();
     this.workspaceRequests.dispose();
     this.media.dispose();
     for (const [terminal, view] of this.terminals) { view.close(); terminal.dispose(); }
-    this.terminals.clear(); this.client?.close(); this.sourceRegistration?.dispose();
+    this.terminals.clear(); void activityStopped.then(() => closingClient?.close(), () => closingClient?.close()); this.sourceRegistration?.dispose();
     this.registrations.forEach(d => d.dispose()); this.tree.dispose(); this.status.dispose(); this.conversation.dispose();
   }
 }
 export async function activate(context: vscode.ExtensionContext): Promise<ReadymadeWorkspace> {
   const workspace = new ReadymadeWorkspace(context); context.subscriptions.push(workspace);
-  await workspace.enableTerminalCommand(); return workspace;
+  await workspace.enableTerminalCommand(); workspace.home.showOnStartup(); return workspace;
 }

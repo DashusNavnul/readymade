@@ -13,7 +13,9 @@
   "main": "./dist/src/extension.js",
   "activationEvents": [
     "onStartupFinished",
-    "onUri"
+    "onUri",
+    "onWebviewPanel:readymade.welcome",
+    "onWebviewPanel:readymade.planetSetup"
   ],
   "enabledApiProposals": [
     "browser"
@@ -25,10 +27,47 @@
     "virtualWorkspaces": true
   },
   "contributes": {
+    "languages": [{"id": "hoon", "aliases": ["Hoon", "hoon"], "extensions": [".hoon", ".hook"], "filenamePatterns": ["**/hoon"], "configuration": "./platform/hoon-language.json"}],
+    "grammars": [{"language": "hoon", "scopeName": "source.hoon", "path": "./platform/hoon.tmLanguage"}],
     "configurationDefaults": {
-      "workbench.browser.dataStorage": "ephemeral"
+      "workbench.browser.dataStorage": "ephemeral",
+      "workbench.startupEditor": "none"
     },
     "commands": [
+      {"command": "readymade.home", "title": "Readymade: Home", "icon": "$(home)"},
+      {"command": "readymade.getUrbit", "title": "Readymade: Get an Urbit"},
+      {"command": "readymade.inspectWorkspaceResult", "title": "Readymade: Inspect Files and Checks"},
+      {"command": "readymade.inviteCollaborator", "title": "Readymade: Invite Collaborator"},
+      {"command": "readymade.joinProject", "title": "Readymade: Join Project"},
+      {"command": "readymade.checkProjectInvitation", "title": "Readymade: Check Invitation Result"},
+      {"command": "readymade.copyProjectJoinLink", "title": "Readymade: Copy Project Join Link"},
+      {"command": "readymade.projectMembers", "title": "Readymade: Project Members"},
+      {"command": "readymade.projectInvitations", "title": "Readymade: Pending Project Invitations"},
+      {"command": "readymade.nextProjectMembers", "title": "Readymade: Next Membership Page"},
+      {"command": "readymade.closeProjectInvitation", "title": "Readymade: Close Project Invitation"},
+      {"command": "readymade.reconcileSharedDraft", "title": "Readymade: Reconcile Shared Draft"},
+      {"command": "readymade.sendSharedSuggestion", "title": "Readymade: Send Shared Suggestion"},
+      {"command": "readymade.checkSharedSuggestion", "title": "Readymade: Check Shared Suggestion Result"},
+      {"command": "readymade.editSharedDraft", "title": "Readymade: Edit Shared Draft"},
+      {"command": "readymade.openSharedDraft", "title": "Readymade: Open Shared Draft"},
+      {"command": "readymade.compareSharedDraft", "title": "Readymade: Compare Shared Draft"},
+      {"command": "readymade.openSharedProject", "title": "Readymade: Open Shared Project"},
+      {"command": "readymade.resumeSharedProject", "title": "Readymade: Resume Shared Project"},
+      {"command": "readymade.refreshSharedProject", "title": "Readymade: Refresh Shared Project"},
+      {"command": "readymade.checkSharedProject", "title": "Readymade: Check Shared Project"},
+      {"command": "readymade.refreshSharedActivity", "title": "Readymade: Refresh Shared Project Activity"},
+      {"command": "readymade.openSharedActivityFile", "title": "Readymade: Open Shared Collaborator File"},
+      {"command": "readymade.openSharedSource", "title": "Readymade: Open Shared File"},
+      {
+        "command": "readymade.lattice",
+        "title": "Readymade: Open Lattice",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "readymade.checkSetup",
+        "title": "Readymade: Check Setup",
+        "icon": "$(checklist)"
+      },
       {
         "command": "readymade.groups",
         "title": "Readymade: Open Tlon Groups",
@@ -43,6 +82,8 @@
         "command": "readymade.selectProject",
         "title": "Readymade: Choose Project"
       },
+      {"command": "readymade.importSharedMessage", "title": "Readymade: Import Shared Message"},
+      {"command": "readymade.checkSharedMessageImport", "title": "Readymade: Check Shared Message Import"},
       {
         "command": "readymade.workspaceRequests",
         "title": "Readymade: Project Requests"
@@ -70,12 +111,57 @@
         "title": "Readymade: Read Ship File"
       },
       {
+        "command": "readymade.readNextPage",
+        "title": "Readymade: Read Next Ship File Page"
+      },
+      { "command": "readymade.browseFiles", "title": "Readymade: Browse Ship Files" },
+      { "command": "readymade.refreshFiles", "title": "Readymade: Refresh File Listing" },
+      { "command": "readymade.moreFiles", "title": "Readymade: Load More Ship Files" },
+      { "command": "readymade.checks", "title": "Readymade: Observe Native Checks" },
+      { "command": "readymade.showCheck", "title": "Readymade: Inspect Check Evidence" },
+      { "command": "readymade.runExpression", "title": "Readymade: Run Expression on Selected Ship Source", "icon": "$(play)" },
+      { "command": "readymade.showEvaluation", "title": "Readymade: Show Evaluation Result" },
+      { "command": "readymade.observeEvaluation", "title": "Readymade: Observe Evaluation Result" },
+      { "command": "readymade.savedChecks", "title": "Readymade: Open Saved Check Report" },
+      { "command": "readymade.reviewCode", "title": "Readymade: Observe Code Candidates" },
+      { "command": "readymade.showCandidate", "title": "Readymade: Inspect Code Candidate" },
+      { "command": "readymade.savedCandidates", "title": "Readymade: Open Saved Candidate Review" },
+      { "command": "readymade.startCodeReview", "title": "Readymade: Start Governed Code Review" },
+      { "command": "readymade.applyCandidate", "title": "Readymade: Apply Reviewed Change" },
+      { "command": "readymade.checkAppliedCandidate", "title": "Readymade: Check Applied Change" },
+      { "command": "readymade.recoverCodeReview", "title": "Readymade: Observe Retained Code Review" },
+      { "command": "readymade.reviewPolicy", "title": "Readymade: Observe Project Reviewer" },
+      { "command": "readymade.shareActivity", "title": "Readymade: Share Activity" },
+      { "command": "readymade.stopActivity", "title": "Readymade: Stop Sharing Activity" },
+      { "command": "readymade.refreshActivity", "title": "Readymade: Refresh Project Activity" },
+      { "command": "readymade.openActivityFile", "title": "Readymade: Open Collaborator File" },
+      { "command": "readymade.copySharedProjectLink", "title": "Readymade: Copy Shared Project Link" },
+      { "command": "readymade.copySharedFileLink", "title": "Readymade: Copy Shared File Link" },
+      { "command": "readymade.projectSharing", "title": "Readymade: Project Sharing" },
+      { "command": "readymade.grantProjectAccess", "title": "Readymade: Share Project Files" },
+      { "command": "readymade.revokeProjectAccess", "title": "Readymade: Revoke Project Access" },
+      { "command": "readymade.recoverProjectAccess", "title": "Readymade: Check Sharing Request" },
+      { "command": "readymade.configureReviewer", "title": "Readymade: Choose Project Reviewer" },
+      { "command": "readymade.disableReviewer", "title": "Readymade: Disable Project Review" },
+      { "command": "readymade.recoverReviewer", "title": "Readymade: Observe Retained Review Policy" },
+      { "command": "readymade.reviewAnswer", "title": "Readymade: Review Answer Completion" },
+      { "command": "readymade.acceptAnswer", "title": "Readymade: Accept Answer as Owner" },
+      { "command": "readymade.recoverAnswer", "title": "Readymade: Observe Answer Decision" },
+      {
         "command": "readymade.createDraft",
         "title": "Readymade: Create Draft from Ship File"
       },
       {
+        "command": "readymade.openSavedDraft",
+        "title": "Readymade: Open Saved Local Draft"
+      },
+      {
         "command": "readymade.prepareCandidate",
         "title": "Readymade: Prepare Candidate from Draft"
+      },
+      {
+        "command": "readymade.reconcileDraft",
+        "title": "Readymade: Reconcile Draft with Current Source"
       },
       {
         "command": "readymade.conversation",
@@ -107,6 +193,14 @@
         "title": "Readymade: Calls and Notes (Noltbook)",
         "icon": "$(comment-discussion)"
       },
+      {"command": "readymade.openDocument", "title": "Readymade: Open Shared Document"},
+      {"command": "readymade.publishDocument", "title": "Readymade: Publish Shared Document"},
+      {"command": "readymade.checkDocument", "title": "Readymade: Check Shared Document"},
+      {"command": "readymade.reconcileDocument", "title": "Readymade: Reconcile Shared Document"},
+      {"command": "readymade.compareDocument", "title": "Readymade: Compare Shared Document"},
+      {"command": "readymade.openDocumentInNoltbook", "title": "Readymade: Open Document in Noltbook"},
+      {"command": "readymade.documentHistory", "title": "Readymade: Shared Document History"},
+      {"command": "readymade.restoreDocumentVersion", "title": "Readymade: Restore Document Version"},
       {
         "command": "readymade.calls",
         "title": "Readymade: Open Legacy Call Board"
@@ -138,6 +232,19 @@
         "command": "readymade.returnCode",
         "title": "Readymade: Return to Code",
         "icon": "$(code)"
+      },
+      {
+        "command": "readymade.changes",
+        "title": "Readymade: Show Ship Changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "readymade.reviewDraft",
+        "title": "Readymade: Review Draft Changes"
+      },
+      {
+        "command": "readymade.reviewSubmitted",
+        "title": "Readymade: Review Submitted Changes"
       }
     ],
     "views": {
@@ -152,6 +259,11 @@
     "configuration": {
       "title": "Readymade",
       "properties": {
+        "readymade.callNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show incoming Noltbook calls after connecting, even while its tab is closed. Opening a notification never joins automatically."
+        },
         "readymade.origin": {
           "type": "string",
           "default": "http://localhost:8080",
@@ -174,7 +286,9 @@
       ]
     },
     "menus": {
+      "editor/title": [{"command": "readymade.runExpression", "when": "resourceScheme == urbit-source", "group": "navigation@4"}],
       "view/title": [
+        {"command": "readymade.home", "when": "view == readymade.workspace", "group": "navigation@0"},
         {
           "command": "readymade.connect",
           "when": "view == readymade.workspace",
@@ -203,7 +317,7 @@
   "scripts": {
     "build": "tsc -p .",
     "check": "tsc -p . --noEmit",
-    "lint": "eslint src tests platform",
+    "lint": "eslint src tests platform backend/install/*.cjs",
     "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.cjs"
   },
   "devDependencies": {
@@ -212,6 +326,11 @@
     "eslint": "9.39.1",
     "typescript": "5.9.3",
     "typescript-eslint": "8.46.4"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.1"
+    }
   },
   "repository": {
     "type": "git",

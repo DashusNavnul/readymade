@@ -13,6 +13,15 @@ function installSession(session, context) {
   const managed = new Map(); context.sessions.set(session, managed);
   context.mediaSessions ||= new WeakMap();
   const bindingFor = wc => wc && !wc.isDestroyed() && context.byContents.get(wc.id);
+  context.permissionDiagnostics ||= new WeakMap();
+  const recordPermission = (wc, phase, permission, details, decision) => {
+    if (!bindingFor(wc) || !['media', 'display-capture'].includes(permission)) return;
+    const events = context.permissionDiagnostics.get(wc) || [];
+    events.push({phase, permission, at: Date.now(),
+      mediaTypes: Array.isArray(details?.mediaTypes) ? details.mediaTypes.filter(kind => ['audio', 'video'].includes(kind)).slice(0, 2) : [],
+      ...(typeof decision === 'boolean' ? {decision} : {})});
+    context.permissionDiagnostics.set(wc, events.slice(-16));
+  };
   const allowed = (wc, details = {}, fallback) => {
     const bound = bindingFor(wc);
     if (!bound) return true;
@@ -24,13 +33,19 @@ function installSession(session, context) {
     const original = session[method].bind(session);
     session[method] = handler => original(method === 'setPermissionRequestHandler' ?
       (wc, permission, callback, details) => {
-        if (!allowed(wc, details)) return callback(false);
+        const answer = decision => { recordPermission(wc, 'answered', permission, details, decision); callback(decision); };
+        recordPermission(wc, 'requested', permission, details);
+        if (!allowed(wc, details)) return answer(false);
         if (bindingFor(wc) && (permission === 'display-capture' || (permission === 'media' &&
-            Array.isArray(details?.mediaTypes) && details.mediaTypes.length === 0))) return callback(details?.isMainFrame === true);
-        return handler ? handler(wc, permission, callback, details) : callback(false);
-      } : (wc, permission, requestingOrigin, details) =>
-        allowed(wc, details, requestingOrigin) && ((bindingFor(wc) && permission === 'display-capture' && details?.isMainFrame === true) ||
-        !!handler?.(wc, permission, requestingOrigin, details)));
+            Array.isArray(details?.mediaTypes) && details.mediaTypes.length === 0))) return answer(details?.isMainFrame === true);
+        recordPermission(wc, handler ? 'delegated' : 'no-handler', permission, details);
+        return handler ? handler(wc, permission, answer, details) : answer(false);
+      } : (wc, permission, requestingOrigin, details) => {
+        const decision = allowed(wc, details, requestingOrigin) && ((bindingFor(wc) && permission === 'display-capture' && details?.isMainFrame === true) ||
+          !!handler?.(wc, permission, requestingOrigin, details));
+        recordPermission(wc, 'checked', permission, details, decision);
+        return decision;
+      });
     session[method](null);
   }
   // Electron retains one listener. Compose the vendor callback, including later registrations.
@@ -74,6 +89,7 @@ function installSession(session, context) {
       confirmCapture(context.electron, request, wc, capabilities()).then(choice => {
         if (!choice || soleOwner() !== owner || admitted(request) !== wc) return answer({});
         handler(request, streams => {
+          if (soleOwner() !== owner || admitted(request) !== wc) return answer({});
           if (!streams?.video) return answer(streams);
           const selected = { ...streams }; delete selected.audio;
           answer(choice.audio ? { ...selected, audio: 'loopback' } : selected);
@@ -111,7 +127,18 @@ function installContents(wc, context) {
     const bound = context.byContents.get(wcId);
     if (bound && !policy.approved(url, bound.origin, bound.kind, true)) return Promise.reject(new Error('invalidURL'));
     context.mediaSessions?.get(session)?.();
-    return loadURL(url, ...options);
+    context.bootstrapLoads.delete(wc);
+    if (!/^about:blank#readymade-[a-f0-9]{32}$/.test(url)) return loadURL(url, ...options);
+    const bootstrap = { url, state: 'loading' };
+    context.bootstrapLoads.set(wc, bootstrap);
+    try {
+      const loading = loadURL(url, ...options);
+      // URL commitment precedes completion. Never overlap this load with app navigation.
+      void loading.then(() => {
+        if (context.bootstrapLoads.get(wc) === bootstrap && !wc.isDestroyed() && wc.getURL() === url) bootstrap.state = 'ready';
+      }, () => { bootstrap.state = 'failed'; });
+      return loading;
+    } catch (error) { bootstrap.state = 'failed'; throw error; }
   };
   const original = wc.setWindowOpenHandler.bind(wc);
   wc.setWindowOpenHandler = handler => original(details => {
@@ -128,7 +155,7 @@ function installContents(wc, context) {
     if (bound && !policy.approved(target, bound.origin, bound.kind, true)) {
       e.preventDefault();
       if (event === 'will-navigate' && e.isMainFrame !== false &&
-          ['glurff', 'noltbook', 'landscape', 'groups'].some(kind => policy.approved(target, bound.origin, kind)))
+          ['glurff', 'noltbook', 'landscape', 'groups', 'lattice'].some(kind => policy.approved(target, bound.origin, kind)))
         context.emit(bound, { type: 'open', bindingId: bound.bindingId, url: target });
     }
   });
@@ -137,6 +164,7 @@ function installContents(wc, context) {
     if (bound && !bound.cleanup) { bound.ready = policy.approved(wc.getURL(), bound.origin, bound.kind); context.changed(bound); }
   });
   wc.once('destroyed', () => {
+    context.bootstrapLoads.delete(wc);
     const bound = context.byContents.get(wcId);
     if (bound) context.closeBinding(bound).catch(() => {});
     else if (!context.electron.webContents.getAllWebContents().some(other => !other.isDestroyed() && other.session === session))
@@ -164,8 +192,18 @@ async function confirmCapture(electron, request, wc, capabilities = captureCapab
   const options = { type: 'question', title: 'Share your screen', message: request.securityOrigin + ' wants to share your screen',
     buttons: ['Cancel', 'Choose screen or window'], defaultId: 0, cancelId: 0,
     ...(request.audioRequested && capabilities.loopback ? { checkboxLabel: 'Share system audio', checkboxChecked: false } : {}) };
+  let settingsAvailable = false;
+  try { settingsAvailable = capabilities.nativePicker && electron.systemPreferences?.getMediaAccessStatus('screen') === 'denied'; } catch {}
+  if (settingsAvailable) {
+    options.detail = 'macOS currently reports screen recording access as denied. If the picker cannot start, enable Readymade in Screen & System Audio Recording.';
+    options.buttons.push('Open Screen Recording Settings');
+  }
   const parent = electron.BrowserWindow.fromWebContents(wc);
   const choice = parent ? await electron.dialog.showMessageBox(parent, options) : await electron.dialog.showMessageBox(options);
+  if (settingsAvailable && choice.response === 2) {
+    await electron.shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    return null;
+  }
   return choice.response === 1 ? { audio: !!options.checkboxLabel && choice.checkboxChecked === true } : null;
 }
 async function chooseCapture(electron, request, wc) {

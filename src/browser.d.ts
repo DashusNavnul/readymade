@@ -10,6 +10,8 @@ declare module 'vscode' {
     readonly url: string; readonly title: string; readonly icon: IconPath;
     startCDPSession(): Thenable<BrowserCDPSession>;
     close(): Thenable<void>;
+    /** Readymade native addition: select this existing editor without navigation. */
+    reveal?(): Thenable<void>;
   }
   export interface BrowserCDPSession {
     readonly onDidReceiveMessage: Event<unknown>;

@@ -6,6 +6,26 @@ const policy = require('../platform/media-policy.cjs');
 const { createController, startServer } = require('../platform/media-main.cjs');
 const { installSession, installContents, chooseCapture, captureCapabilities } = require('../platform/media-session.cjs');
 const ID = 'a'.repeat(32), ORIGIN = 'http://localhost:8080';
+test('native picker refuses a selection after its owner navigates, closes or loses isolation', async () => {
+  for (const change of ['navigate', 'close', 'second-tab']) {
+    const f = fixture();
+    f.controller.context.captureCapabilities = () => ({ nativePicker: true, loopback: true });
+    f.electron.BrowserWindow = { fromWebContents: () => null };
+    f.electron.dialog = { showMessageBox: async () => ({ response: 1, checkboxChecked: true }) };
+    const wc = f.view(); await f.controller.request('bind', payload());
+    let finish, started;
+    const picking = new Promise(resolve => { started = resolve; });
+    f.session._setDisplayMediaRequestHandler((_request, callback) => { finish = callback; started(); });
+    const result = new Promise(resolve => f.session.display({ frame: wc.mainFrame,
+      securityOrigin: ORIGIN, userGesture: true, audioRequested: true }, resolve));
+    await picking;
+    if (change === 'navigate') wc.url = 'https://foreign.test/';
+    else if (change === 'close') wc.close();
+    else f.view('b'.repeat(32));
+    finish({ video: { id: 'selected-screen' }, audio: 'loopback' });
+    assert.deepEqual(await result, {}, change);
+  }
+});
 const payload = (id = ID) => ({ bindingId: id, bootstrapURL: 'about:blank#readymade-' + id,
   origin: ORIGIN, kind: 'glurff', url: ORIGIN + '/apps/glurff/?x=1#room',
   cookies: [{ name: 'urbauth-~zod', value: 'fixture-session' }] });
@@ -38,7 +58,9 @@ function fixture() {
     wc.setWindowOpenHandler = handler => { wc.popup = handler; };
     wc.close = () => { wc.destroyed = true; wc.emit('destroyed'); };
     wc.mainFrame = {}; wc.mainFrame.top = wc.mainFrame;
-    views.push(wc); installContents(wc, controller.context); return wc;
+    views.push(wc); installContents(wc, controller.context);
+    controller.context.bootstrapLoads.set(wc, {url: wc.url, state: 'ready'}); // Default fixture has completed its initial load.
+    return wc;
   }
   return { electron, controller, session, stored, removed, views, view };
 }
@@ -310,7 +332,7 @@ test('status diagnoses only exact empty bootstrap views and never exposes unrela
   assert.equal(result.nativeName, null);
   f.electron.app = { getName: () => 'Readymade Workspace' };
   assert.equal((await f.controller.request('status')).nativeName, 'Readymade Workspace');
-  assert.deepEqual(result.bootstrapViews, [{ id: wc.id, url: wc.getURL(), sandbox: true, contextIsolation: true,
+  assert.deepEqual(result.bootstrapViews, [{ id: wc.id, url: wc.getURL(), bootstrapLoaded: true, sandbox: true, contextIsolation: true,
     nodeIntegration: false, ephemeral: true, hooked: true, sameSessionViews: 3 }]);
   assert(!JSON.stringify(result).includes('private-value')); assert(!JSON.stringify(result).includes('fixture-session'));
   wc.getLastWebPreferences = () => ({ sandbox: false, contextIsolation: true });
@@ -356,4 +378,124 @@ test('Groups keeps its exact app boundary and hands Landscape links off without 
   const count = events.length;
   wc.emit('will-navigate', { isMainFrame: true, preventDefault() {} }, 'https://foreign.test/apps/groups/');
   assert.equal(events.length, count);
+});
+
+test('Lattice admits reader and editor on its own origin and hands app links off without reload', async () => {
+  const f = fixture(), wc = f.view(), events = [];
+  const request = { ...payload(), kind: 'lattice', url: ORIGIN + '/apps/lattice/app' };
+  assert(policy.approved(ORIGIN + '/apps/lattice', ORIGIN, 'lattice'));
+  for (const url of [ORIGIN + '/apps/lattice-other/', ORIGIN + '/apps/other/', 'https://foreign.test/apps/lattice/app'])
+    assert.equal(policy.approved(url, ORIGIN, 'lattice'), false);
+  const state = await f.controller.request('bind', request, event => events.push(event));
+  assert.equal(state.kind, 'lattice'); assert.equal(state.ready, true);
+  const target = ORIGIN + '/apps/groups/';
+  let prevented = false;
+  wc.emit('will-navigate', { isMainFrame: true, preventDefault() { prevented = true; } }, target);
+  assert.equal(prevented, true); assert.equal(events.at(-1).url, target);
+  assert.deepEqual(wc.loads, [request.url]);
+});
+
+ test('a committed bootstrap URL cannot bind until its original navigation promise completes', async () => {
+  const f = fixture(), wc = f.view();
+  let complete;
+  const pending = new Promise(resolve => { complete = resolve; });
+  wc.loadURL = url => { wc.url = url; return pending; };
+  installContents(wc, f.controller.context);
+  const initial = wc.loadURL(wc.getURL());
+  assert.equal((await f.controller.request('status')).bootstrapViews[0].bootstrapLoaded, false);
+  await assert.rejects(f.controller.request('bind', payload()), /bootstrapNotFound/);
+  assert.deepEqual(f.stored, []);
+  complete(); await initial;
+  assert.equal((await f.controller.request('status')).bootstrapViews[0].bootstrapLoaded, true);
+  await f.controller.request('bind', payload());
+  assert.equal(f.stored.length, 1);
+});
+ test('a failed bootstrap refuses binding before any credentials are installed', async () => {
+  const f = fixture(), wc = f.view();
+  wc.loadURL = async () => { throw new Error('initial page failed'); };
+  installContents(wc, f.controller.context);
+  await assert.rejects(wc.loadURL(wc.getURL()), /initial page failed/);
+  assert.equal((await f.controller.request('status')).bootstrapViews[0].bootstrapLoaded, false);
+  await assert.rejects(f.controller.request('bind', payload()), /bootstrapNotFound/);
+  assert.deepEqual(f.stored, []);
+});
+test('a superseded bootstrap promise cannot make the replacement navigation ready', async () => {
+  const f = fixture(), wc = f.view(), releases = [];
+  wc.loadURL = url => { wc.url = url; return new Promise(resolve => releases.push(resolve)); };
+  installContents(wc, f.controller.context);
+  const first = wc.loadURL(wc.getURL()), nextId = 'd'.repeat(32);
+  const second = wc.loadURL('about:blank#readymade-' + nextId);
+  releases[0](); await first;
+  assert.equal((await f.controller.request('status')).bootstrapViews[0].bootstrapLoaded, false);
+  await assert.rejects(f.controller.request('bind', payload(nextId)), /bootstrapNotFound/);
+  assert.deepEqual(f.stored, []);
+  releases[1](); await second;
+  assert.equal((await f.controller.request('status')).bootstrapViews[0].bootstrapLoaded, true);
+});
+
+
+test('system permission diagnostics are read-only and preserve denied, undecided and unsupported states', async () => {
+  const f = fixture();
+  assert.deepEqual((await f.controller.request('status')).systemMediaPermissions,
+    {camera: 'unavailable', microphone: 'unavailable', screen: 'unavailable'});
+  const reads = [];
+  f.electron.systemPreferences = {getMediaAccessStatus(kind) {
+    reads.push(kind);
+    if (kind === 'screen') throw new Error('unsupported');
+    return kind === 'camera' ? 'denied' : 'not-determined';
+  }, askForMediaAccess() {assert.fail('Observation must never request access');}};
+  assert.deepEqual((await f.controller.request('status')).systemMediaPermissions,
+    {camera: 'denied', microphone: 'not-determined', screen: 'unavailable'});
+  assert.deepEqual(reads, ['camera', 'microphone', 'screen']);
+  f.electron.systemPreferences.getMediaAccessStatus = () => 'unexpected';
+  assert.equal((await f.controller.request('status')).systemMediaPermissions.camera, 'unavailable');
+});
+
+
+test('presentation distinguishes native visibility from readiness without exposing unrelated windows', async () => {
+  const f = fixture(), wc = f.view(); await f.controller.request('bind', payload());
+  wc.isFocused = () => false;
+  const view = {webContents: wc, children: [], getVisible: () => false,
+    getBounds: () => ({x: 20, y: 40, width: 300, height: 500, secret: 'omit'})};
+  const window = {id: 7, title: 'private title', contentView: {children: [view]},
+    isVisible: () => true, isMinimized: () => false, isFocused: () => true};
+  f.electron.BrowserWindow = {getAllWindows: () => [window, {title: 'unrelated', contentView: {children: []}}]};
+  const status = await f.controller.request('status');
+  assert.equal(status.bindings[0].ready, true);
+  assert.deepEqual(status.bindings[0].presentation, {matches: 1, viewVisible: false,
+    bounds: {x: 20, y: 40, width: 300, height: 500}, windowId: 7,
+    windowVisible: true, windowMinimized: false, windowFocused: true, contentsFocused: false});
+  assert(!JSON.stringify(status).includes('private title'));
+  assert(!JSON.stringify(status).includes('unrelated'));
+  assert(!JSON.stringify(status).includes('omit'));
+  view.getVisible = () => true;
+  assert.equal((await f.controller.request('status')).bindings[0].presentation.viewVisible, true);
+  view.getBounds = () => {throw Error('retired native object');};
+  assert.equal((await f.controller.request('status')).bindings[0].presentation.bounds, null);
+  window.contentView.children = [{children: [view]}];
+  view.getBounds = () => ({x: 0, y: 0, width: NaN, height: 50});
+  assert.equal((await f.controller.request('status')).bindings[0].presentation.bounds, null);
+});
+
+
+test('permission diagnostics preserve vendor consent and refusals with bounded sanitized history', async () => {
+  const f = fixture(), wc = f.view(); await f.controller.request('bind', payload());
+  let vendorAnswer, answer;
+  f.session.setPermissionRequestHandler((_wc, _permission, callback) => {vendorAnswer = callback;});
+  const details = {securityOrigin: ORIGIN, requestingUrl: ORIGIN + '/private?secret=hidden', mediaTypes: ['audio', 'private-value']};
+  f.session.requestPermission(wc, 'media', value => {answer = value;}, details);
+  let events = (await f.controller.request('status')).bindings[0].permissionEvents;
+  assert.deepEqual(events.map(e => e.phase), ['requested', 'delegated']);
+  assert.equal(answer, undefined, 'No implicit grant while vendor consent is pending');
+  assert.deepEqual(events[0].mediaTypes, ['audio']);
+  assert(!JSON.stringify(events).includes('private'));
+  vendorAnswer(false); assert.equal(answer, false);
+  events = (await f.controller.request('status')).bindings[0].permissionEvents;
+  assert.equal(events.at(-1).decision, false);
+  events[0].mediaTypes.push('mutated');
+  assert.deepEqual((await f.controller.request('status')).bindings[0].permissionEvents[0].mediaTypes, ['audio']);
+  f.session.setPermissionRequestHandler(() => assert.fail('Foreign requests must not reach vendor consent'));
+  for (let i = 0; i < 20; i++) f.session.requestPermission(wc, 'media', value => assert.equal(value, false), {...details, securityOrigin: 'https://foreign.test'});
+  events = (await f.controller.request('status')).bindings[0].permissionEvents;
+  assert.equal(events.length, 16); assert.equal(events.at(-1).decision, false);
 });

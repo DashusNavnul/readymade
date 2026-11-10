@@ -108,7 +108,7 @@ test('exact note and room bytes survive bind; automatic joins and foreign routes
 
 test('app descendants and hash routes remain available without prefix confusion or normalized traversal', async () => {
   const f = fixture();
-  for (const kind of ['glurff', 'noltbook', 'landscape', 'groups', 'call'] as const) {
+  for (const kind of ['glurff', 'noltbook', 'landscape', 'groups', 'lattice', 'call'] as const) {
     const root = `/apps/${kind}`, target = f.origin + root + '/room/red%20door?note=note-a%2Fb#L2%3A4';
     assert.equal(mediaURL(f.origin, kind, target), target);
     assert.equal(mediaURL(f.origin, kind, root + '#/world/room'), f.origin + root + '#/world/room');
@@ -265,6 +265,24 @@ test('Landscape reuses its owner and hands approved app links between retained t
     assert.equal(await f.controller.handleOpen({ type: 'open', bindingId: landscape.bindingId, url }), undefined);
   assert.equal(f.opened.length, 3); assert.deepEqual(f.requests.map(row => row.op), ['bind', 'bind', 'bind']);
   assert.equal(f.closed.length, 0);
+});
+
+test('Lattice defaults to its editor, admits its reader and retains its page across app handoffs', async () => {
+  const f = fixture(), lattice = await f.controller.open('lattice');
+  assert.equal(lattice.url, f.origin + '/apps/lattice/app'); assert.equal(lattice.phase, 'bound');
+  assert.equal(f.requests[0].payload.kind, 'lattice');
+  f.controls.observe = { ...f.bindings.get(lattice.bindingId), url: f.origin + '/apps/lattice' };
+  assert.equal((await f.controller.observe(lattice.bindingId)).currentURL, f.origin + '/apps/lattice');
+  assert.equal((await f.controller.open('lattice')).bindingId, lattice.bindingId);
+  for (const kind of ['glurff', 'noltbook', 'landscape', 'groups'] as const) {
+    const target = await f.controller.handleOpen({ type: 'open', bindingId: lattice.bindingId, url: f.origin + `/apps/${kind}/` });
+    assert.equal(target?.kind, kind);
+    assert.equal((await f.controller.handleOpen({ type: 'open', bindingId: target!.bindingId, url: lattice.url }))?.bindingId, lattice.bindingId);
+  }
+  for (const url of [f.origin + '/apps/lattice-other/', f.origin + '/apps/other/', 'https://foreign.example/apps/lattice/app'])
+    assert.equal(await f.controller.handleOpen({ type: 'open', bindingId: lattice.bindingId, url }), undefined);
+  assert.equal(f.opened.length, 5); assert.equal(f.closed.length, 0);
+  assert.deepEqual(f.requests.map(row => row.op), ['bind', 'observe', 'bind', 'bind', 'bind', 'bind']);
 });
 
 test('Groups retains its owner and exchanges app handoffs without navigating existing pages', async () => {

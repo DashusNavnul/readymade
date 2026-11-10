@@ -1,3 +1,4 @@
+import {observeWorkspaceSession, type WorkspaceSessionObservation} from './workspace-session';
 import { createHash } from 'node:crypto';
 import type { ShipClient, WorkspaceRequestParameters } from './ship-client';
 import { asRecord, isInteger, validUnicode, type JsonObject } from './protocol';
@@ -11,12 +12,16 @@ export interface WorkspaceRequestDetail extends WorkspaceRequestRow, JsonObject 
   nativeRequest: string; text: string; sourceDesk: string; sourceRevision: string; sourceRoot: string; sourceCommit: string;
   evidence: string | null; recoveryRequired: boolean; taskCompleted: false; executionAuthorized: false;
 }
+export interface WorkspaceRequestCompletion extends JsonObject {
+  status: 'unverified' | 'pending' | 'superseded' | 'complete' | 'refused';
+  instruction: string | null; judgment: string | null; evidence: string[]; reason: string; taskCompleted: boolean;
+}
 interface Marker {
   requester: string; nonce: string; requestDigest: string; fingerprint?: string; attempted: boolean;
   settled?: {status: 'recorded' | 'refused'; evidence: string};
 }
 export interface WorkspaceRequestJournal { version: 1; owner: string; entries: Marker[] }
-export interface WorkspaceRequestPersistence { saved?: unknown; save(journal: WorkspaceRequestJournal): Promise<void> }
+export interface WorkspaceRequestPersistence { saved?: unknown; save(journal: WorkspaceRequestJournal): Promise<void>; claim?(row: WorkspaceRequestRow): Promise<void> }
 interface RecordState { marker: Marker; value?: WorkspaceRequestDetail; fresh: boolean; uncertain: boolean }
 const statuses = ['reserved', 'submitted', 'unknown', 'recorded', 'refused'];
 const ship = (v: unknown): v is string => typeof v === 'string' && v.length <= 128 && /^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6}){0,3}(?:--[a-z]{6}(?:-[a-z]{6}){3})?)$/.test(v);
@@ -50,6 +55,8 @@ function detail(value: JsonObject, owner: string, row: WorkspaceRequestRow): Wor
 /** Presentation projection. Only native admission/receipts authorize or attest work. */
 export class WorkspaceRequestStore {
   private rows: WorkspaceRequestRow[] = [];
+  private linked?: WorkspaceSessionObservation;
+  private completion?: WorkspaceRequestCompletion;
   private page?: {catalog: string; total: number; next: number | null};
   private selected?: WorkspaceRequestRow;
   private readonly records = new Map<string, RecordState>();
@@ -59,7 +66,7 @@ export class WorkspaceRequestStore {
   private closed = false;
   private stale = false;
   notice = 'Load retained requests to begin.';
-  constructor(readonly owner: string, private readonly transport: Pick<ShipClient, 'workspaceRequest'>, private readonly persistence?: WorkspaceRequestPersistence) {
+  constructor(readonly owner: string, private readonly transport: Pick<ShipClient, 'workspaceRequest'> & Partial<Pick<ShipClient, 'codingState'>>, private readonly persistence?: WorkspaceRequestPersistence) {
     if (!ship(owner)) throw new Error('Invalid workspace owner.');
     if (persistence?.saved !== undefined) {
       const saved = asRecord(persistence.saved);
@@ -79,6 +86,8 @@ export class WorkspaceRequestStore {
   get selection(): WorkspaceRequestRow | undefined { return this.selected && structuredClone(this.selected); }
   get observation(): WorkspaceRequestDetail | undefined { const value = this.active()?.value; return value && structuredClone(value); }
   get catalog(): Readonly<{catalog: string; total: number; next: number | null}> | undefined { return this.page && {...this.page}; }
+  get codingOutcome(): WorkspaceSessionObservation | undefined { return this.linked && structuredClone(this.linked); }
+  get requestOutcome(): WorkspaceRequestCompletion | undefined { return this.completion && structuredClone(this.completion); }
   get busy(): boolean { return this.working; }
   get uncertain(): boolean { return this.active()?.uncertain ?? false; }
   get canReview(): boolean { const r = this.active(); return !this.closed && !this.working && !!(r?.fresh && r.value?.status === 'reserved' && !r.marker.attempted && !r.uncertain && this.permission); }
@@ -88,7 +97,7 @@ export class WorkspaceRequestStore {
   exportSelection(): WorkspaceRequestRow | undefined { return this.selection; }
   private active(): RecordState | undefined { return this.selected && this.records.get(key(this.selected)); }
   private idle(): void { if (this.closed || this.working) throw new Error('Workspace request view is closed or busy.'); }
-  private invalidate(): void { this.permission = undefined; this.reviewed = undefined; }
+  private invalidate(): void { this.completion = undefined; this.linked = undefined; this.permission = undefined; this.reviewed = undefined; }
   private async run<T>(operation: () => Promise<T>): Promise<T> {
     this.idle(); this.working = true;
     try { const result = await operation(); if (this.closed) throw new Error('Workspace request view closed.'); return result; }
@@ -152,6 +161,36 @@ export class WorkspaceRequestStore {
     await this.run(async () => { this.invalidate(); const {row, record} = this.context(); record.fresh = false;
       await this.accept(await this.request('read', {requester: row.requester, nonce: row.nonce}, [200, 202, 409]), row, record); });
   }
+  async observeCompletion(): Promise<void> {
+    await this.run(async () => {
+      this.invalidate(); const {row, record} = this.context(), original = record.value;
+      if (!record.fresh || !original || original.status !== 'recorded' || !original.evidence) throw new Error('Read a recorded request before checking its completion.');
+      const v = await this.request('completion', {requester: row.requester, nonce: row.nonce});
+      const states = ['unverified', 'pending', 'superseded', 'complete', 'refused'];
+      if (v.schema !== 'readymade-workspace-completion-v1' ||
+          !['owner', 'requester', 'nonce', 'requestDigest', 'nativeRequest', 'session'].every(k => v[k] === original[k]) ||
+          v.submissionEvidence !== original.evidence || !states.includes(String(v.status)) ||
+          v.executionAuthorized !== false || v.taskCompleted !== (v.status === 'complete') ||
+          ![v.instruction, v.judgment].every(id => id === null || digest(id)) ||
+          !Array.isArray(v.evidence) || v.evidence.length > 4096 || !v.evidence.every(digest) ||
+          typeof v.reason !== 'string' || !/^[a-z][a-z0-9-]{0,127}$/.test(v.reason) ||
+          (v.status === 'unverified' ? v.instruction !== null : !digest(v.instruction)) ||
+          (['complete', 'refused'].includes(String(v.status)) ? !digest(v.judgment) : v.judgment !== null) ||
+          v.status === 'complete' && (!v.evidence.length || v.reason !== 'native-completion') ||
+          v.status === 'superseded' && v.reason !== 'later-owner-instruction') throw new Error('Mismatched native request completion.');
+      this.completion = structuredClone(v) as WorkspaceRequestCompletion;
+      this.notice = `Request ${v.status}: ${v.reason}.`;
+    });
+  }
+  async observeCoding(): Promise<void> {
+    await this.run(async () => {
+      this.invalidate(); const {record} = this.context();
+      if (!record.fresh || !record.value || !this.transport.codingState) throw new Error('Read the request before observing its linked coding session.');
+      const observed = await observeWorkspaceSession({codingState: this.transport.codingState.bind(this.transport)}, record.value);
+      if (this.closed) throw new Error('Workspace request view closed.');
+      this.linked = observed;
+    });
+  }
   async preview(): Promise<void> {
     await this.run(async () => { this.invalidate(); const {row} = this.context();
       const v = await this.request('preview', {requester: row.requester, nonce: row.nonce});
@@ -172,6 +211,10 @@ export class WorkspaceRequestStore {
       const {row, record} = this.context(), scope = this.reviewed?.scope;
       this.invalidate(); record.fresh = false; record.marker.attempted = true; record.uncertain = true;
       await this.persistence.save(this.exportJournal()); // Must finish before the one allowed POST.
+      if (operation === 'submit') {
+        if (!this.persistence.claim) throw new Error('An exclusive shared request claim is required before submission.');
+        await this.persistence.claim(structuredClone(row));
+      }
       if (this.closed) throw new Error('Workspace request view closed before submission.');
       const params = {requester: row.requester, nonce: row.nonce};
       const value = operation === 'submit' ? await this.request('submit', {...params, requestDigest: row.requestDigest, scope: scope!}, [200, 202, 409]) : await this.request('recover', params, [200, 202, 409]);

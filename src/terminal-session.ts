@@ -171,7 +171,7 @@ export class ShipTerminalSession {
       this.inFlight = true;
       try {
         const next = terminalState(await this.client.requestJSON(this.path + '/action', { method: 'POST', body, terminalNonce: current.nonce }));
-        if (this.closed || next.generation !== current.generation + (kind === 1 ? 1 : 0)) fail('Terminal acknowledgment changed.');
+        if (this.closed || next.nonce !== current.nonce || next.generation !== current.generation + (kind === 1 ? 1 : 0)) fail('Terminal acknowledgment changed.');
         if (kind === 11 && (next.control?.viewer !== this.viewer || next.control.revision !== (current.control?.revision ?? 0) + 1)) fail('Invalid control acknowledgment.');
         if (kind === 12 && (next.control?.viewer !== '' || next.control.revision !== (current.control?.revision ?? 0) + 1)) fail('Invalid release acknowledgment.');
         if (![1, 6, 11, 12].includes(kind) && next.inputNext <= current.inputNext) fail('Invalid terminal sequence acknowledgment.');
@@ -195,6 +195,8 @@ export class ShipTerminalSession {
     const old = this.state;
     if (old && older(next, old)) return false;
     if (!old) this.historyUntil = next.offset;
+    if (old && old.nonce !== next.nonce) this.lock('Terminal nonce changed. Observe before another decision.');
+    if (old?.connected && !next.connected) this.lock('Terminal transport disconnected. Observe before another decision.');
     if (old && old.control?.revision !== next.control?.revision && ![11, 12].includes(acknowledgment ?? 0)) this.lock('Terminal ownership changed. Observe before another decision.');
     if (old && old.generation !== next.generation) {
       this.discard(); this.outputOffset = 0; this.historyUntil = acknowledgment === 1 ? 0 : next.offset;

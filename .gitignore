@@ -9,3 +9,9 @@ dist/
 *.key
 codes.json
 user-data/
+
+backend/upstream/__pycache__/
+backend/upstream/urbit-source.tar.gz
+backend/upstream/reconstructed/
+backend/noltbook/__pycache__/
+backend/xterm/__pycache__/

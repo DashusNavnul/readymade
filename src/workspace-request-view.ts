@@ -1,12 +1,23 @@
 import * as vscode from 'vscode';
 import { createHash } from 'node:crypto';
+import {join} from 'node:path';
+import {WorkspaceImportView, type WorkspaceImportBinding} from './workspace-import-view';
+import {WorkspaceResultView} from './workspace-result-view';
+import {WorkspaceReturnView, type WorkspaceReturnBinding} from './workspace-return-view';
+import {WorkspaceSubmissionGate} from './workspace-submission-gate';
 import type { ShipClient } from './ship-client';
 import type { MediaTreeRow } from './media-workbench';
-import { WorkspaceRequestStore, type WorkspaceRequestRow } from './workspace-request-store';
+import { WorkspaceRequestStore, type WorkspaceRequestRow, type WorkspaceRequestDetail } from './workspace-request-store';
 
 /** Native presentation of retained ship requests. Local storage never grants permission. */
 export class WorkspaceRequestView implements vscode.Disposable {
   private model?: WorkspaceRequestStore;
+  private client?: ShipClient;
+  private owner?: string;
+  private project?: string;
+  readonly imports: WorkspaceImportView;
+  readonly returns: WorkspaceReturnView;
+  readonly results: WorkspaceResultView;
   private selectionKey?: string;
   private showing = false;
   private disposed = false;
@@ -16,6 +27,9 @@ export class WorkspaceRequestView implements vscode.Disposable {
   private readonly registrations: vscode.Disposable[];
   constructor(private readonly context: vscode.ExtensionContext, private readonly changed: () => void,
     private readonly selectSession: (session: string) => Promise<void>) {
+    this.imports = new WorkspaceImportView(context, () => this.importBinding(), changed, detail => this.selectImported(detail));
+    this.returns = new WorkspaceReturnView(context, () => this.returnBinding(), changed);
+    this.results = new WorkspaceResultView(() => this.returnBinding());
     this.registrations = [this.changedDocument,
       vscode.workspace.registerTextDocumentContentProvider('readymade-request', {
         onDidChange: this.changedDocument.event, provideTextDocumentContent: () => this.snapshot,
@@ -32,34 +46,66 @@ export class WorkspaceRequestView implements vscode.Disposable {
     const binding = createHash('sha256').update(JSON.stringify([client.origin, owner])).digest('hex');
     this.disconnect();
     const journalKey = `readymade.requests.journal.${binding}`;
+    const gate = new WorkspaceSubmissionGate(join(this.context.globalStorageUri.fsPath, 'shared-request-claims'), client.origin, owner);
     // Corrupt journals must fail closed; never reset attempted markers to regain submission.
     const model = new WorkspaceRequestStore(owner, client, {
+      claim: async row => gate.claim(row),
       saved: this.context.workspaceState.get<unknown>(journalKey),
       save: async journal => { await this.context.workspaceState.update(journalKey, journal); },
     });
-    this.model = model; this.selectionKey = `readymade.requests.selection.${binding}`; this.changed();
+    this.client = client; this.owner = owner; this.model = model; this.selectionKey = `readymade.requests.selection.${binding}`; this.changed();
   }
   disconnect(): void {
+    this.client = undefined; this.owner = undefined; this.project = undefined;
     this.model?.dispose(); this.model = undefined; this.selectionKey = undefined;
     this.snapshot = 'Disconnected. No current native request observation.'; this.changedDocument.fire(this.uri); this.changed();
   }
   rows(project?: string): MediaTreeRow[] {
+    this.project = project;
     if (!this.model) return [];
     const selected = this.model.selection, requests = this.model.requests.filter(row => !project || row.project === project);
     return [{id: 'workspace-requests', label: project ? 'Shared coding requests' : 'Shared coding requests (all projects)', icon: 'comment-discussion',
       description: `${requests.length} loaded`, tooltip: this.model.notice,
       command: {command: 'readymade.workspaceRequests', title: 'Browse shared coding requests', arguments: project ? [project] : []},
-      children: selected && (!project || selected.project === project) ? [{label: selected.project, icon: 'git-pull-request',
-        description: this.model.uncertain ? 'Outcome unknown' : this.model.observation?.status ?? 'Read required',
-        tooltip: this.model.notice, command: {command: 'readymade.workspaceRequests', title: 'Inspect retained request', arguments: [selected.project]}}] : undefined,
+      children: [...this.imports.rows(), ...(selected && (!project || selected.project === project) ? [{label: selected.project, icon: 'git-pull-request',
+        description: this.model.uncertain ? 'Outcome unknown' : this.model.requestOutcome ? `Request ${this.model.requestOutcome.status}` : this.model.codingOutcome ? `Session ${this.model.codingOutcome.phase}` : this.model.observation?.status ?? 'Read required',
+        tooltip: this.model.notice, command: {command: 'readymade.workspaceRequests', title: 'Inspect retained request', arguments: [selected.project]}}] : [])],
     }];
+  }
+  private importBinding(): WorkspaceImportBinding | undefined {
+    const client = this.client, owner = this.owner, state = client?.snapshot;
+    if (this.disposed || !this.model || !client || !owner || !state || state.owner !== owner || typeof state.session !== 'string' || state.session === '0x0') return;
+    const sessions = state.sessions.filter(row => row.id === state.session && typeof row.project === 'string' && (!this.project || row.project === this.project));
+    if (sessions.length !== 1) return;
+    return {client, owner, project: String(sessions[0].project), session: state.session};
+  }
+  private returnBinding(): WorkspaceReturnBinding | undefined {
+    const b = this.importBinding(), detail = this.model?.observation, selected = this.model?.selection;
+    if (!b || !detail || !selected || detail.status !== 'recorded' || detail.owner !== b.owner || detail.project !== b.project || detail.session !== b.session ||
+      !['requester', 'nonce', 'requestDigest', 'project', 'session'].every(k => selected[k as keyof WorkspaceRequestRow] === detail[k])) return;
+    return {client: b.client, request: detail};
+  }
+  private async selectImported(detail: WorkspaceRequestDetail): Promise<void> {
+    const model = this.model, selectionKey = this.selectionKey, binding = this.importBinding();
+    const active = () => {const now = this.importBinding(); if (!binding || !now || now.client !== binding.client || now.owner !== detail.owner || now.project !== detail.project || now.session !== detail.session) throw new Error('Import retained. Return to its exact project/session and Check Import Result.');};
+    active();
+    if (!model || !selectionKey) throw new Error('Reconnect to inspect the retained import. Do not import again.');
+    await model.load(); this.current(model); active();
+    while (model.catalog?.next !== null && model.catalog?.next !== undefined) {await model.load(true); this.current(model); active();}
+    const row = model.requests.find(value => ['requester', 'nonce', 'requestDigest', 'project', 'session'].every(key => value[key as keyof WorkspaceRequestRow] === detail[key]));
+    if (!row) throw new Error('Import retained but exact request is not in the current catalog. Check Import Result; do not resend.');
+    const selected = () => {if (!model.selection || !['requester', 'nonce', 'requestDigest', 'project', 'session'].every(key => model.selection![key as keyof WorkspaceRequestRow] === detail[key])) throw new Error('Request selection changed. Check the retained import again.');};
+    model.select(row); await this.context.workspaceState.update(selectionKey, model.exportSelection()); this.current(model); active(); selected();
+    await model.read(); this.current(model); active(); selected(); this.changed(); await this.inspect(model);
   }
   private current(model: WorkspaceRequestStore): void {
     if (this.disposed || this.model !== model) throw new Error('Workspace connection changed. Reopen shared requests.');
   }
   private async inspect(model: WorkspaceRequestStore, scope?: string): Promise<void> {
     this.current(model);
-    this.snapshot = JSON.stringify({observation: 'Native retained request snapshot; task completion is not verified.',
+    this.snapshot = JSON.stringify({observation: 'Native request receipt and separately observed linked coding session.',
+      requestCompletion: model.requestOutcome ?? null,
+      codingSession: model.codingOutcome ?? null,
       ...(scope ? {reviewedExecutionScope: scope} : {}), request: model.observation ?? null}, null, 2);
     this.changedDocument.fire(this.uri);
     const document = await vscode.workspace.openTextDocument(this.uri); this.current(model);
@@ -108,13 +154,27 @@ export class WorkspaceRequestView implements vscode.Disposable {
     while (this.model === model && !this.disposed) {
       const actions = [
         {label: 'Inspect exact request', detail: 'Open a read-only native request snapshot', action: 'inspect'},
-        {label: 'Refresh native outcome', detail: 'Read the retained instruction status without submitting', action: 'read'},
+        {label: 'Refresh submission receipt', detail: 'Read the retained instruction status without submitting', action: 'read'},
       ];
+      if (model.observation?.status === 'recorded') actions.push({label: 'Check request completion', detail: 'Read the native judgment tied to this exact instruction', action: 'completion'});
+      if (model.observation?.status === 'recorded') actions.push({label: 'Inspect coding result', detail: 'Read the linked session, changes, checks and judgment without executing work', action: 'coding'});
       if (model.observation?.status === 'reserved' && !model.uncertain) actions.push({label: 'Review execution permissions', detail: 'Check the current scope, review this exact instruction, then choose whether to submit', action: 'review'});
       if (model.canRecover) actions.push({label: 'Check submission outcome', detail: 'Ask the native recovery endpoint to observe the existing submission; never resend it', action: 'recover'});
+      if (this.returnBinding()) actions.push({label: 'Inspect files and checks', detail: 'Read exact request-attributed historical changes and diagnostic verdicts', action: 'files-checks'});
+      const returnState = this.returns.state();
+      if (returnState === 'share') actions.push({label: 'Share result with original group…', detail: 'Preview an owner-written summary and native completion references; requires completed work', action: 'share-result'});
+      if (returnState === 'check') actions.push({label: 'Check shared result', detail: 'Observe the original attempt without sending another message', action: 'check-result'});
+      const selection = JSON.stringify(model.selection), binding = this.importBinding();
       const picked = await vscode.window.showQuickPick(actions, {title: `${model.selection?.project ?? 'Shared request'} — ${model.observation?.status ?? 'unobserved'}`, placeHolder: model.notice});
       this.current(model); if (!picked) return;
       try {
+        if (picked.action === 'share-result' || picked.action === 'check-result' || picked.action === 'files-checks') {
+          const now = this.importBinding();
+          if (selection !== JSON.stringify(model.selection) || !binding || !now || now.client !== binding.client || now.project !== binding.project || now.session !== binding.session) throw new Error('Selected request, project or session changed. Reopen the request.');
+          if (picked.action === 'files-checks') await this.results.open(); else if (picked.action === 'share-result') await this.returns.share(); else await this.returns.check();
+        }
+        if (picked.action === 'completion') { await model.read(); this.current(model); await model.observeCompletion(); this.current(model); await this.inspect(model); }
+        if (picked.action === 'coding') { await model.read(); this.current(model); await model.observeCoding(); this.current(model); await this.inspect(model); }
         if (picked.action === 'inspect') await this.inspect(model);
         if (picked.action === 'read') await model.read();
         if (picked.action === 'recover') await model.recover();
@@ -139,6 +199,6 @@ export class WorkspaceRequestView implements vscode.Disposable {
   }
   dispose(): void {
     if (this.disposed) return;
-    this.disposed = true; this.disconnect(); for (const registration of this.registrations) registration.dispose();
+    this.disposed = true; this.imports.dispose(); this.returns.dispose(); this.results.dispose(); this.disconnect(); for (const registration of this.registrations) registration.dispose();
   }
 }

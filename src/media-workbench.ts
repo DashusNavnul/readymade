@@ -8,17 +8,33 @@ import { MediaClient } from './media-client';
 import { MediaController, type MediaKind, type MediaRecord } from './media-controller';
 import { NativeMediaBrowser } from './media-browser';
 import { LegacyMedia, type LegacyMediaOwner } from './legacy-media';
+import { CallNotificationFeed, type CallNotice } from './call-notifications';
+import { ComposerJournal, attachComposerJournal } from './composer-journal';
+import {authenticateShip, normalizeShipAddress} from './ship-connection';
+import {discoverLocalPlanets, recheckLocalPlanet, type LocalPlanet} from './planet-discovery';
 
 export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
+interface SelectedOrigin {origin: string; planet?: LocalPlanet}
+interface PlanetChoice extends vscode.QuickPickItem {planet?: LocalPlanet; operation?: 'manual' | 'refresh'}
 export class MediaWorkbench implements vscode.Disposable {
   readonly bridge: MediaClient;
   controller?: MediaController<vscode.BrowserTab>;
   private client?: ShipClient;
   private authenticatingClient?: ShipClient;
   private disposed = false;
+  private callFeed?: CallNotificationFeed;
   private ensureOpen(): void { if (this.disposed) throw new Error('This Readymade workspace is closed.'); }
   private clientConnecting?: Promise<ShipClient>;
   private connectingOrigin?: string;
+  private selectingOrigin?: Promise<SelectedOrigin | undefined>;
+  private discovered: LocalPlanet[] = [];
+  private scanCount = 0;
+  private scanning = false;
+  private scanReport?: Awaited<ReturnType<typeof discoverLocalPlanets>>;
+  get localDiscoveryStatus() {return {scans: this.scanCount, checking: this.scanning, selecting: !!this.selectingOrigin,
+    connecting: !!this.clientConnecting, found: this.scanReport?.planets.length, unavailable: this.scanReport?.unavailable,
+    diagnostics: this.scanReport?.diagnostics};}
+  get localPlanets(): readonly {ship: string; origin: string}[] {return this.discovered.map(({ship, origin}) => ({ship, origin}));}
   private readonly disposables: vscode.Disposable[] = [];
   private connecting?: Promise<MediaController<vscode.BrowserTab>>;
   private readonly lastApp = new Map<MediaKind, string>();
@@ -32,7 +48,31 @@ export class MediaWorkbench implements vscode.Disposable {
     }
   }
   get connectedClient(): ShipClient | undefined { return this.client ?? this.currentClient(); }
-  private releaseClient(): void { if (this.client !== this.currentClient()) this.client?.close(); this.client = undefined; }
+  private releaseClient(): void {
+    const client = this.client, feed = this.callFeed; this.callFeed = undefined; this.client = undefined;
+    void (feed?.close() ?? Promise.resolve()).finally(() => { if (client !== this.currentClient()) client?.close(); });
+  }
+  private watchCalls(client: ShipClient): void {
+    if (this.disposed || this.callFeed || !vscode.workspace.getConfiguration('readymade').get<boolean>('callNotifications', true)) return;
+    try {
+      const feed = new CallNotificationFeed(client, notice => { void this.incomingCall(feed, client, notice); }, () => {
+        if (this.disposed || this.callFeed !== feed) return;
+        void vscode.window.showWarningMessage('Call notifications disconnected. Open Calls or reconnect notifications.', 'Reconnect Notifications').then(choice => {
+          if (choice === 'Reconnect Notifications' && !this.disposed && this.callFeed === feed) {
+            this.callFeed = undefined; this.watchCalls(client);
+          }
+        });
+      });
+      this.callFeed = feed; void feed.start().catch(() => undefined);
+    } catch { /* App-only connections can remain usable without a Noltbook subscription. */ }
+  }
+  private async incomingCall(feed: CallNotificationFeed, client: ShipClient, notice: CallNotice): Promise<void> {
+    const choice = await vscode.window.showInformationMessage(`Noltbook call from ${notice.participants[0]}.`, 'Open Call');
+    if (choice !== 'Open Call' || this.disposed || this.callFeed !== feed || this.connectedClient !== client) return;
+    if (!feed.current(notice)) { void vscode.window.showInformationMessage('That call has ended.'); return; }
+    try { await this.open('noltbook', client.origin + '/apps/noltbook/?note=' + encodeURIComponent(notice.noteId)); }
+    catch { void vscode.window.showWarningMessage('The call could not open. Use Calls to inspect the current state.'); }
+  }
   private rememberApp(): void {
     for (const state of this.controller?.state() ?? []) if (state.active && !state.closed) this.lastApp.set(state.kind, state.bindingId);
     this.updateNavigation(); this.changed();
@@ -46,9 +86,15 @@ export class MediaWorkbench implements vscode.Disposable {
     else throw new Error('Unsupported editor profile storage layout.');
     const userData = dirname(userDirectory);
     this.bridge = new MediaClient(userData);
+    this.disposables.push(vscode.workspace.onDidChangeConfiguration(event => {
+      if (!event.affectsConfiguration('readymade.callNotifications')) return;
+      const feed = this.callFeed; this.callFeed = undefined;
+      void (feed?.close() ?? Promise.resolve()).then(() => { if (this.connectedClient) this.watchCalls(this.connectedClient); });
+    }));
     const controls: { label: string; icon: string; command: string; kind?: MediaKind }[] = [
       {label: 'Code', icon: 'code', command: 'returnCode'},
       {label: 'Groups', icon: 'organization', command: 'groups', kind: 'groups'},
+      {label: 'Lattice', icon: 'notebook', command: 'lattice', kind: 'lattice'},
       {label: 'Glurff', icon: 'globe', command: 'glurff', kind: 'glurff'},
       {label: 'Calls', icon: 'comment-discussion', command: 'noltbook', kind: 'noltbook'},
       {label: 'Landscape', icon: 'home', command: 'landscape', kind: 'landscape'}
@@ -63,7 +109,7 @@ export class MediaWorkbench implements vscode.Disposable {
     this.updateNavigation();
     const command = (name: string, action: (...args: unknown[]) => Promise<unknown>) => this.disposables.push(vscode.commands.registerCommand('readymade.' + name, async (...args: unknown[]) => {
       try { return await action(...args); }
-      catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Media action failed'); throw error; }
+      catch (error) { if (error instanceof ShipClientError && error.code === 'cancelled') return; void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Media action failed'); throw error; }
       finally { this.changed(); }
     }));
     command('returnCode', async () => {
@@ -76,11 +122,25 @@ export class MediaWorkbench implements vscode.Disposable {
     this.disposables.push(vscode.window.onDidChangeBrowserTabState(() => this.rememberApp()));
     command('glurff', url => this.open('glurff', typeof url === 'string' ? url : undefined));
     command('groups', url => this.open('groups', typeof url === 'string' ? url : undefined));
+    command('lattice', url => this.open('lattice', typeof url === 'string' ? url : undefined));
     command('noltbook', url => this.open('noltbook', typeof url === 'string' ? url : undefined));
     command('landscape', url => this.open('landscape', typeof url === 'string' ? url : undefined));
     command('calls', url => this.open('call', typeof url === 'string' ? url : undefined));
     command('mediaReveal', async id => { if (typeof id === 'string') await this.controller?.reveal(id); });
-    command('mediaObserve', async row => { const id = await this.pick(row); if (id) await this.controller!.observe(id); });
+    command('mediaObserve', async row => {
+      const id = await this.pick(row); if (!id) return;
+      await this.controller!.observe(id);
+      const status = await this.bridge.request('status');
+      const permissions = status.systemMediaPermissions;
+      if (permissions && typeof permissions === 'object' && !Array.isArray(permissions)) {
+        const values = permissions as Record<string, unknown>;
+        const states = ['camera', 'microphone', 'screen'].map(kind => {
+          const value = values[kind];
+          return `${kind}: ${typeof value === 'string' && ['not-determined', 'granted', 'denied', 'restricted', 'unknown'].includes(value) ? value : 'unavailable'}`;
+        });
+        void vscode.window.showInformationMessage(`System access — ${states.join('; ')}. Website permission is separate; use the browser tab's site controls.`);
+      }
+    });
     command('mediaReconnect', async row => {
       const id = await this.pick(row); if (!id) return;
       const choice = await vscode.window.showWarningMessage('Reconnect reloads this page and ends any call in it.', { modal: true }, 'Reconnect');
@@ -110,43 +170,93 @@ export class MediaWorkbench implements vscode.Disposable {
   }
   async connectClient(selected?: string, credentials?: (origin: string) => Promise<string | undefined>): Promise<ShipClient> {
     this.ensureOpen();
-    const origin = selected ?? this.connectedClient?.origin ?? this.connectingOrigin ?? this.context.workspaceState.get<string>('readymade.origin') ?? vscode.workspace.getConfiguration('readymade').get<string>('origin') ?? 'http://localhost:8080';
-    const candidate = new ShipClient(origin, credentials ?? (async o => await readSavedCode(o) ?? await this.context.secrets.get('code:' + o)));
+    const configured = vscode.workspace.getConfiguration('readymade').inspect<string>('origin');
+    const remembered = this.context.workspaceState.get<string>('readymade.origin') ?? configured?.workspaceFolderValue ?? configured?.workspaceValue ?? configured?.globalValue;
+    let address = selected ?? this.connectedClient?.origin ?? this.connectingOrigin, expectedShip: string | undefined;
+    if (!address) {
+      this.selectingOrigin ??= this.pickOrigin(remembered);
+      let choice: SelectedOrigin | undefined;
+      try {choice = await this.selectingOrigin;} finally {this.selectingOrigin = undefined;}
+      this.ensureOpen();
+      if (!choice) throw new ShipClientError('cancelled');
+      address = choice.origin; expectedShip = choice.planet?.ship;
+    }
+    const origin = normalizeShipAddress(address);
     const existing = this.connectedClient;
     if (existing || this.clientConnecting) {
-      candidate.close();
-      if ((existing?.origin ?? this.connectingOrigin) !== candidate.origin) throw new Error('Open another Readymade window for a different ship; existing apps keep their connection.');
-      return existing ?? this.clientConnecting!;
+      if ((existing?.origin ?? this.connectingOrigin) !== origin) throw new Error('Open another Readymade window for a different ship; existing apps keep their connection.');
+      const shared = existing ?? await this.clientConnecting!;
+      this.ensureOpen();
+      if (expectedShip && shared.browserCookies(origin)[0]?.name !== 'urbauth-' + expectedShip) throw Error('The selected planet changed. Refresh the running-planet list.');
+      return shared;
     }
-    this.connectingOrigin = candidate.origin; this.authenticatingClient = candidate;
-    this.clientConnecting = this.authenticate(candidate);
+    this.connectingOrigin = origin;
+    this.clientConnecting = this.authenticate(origin, credentials, expectedShip);
     try { return await this.clientConnecting; }
     finally { this.clientConnecting = undefined; this.connectingOrigin = undefined; this.authenticatingClient = undefined; }
   }
-  private async authenticate(client: ShipClient): Promise<ShipClient> {
+  private async pickOrigin(remembered?: string): Promise<SelectedOrigin | undefined> {
+    for (;;) {
+      this.ensureOpen(); this.discovered = []; this.scanCount++; this.scanning = true; this.scanReport = undefined;
+      const choices = discoverLocalPlanets().then(result => {
+        this.ensureOpen(); this.discovered = result.planets; this.scanReport = result;
+        return [...result.planets.map(planet => ({label: planet.ship, description: new URL(planet.origin).host,
+          detail: 'Verified real planet running on this computer', planet})),
+        {label: 'Enter a ship’s web address', description: 'For hosted planets or another computer', operation: 'manual'},
+        {label: 'Refresh running planets', operation: 'refresh'}] as PlanetChoice[];
+      }).finally(() => {this.scanning = false;});
+      const choice = await vscode.window.showQuickPick<PlanetChoice>(choices, {title: 'Connect your Urbit',
+        placeHolder: 'Choose a running planet, or connect by web address', ignoreFocusOut: true, matchOnDescription: true});
+      this.ensureOpen();
+      if (!choice) return undefined;
+      if (choice.operation === 'refresh') continue;
+      if (choice.planet) {const planet = await recheckLocalPlanet(choice.planet); this.ensureOpen(); return {origin: planet.origin, planet};}
+      const address = await vscode.window.showInputBox({title: 'Connect by web address', value: remembered,
+        prompt: 'Your ship’s web address. You’ll enter its login code privately next.', placeHolder: 'your-ship.example or localhost:8080', ignoreFocusOut: true,
+        validateInput: value => {try {normalizeShipAddress(value); return undefined;} catch (error) {return error instanceof Error ? error.message : 'Enter your ship’s web address.';}}});
+      this.ensureOpen(); return address ? {origin: normalizeShipAddress(address)} : undefined;
+    }
+  }
+  private async authenticate(origin: string, credentials?: (origin: string) => Promise<string | undefined>, expectedShip?: string): Promise<ShipClient> {
+    let client: ShipClient | undefined;
     try {
-      try { await client.signIn(); }
-      catch (error) {
-        this.ensureOpen();
-        if (!(error instanceof ShipClientError) || !['noSavedCode', 'authenticationRequired'].includes(error.code)) throw error;
-        const code = await vscode.window.showInputBox({ title: 'Connect Readymade to Urbit', prompt: `Private login for ${client.origin}`, password: true, ignoreFocusOut: true });
-        this.ensureOpen();
-        if (!code) throw new Error('Ship login canceled');
-        await this.context.secrets.store('code:' + client.origin, code); this.ensureOpen(); await client.signIn();
-      }
+      client = await authenticateShip(origin, {
+        expectedShip,
+        readCode: credentials ?? (async address => await this.context.secrets.get('code:' + address) ?? await readSavedCode(address)),
+        askCode: async (address, rejected) => vscode.window.showInputBox({title: rejected ? 'Try your Urbit login code again' : 'Sign in to your Urbit',
+          prompt: `${rejected ? 'That code wasn’t accepted. ' : ''}Private login for ${address}`, password: true, ignoreFocusOut: true}),
+        saveCode: async (address, code) => this.context.secrets.store('code:' + address, code),
+        ensureOpen: () => this.ensureOpen(), onClient: value => {this.authenticatingClient = value;},
+      });
       this.ensureOpen();
       await this.context.workspaceState.update('readymade.origin', client.origin);
       this.ensureOpen();
-      this.client = client; this.changed(); return client;
-    } catch (error) { client.close(); throw error; }
+      this.client = client; this.watchCalls(client); this.changed(); return client;
+    } catch (error) { client?.close(); throw error; }
   }
   private async connect(): Promise<MediaController<vscode.BrowserTab>> {
     await this.bridge.request('status');
     const client = await this.connectClient(); this.ensureOpen();
-    return this.controller = new MediaController({ client, bridge: this.bridge, browser: new NativeMediaBrowser(this.bridge) });
+    const cookies = client.browserCookies(client.origin);
+    if (cookies.length !== 1 || !/^urbauth-~[a-z-]{3,128}$/.test(cookies[0].name)) throw new Error('Composer backup identity unavailable.');
+    const journal = new ComposerJournal(join(this.context.globalStorageUri.fsPath, 'composer-drafts'), client.origin, cookies[0].name.slice('urbauth-~'.length));
+    const browser = new NativeMediaBrowser(this.bridge, async tab => {
+      this.disposables.push(await attachComposerJournal(tab, journal, () => {
+        void vscode.window.showWarningMessage('Composer draft backup failed. Copy unsent text before closing this pane.');
+      }));
+    });
+    return this.controller = new MediaController({ client, bridge: this.bridge, browser });
   }
-  async open(kind: MediaKind, url?: string): Promise<MediaRecord> {
+  async open(kind: MediaKind, url?: string, expected?: {client: ShipClient; peer: string}): Promise<MediaRecord> {
+    const check = () => {
+      if (!expected) return;
+      const cookies = expected.client.browserCookies(expected.client.origin);
+      if (this.connectedClient !== expected.client || cookies.length !== 1 || cookies[0].name !== 'urbauth-' + expected.peer) throw new Error('Document connection changed.');
+    };
+    check();
     const controller = await this.ready();
+    check();
+    if (expected && controller.origin !== expected.client.origin) throw new Error('Document origin changed.');
     if (this.currentClient() && this.currentClient()!.origin !== controller.origin) throw new Error('Disconnect the existing media tabs before switching ships.');
     const retained = url === undefined ? controller.state().filter(state => state.kind === kind && !state.closed) : [];
     const previous = retained.find(state => state.active) ?? retained.find(state => state.bindingId === this.lastApp.get(kind)) ?? retained.at(-1);
@@ -161,7 +271,7 @@ export class MediaWorkbench implements vscode.Disposable {
       if (typeof id !== 'string' || !this.controller?.state().some(state => state.bindingId === id)) throw new Error('This app tab is no longer available.');
       return id;
     }
-    const choices = (this.controller?.state() ?? []).map(s => ({ label: s.kind === 'call' ? 'Legacy Call Board' : s.kind === 'noltbook' ? 'Noltbook and Calls' : s.kind === 'landscape' ? 'Landscape' : s.kind === 'groups' ? 'Tlon Groups' : 'Glurff', description: s.phase + ' · ' + s.url, id: s.bindingId }));
+    const choices = (this.controller?.state() ?? []).map(s => ({ label: s.kind === 'call' ? 'Legacy Call Board' : s.kind === 'noltbook' ? 'Noltbook and Calls' : s.kind === 'landscape' ? 'Landscape' : s.kind === 'groups' ? 'Tlon Groups' : s.kind === 'lattice' ? 'Lattice' : 'Glurff', description: s.phase + ' · ' + s.url, id: s.bindingId }));
     if (!choices.length) { void vscode.window.showInformationMessage('No Readymade media tabs are open.'); return; }
     return (await vscode.window.showQuickPick(choices, { title: 'Choose a retained media tab' }))?.id;
   }
@@ -169,14 +279,15 @@ export class MediaWorkbench implements vscode.Disposable {
     const rows: MediaTreeRow[] = [
       { id: 'code', label: 'Code', icon: 'code', command: { title: 'Return to Code', command: 'readymade.returnCode' } },
       { id: 'groups', label: 'Groups', icon: 'organization', tooltip: 'Tlon groups and channels, kept open beside your code', command: { title: 'Tlon Groups', command: 'readymade.groups' } },
+      { id: 'lattice', label: 'Lattice', icon: 'notebook', tooltip: 'Lattice reader and editor, kept open beside your code', command: { title: 'Lattice', command: 'readymade.lattice' } },
       { id: 'glurff', label: 'Glurff', icon: 'globe', tooltip: 'Your shared world, kept open beside your code', command: { title: 'Glurff', command: 'readymade.glurff' } },
       { id: 'noltbook', label: 'Calls', icon: 'comment-discussion', tooltip: 'Noltbook — notes and calls', command: { title: 'Noltbook', command: 'readymade.noltbook' } },
       { id: 'landscape', label: 'Landscape', icon: 'home', tooltip: 'Your ship’s apps, beside your code', command: { title: 'Landscape', command: 'readymade.landscape' } }
     ];
     const retained = (this.controller?.state() ?? []).filter(state => !state.closed).map(state => ({
       id: state.bindingId, bindingId: state.bindingId,
-      label: state.title?.trim().slice(0, 100) || (state.kind === 'glurff' ? 'Glurff' : state.kind === 'noltbook' ? 'Noltbook' : state.kind === 'landscape' ? 'Landscape' : state.kind === 'groups' ? 'Tlon Groups' : 'Legacy Call Board'),
-      icon: state.kind === 'glurff' ? 'globe' : state.kind === 'noltbook' ? 'comment-discussion' : state.kind === 'landscape' ? 'home' : state.kind === 'groups' ? 'organization' : 'device-camera-video',
+      label: state.title?.trim().slice(0, 100) || (state.kind === 'glurff' ? 'Glurff' : state.kind === 'noltbook' ? 'Noltbook' : state.kind === 'landscape' ? 'Landscape' : state.kind === 'groups' ? 'Tlon Groups' : state.kind === 'lattice' ? 'Lattice' : 'Legacy Call Board'),
+      icon: state.kind === 'glurff' ? 'globe' : state.kind === 'noltbook' ? 'comment-discussion' : state.kind === 'landscape' ? 'home' : state.kind === 'groups' ? 'organization' : state.kind === 'lattice' ? 'notebook' : 'device-camera-video',
       description: state.fault ?? (state.active ? 'Active' : state.ready ? 'Open' : state.phase), tooltip: state.url,
       command: { title: 'Return to app', command: 'readymade.mediaReveal', arguments: [state.bindingId] }
     }));

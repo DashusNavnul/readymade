@@ -1,0 +1,209 @@
+{
+  "repository": "https://github.com/GlueWear/noltbook",
+  "commit": "7124b6119c99d1d5f78ae922f66bfd83cf90d96d",
+  "archiveUrl": "https://codeload.github.com/GlueWear/noltbook/tar.gz/7124b6119c99d1d5f78ae922f66bfd83cf90d96d",
+  "archiveSha256": "3d40c4fb91a0a9c02e251a449eb2b08cd8fccb5d005ae6d7f571ebcc8cc0efa1",
+  "licenseDeclaration": {
+    "path": "desk.docket-0",
+    "value": "MIT",
+    "fullNoticePresent": false
+  },
+  "releaseApproved": false,
+  "files": {
+    "app/noltbook-calls.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/app/noltbook-calls.hoon",
+      "bytes": 30214,
+      "sha256": "c407c241cee70388670af0d7ada6d65b6db2bd70db5131fdc5c8b0c1916d3fd9"
+    },
+    "app/noltbook.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/app/noltbook.hoon",
+      "bytes": 767296,
+      "sha256": "5e209439568f80c91be804a6e39899dce8a9d3903a20f1f31f1e484fa33c8830"
+    },
+    "desk.bill": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/desk.bill",
+      "bytes": 37,
+      "sha256": "3a1b28f57215310d209689c4f5696127be5003291b311ce1db846e690d5bbddb"
+    },
+    "desk.docket-0": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/desk.docket-0",
+      "bytes": 1008,
+      "sha256": "c2b5a8de6094670c3c262a45a498ace40931be67c4a0135857202e399d8dee9b"
+    },
+    "lib/dbug.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/dbug.hoon",
+      "bytes": 3867,
+      "sha256": "25c09f7bb49b9fe8ad0570b978db621bff12203e39d29ed300dd73a824832058"
+    },
+    "lib/default-agent.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/default-agent.hoon",
+      "bytes": 1307,
+      "sha256": "70a8af06601e8d1b75b261b2ac8b2cb06d5622baa1d1b1f8fec9236ce167d113"
+    },
+    "lib/docket.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/docket.hoon",
+      "bytes": 4873,
+      "sha256": "031be1e2e944835a3d11a90f26c6c61f9bbd40123d2dd249ff7b728acbb1d025"
+    },
+    "lib/noltbook/apps/canvas/index.html": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/noltbook/apps/canvas/index.html",
+      "bytes": 18493,
+      "sha256": "75cad900a82319ee27f07c6956ac68eb2daa0ac3f1b7fc8abc8d51f1641b1e2c"
+    },
+    "lib/noltbook/index.html": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/noltbook/index.html",
+      "bytes": 931627,
+      "sha256": "ef4b3524c789cfc145416f32e6a75468ff29161da8c42f40ec97221b951a4256"
+    },
+    "lib/noltbook/noltbook-logo-square.svg": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/noltbook/noltbook-logo-square.svg",
+      "bytes": 707,
+      "sha256": "5ae7fbe1d5f160b26b340177ebac173c0644c12dc41db8ab4fbc60b086c36c27"
+    },
+    "lib/server.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/server.hoon",
+      "bytes": 2325,
+      "sha256": "68fc30d26d4aa102f93a20d56f53fd2f92142dd1139364bd3c67506f0870e92f"
+    },
+    "lib/skeleton.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/skeleton.hoon",
+      "bytes": 792,
+      "sha256": "c7c654a91c5dc1a535d4a76b019ec175955e52961b1ddff70ad49121208d20f5"
+    },
+    "lib/verb.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/lib/verb.hoon",
+      "bytes": 4711,
+      "sha256": "ef1c28e2e7504725e9b5b6c51058d2736ecaa950aa2ecba47281a05e315bcb48"
+    },
+    "mar/bill.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/bill.hoon",
+      "bytes": 715,
+      "sha256": "a0196da4970b8dfdee321a638040a564f95e8000f3b49eccc274ee8de2fae0ff"
+    },
+    "mar/docket-0.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/docket-0.hoon",
+      "bytes": 436,
+      "sha256": "4b3e47032694e121e73ec341b388b94c43580f2002086b3c006b62d00debd5cc"
+    },
+    "mar/hoon.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/hoon.hoon",
+      "bytes": 1007,
+      "sha256": "ab057f42ca55cb2228abe95cb6ac10cdfca608931e640fd9b5d1c8c1e3faf997"
+    },
+    "mar/html.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/html.hoon",
+      "bytes": 186,
+      "sha256": "fc633d1f97d1e65026944a62f9a8e551898aa7c52f07b1c13484f86df97c87b9"
+    },
+    "mar/json.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/json.hoon",
+      "bytes": 328,
+      "sha256": "0e24f809051746c78d00afb8929bffcc43d4dcd621c63999fc3d4e6c60e4ec1d"
+    },
+    "mar/kelvin.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/kelvin.hoon",
+      "bytes": 566,
+      "sha256": "f23c0150f240d040dd24d99bb54e02c4df736e0f4d2bd5654bbc304082c8125c"
+    },
+    "mar/mime.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/mime.hoon",
+      "bytes": 565,
+      "sha256": "f1b94f43735fd3a6b86f5cd4619851bc1af9145281f68a07724c4bea870de535"
+    },
+    "mar/noltbook-calls/access.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook-calls/access.hoon",
+      "bytes": 514,
+      "sha256": "ecc2a4f07fbf839a7458e3daa27a629a624704d56bf6868145fe08aacea6c13b"
+    },
+    "mar/noltbook-calls/action.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook-calls/action.hoon",
+      "bytes": 372,
+      "sha256": "22507dbe7238bf8d2c52df838358d87b4078ca28979e54756a27ec72298bbe78"
+    },
+    "mar/noltbook-calls/config.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook-calls/config.hoon",
+      "bytes": 1028,
+      "sha256": "d67746117ab80b226306e4fdb5038a42bc74ea22e7ab856b99c8c22f049a40a1"
+    },
+    "mar/noltbook-calls/health.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook-calls/health.hoon",
+      "bytes": 1029,
+      "sha256": "d8c43a7c1ee047c43e617aca695dfc6486690286b3ef9554db08d97ddbf2a9b3"
+    },
+    "mar/noltbook-calls/remote.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook-calls/remote.hoon",
+      "bytes": 369,
+      "sha256": "2347cef426a69212d0885206c93ea5c48970487a93ea4ee2361d931dc9bc8229"
+    },
+    "mar/noltbook/action.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook/action.hoon",
+      "bytes": 26541,
+      "sha256": "2162fffa443e96886a6a41e552002fa10a70c51d721aeecb96636bd85926eca2"
+    },
+    "mar/noltbook/api.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook/api.hoon",
+      "bytes": 12873,
+      "sha256": "ed8af897a2fb082a570e1f4e459577b2bc91b9f890c7eae25c01ad7c73d788f7"
+    },
+    "mar/noltbook/call-access.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook/call-access.hoon",
+      "bytes": 3050,
+      "sha256": "9f721c0ea8d33224ff2755cdd9dc01d9cff5c73f9690e6cce9f52d3b757a2f94"
+    },
+    "mar/noltbook/remote.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook/remote.hoon",
+      "bytes": 138,
+      "sha256": "e5bd166288456407af5157fdf25186d78b68659c60bf9fcc0299d2577958f8bf"
+    },
+    "mar/noltbook/sfu-mode.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook/sfu-mode.hoon",
+      "bytes": 432,
+      "sha256": "bd1bdde91b68a571d0f14f2ff3cba6789ee7de3b31baa54a0c0b68d79f3d284f"
+    },
+    "mar/noltbook/update.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noltbook/update.hoon",
+      "bytes": 29606,
+      "sha256": "676d709bbe508143f6eec74c4273016780fce9c2c9c8958946b1c145b6d726bd"
+    },
+    "mar/noun.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/noun.hoon",
+      "bytes": 409,
+      "sha256": "7581328f74894baa376d3a80e370808dca3ad3af96bc0ef6e4ac299984744b89"
+    },
+    "mar/svg.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/svg.hoon",
+      "bytes": 173,
+      "sha256": "b18def2acda3d91cdb3cf8665cb34ebe6b26bb9a9279a138e98250b70fd66e2e"
+    },
+    "mar/txt.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/mar/txt.hoon",
+      "bytes": 7802,
+      "sha256": "cb76a42e114f3b8f3ac37d09bfe7b1b41bc5c54e6406c0c01fb249af6910bc5d"
+    },
+    "sur/docket.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/sur/docket.hoon",
+      "bytes": 1427,
+      "sha256": "dd930bf411fa129551bf78496b23a96e19743ec4534f4a08bfa37c92c71fc029"
+    },
+    "sur/noltbook-calls.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/sur/noltbook-calls.hoon",
+      "bytes": 10083,
+      "sha256": "f45f41e41242cfb2a1fa138fbc8689a5bc9ebfcc8abb89b44e67f62917dd44fd"
+    },
+    "sur/noltbook.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/sur/noltbook.hoon",
+      "bytes": 62299,
+      "sha256": "840437900412d1465ebe56cf627238dc4825cdeefaf69d7a8acd5c1303fbb25e"
+    },
+    "sur/verb.hoon": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/sur/verb.hoon",
+      "bytes": 943,
+      "sha256": "ab0894b43d01ce7af35274ef406827021ee4d5fc288a9382582a160885932fba"
+    },
+    "sys.kelvin": {
+      "archivePath": "noltbook-7124b6119c99d1d5f78ae922f66bfd83cf90d96d/sys.kelvin",
+      "bytes": 24,
+      "sha256": "5df5576751c2aac4117c7623535ae1f7f0328f5d00b9a34c15c53b4bc11e8153"
+    }
+  }
+}

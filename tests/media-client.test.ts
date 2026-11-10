@@ -66,6 +66,20 @@ test('strict bounded binding, cookies and navigation validation sends nothing un
   });
 });
 
+test('Lattice IPC preserves the editor URL and accepts a same-origin reader observation', async () => {
+  await fixture(async (server, client) => {
+    const url = origin + '/apps/lattice/app', payload = { ...bind(), kind: 'lattice', url };
+    server.answer(state({ kind: 'lattice', url }));
+    assert.equal((await client.request('bind', payload)).kind, 'lattice');
+    assert.deepEqual(server.frames[0].payload, payload);
+    await assert.rejects(client.request('bind', { ...payload, kind: 'groups' }), code('invalidBinding'));
+    await assert.rejects(client.request('navigate', { bindingId, url: 'https://foreign.fixture/apps/lattice/app' }), code('invalidURL'));
+    server.answer(state({ kind: 'lattice', url: origin + '/apps/lattice' }));
+    assert.equal((await client.request('observe', { bindingId })).url, origin + '/apps/lattice');
+    assert.equal(server.frames.length, 2);
+  });
+});
+
 test('Groups binding retains its kind and exact URL through IPC and rejects foreign origins', async () => {
   await fixture(async (server, client) => {
     const url = origin + '/apps/groups/?group=fixture%2Froom#channel', payload = { ...bind(), kind: 'groups', url };

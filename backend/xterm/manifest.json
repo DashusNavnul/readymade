@@ -1,0 +1,29 @@
+{
+  "name": "@xterm/xterm",
+  "version": "6.1.0-beta.291",
+  "gitHead": "699f5537b0232e444cb98261b8b3991c3cfecb5e",
+  "license": "MIT",
+  "runtimeDependencies": {},
+  "tarball": "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.1.0-beta.291.tgz",
+  "integrity": "sha512-Q6IjxogKIu7fBkXHcn4vQhfHvtwhIv/NN8LR0knCAxPA06/jXuHwreqX9Y/4zvzj7m8u6OBndOJDCUAxLmRfQQ==",
+  "tarballSHA256": "1944ffe18fbc871bfd138a671d5121f428604779ad4eedb76720fc9314ee1997",
+  "licenseSHA256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
+  "headerTemplate": "/*! Vendored {name} {version}; commit {gitHead}\\n<upstream LICENSE>\\n*/\\n",
+  "files": {
+    "ui/xterm.js": {
+      "archivePath": "package/lib/xterm.js",
+      "upstreamSHA256": "bf622b341e28130b098b30dfee9a87bfdd338b329697f3791012994f1cbfac21",
+      "sha256": "694e65f1e9e9e9deacf463dcd9f1bac0362edb9110350427dc5fc230c78903e0",
+      "bytes": 393763,
+      "removedSuffix": "\n//# sourceMappingURL=xterm.js.map"
+    },
+    "ui/xterm.css": {
+      "archivePath": "package/css/xterm.css",
+      "upstreamSHA256": "4d9a1d50808997f097ccc6040a5da6f6cb06b14e5ee2402df5196a218bba838f",
+      "sha256": "0a1e0b9432e4d4a94c3d123aa0440baa710d16bbebc45517277f3d256057d9b5",
+      "bytes": 9217,
+      "removedSuffix": ""
+    }
+  },
+  "scope": "Exact provenance and reconstruction of the two vendored files; not approval of the full backend release"
+}
