@@ -45,11 +45,14 @@ test('source export refuses missing files, traversal, duplicates and file/direct
 test('release inventory covers every current product, test and platform file', () => {
   const root = path.resolve(__dirname, '..');
   const inventory = require('../platform/source-files.json');
-  for (const directory of ['src', 'tests', 'platform', 'runtime']) {
-    for (const name of fs.readdirSync(path.join(root, directory))) {
-      assert.ok(inventory.includes(`${directory}/${name}`), `Review and add new release source: ${directory}/${name}`);
+  function check(directory) {
+    for (const entry of fs.readdirSync(path.join(root, directory), {withFileTypes: true})) {
+      const name = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) check(name);
+      else assert.ok(inventory.includes(name), `Review and add new release source: ${name}`);
     }
   }
+  for (const directory of ['src', 'tests', 'platform', 'packaging', 'runtime']) check(directory);
 });
 
 test('exported runtime package retains its qualified patch, proof and upstream license', () => {

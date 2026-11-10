@@ -31,6 +31,18 @@ after editor secret storage. The prompt does not write codes to that file.
 Replacement codes take precedence over remembered values and are stored only
 after successful sign-in with a single validated ship identity.
 
+Local macOS packages reuse one code-signing certificate, so Keychain can
+recognize successive builds as the same app. The builder's private certificate,
+encrypted signing key and dedicated build keychain live in the owned private
+`~/Library/Application Support/Readymade/Signing` directory, outside the source
+tree and shipped application. Signing temporarily adds only that build keychain
+to the search list and removes that entry afterward; it does not change the
+default keychain, trust settings or saved login items. Incomplete or mismatched
+signer state blocks packaging instead of silently generating a replacement.
+Preserve this directory securely across build-machine migration. A local
+certificate is separate from Apple's signing and notarization requirements for
+public distribution.
+
 ## Local planet discovery
 
 The macOS picker inspects same-user runtime processes, their held pier locks,

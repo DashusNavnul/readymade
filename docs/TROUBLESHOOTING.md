@@ -18,7 +18,7 @@ Keep the destination on the same filesystem as the checkout's `dist` directory. 
 
 ## The application will not open
 
-Open the outer `Readymade Workspace.app`, not its nested VSCodium app. Keep the bundle intact. The build is ad-hoc signed and not notarized; record the exact macOS message. Do not disable system security globally to bypass it.
+Open the outer `Readymade Workspace.app`, not its nested VSCodium app. Keep the bundle intact. Local builds use a persistent local signing certificate and are not notarized; record the exact macOS message. Do not disable system security globally to bypass it.
 
 For isolated development or host tests, `launch.sh` and `test-host.sh` accept `READYMADE_CODE_BIN`. Their default path targets an existing Visual Studio Code installation. The packaged `Contents/MacOS/ReadymadeCLI` is the supported host for the media bridge; launching the extension in an ordinary editor does not install that main-process bridge.
 
@@ -112,6 +112,26 @@ macOS dialogs too. A Keychain prompt for “Readymade Workspace Safe Storage” 
 block the main process and cause a browser-connection timeout. The owner must
 handle that prompt locally; never put the login password in logs or chat.
 Dismissing that prompt does not establish microphone or camera acceptance.
+
+Repeated approval after each local rebuild usually means the builds were signed
+ad hoc: macOS sees a new app identity each time. `./package.sh` now reuses a
+private local signing certificate stored under
+`~/Library/Application Support/Readymade/Signing`. Keep that directory when
+clearing caches or moving the build setup. The private signing key stays on the
+builder's Mac; it is never included in the application or source export.
+
+When moving from an older ad-hoc build to this certificate, macOS may ask once
+more for “Readymade Workspace Safe Storage”. Enter the Mac login password in
+that macOS dialog and choose **Always Allow** for the verified new Readymade
+build. Later builds from the same signer retain that identity. Existing older
+builds can still have their own pending requests. Do not delete Safe Storage
+items or turn off encrypted storage to dismiss them.
+
+This local signature does not provide Apple notarization or remove Gatekeeper
+checks for downloaded apps. An Apple-issued certificate can be selected with
+`READYMADE_SIGNING_IDENTITY=<exact certificate SHA-1 fingerprint> ./package.sh`.
+`READYMADE_ALLOW_ADHOC=1` is an explicit isolated-test option; using that build
+with real saved credentials can bring the repeated prompts back.
 
 Switching between Code and an open app should preserve its page. **Reconnect Media Tab** reloads a tab and can end an active call; it is an explicit action, not the first automatic response to uncertainty. Existing calls in another native application are not automatically transferred into this workspace.
 

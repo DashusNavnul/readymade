@@ -63,7 +63,7 @@ Packaging refuses existing app/receipt output. Preserve earlier builds and use a
 READYMADE_PACKAGE_OUTPUT_DIR="$PWD/dist/second-build" ./package.sh
 ```
 
-The launcher is locally ad-hoc signed, not notarized. Do not disable Gatekeeper globally or remove quarantine recursively as a setup shortcut. Report the exact macOS error if launch is blocked.
+The launcher uses a persistent local signing certificate, stored privately on the build Mac under `~/Library/Application Support/Readymade/Signing`. Preserve that directory across rebuilds so Keychain approval can persist. It is not notarized. Do not disable Gatekeeper globally or remove quarantine recursively as a setup shortcut. Report the exact macOS error if launch is blocked. See [Keychain approval](TROUBLESHOOTING.md) before changing or replacing the signer.
 
 ## Open and authenticate
 

@@ -13,7 +13,7 @@ app_name='Readymade Workspace.app'
 publish_dir="${READYMADE_PACKAGE_OUTPUT_DIR:-$dist_dir}"
 app_path="$publish_dir/$app_name"
 receipt_path="$publish_dir/readymade-workspace-package-receipt.json"
-stage=''; downloaded=''
+stage=''; downloaded=''; local_signing_active=''
 fail() { printf 'Packaging refused: %s\n' "$1" >&2; exit 1; }
 source_fingerprint() {
   node - "$workspace_dir" <<'FINGERPRINT'
@@ -29,11 +29,14 @@ function scan(directory, prefix) {
     if (entry.isDirectory()) scan(file, relative); else add(file, relative);
   }
 }
-for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); console.log(digest.digest('hex'));
+for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); scan(path.join(root, 'packaging'), 'packaging'); console.log(digest.digest('hex'));
 FINGERPRINT
 }
 cleanup() {
   local result=$?
+  if [[ -n "$local_signing_active" ]]; then
+    node "$workspace_dir/packaging/macos-local-signing.cjs" deactivate || result=1
+  fi
   if [[ "$result" != 0 && -n "$stage" && -f "$stage/signing.log" ]]; then tail -n 12 "$stage/signing.log" >&2; fi
   if [[ -n "$downloaded" && -f "$downloaded" && ! -L "$downloaded" ]]; then rm -- "$downloaded"; fi
   if [[ -n "$stage" && "$stage" == "$dist_dir"/.package.* && -d "$stage" && ! -L "$stage" ]]; then rm -r -- "$stage"; fi
@@ -41,7 +44,7 @@ cleanup() {
 }
 trap cleanup EXIT
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail 'This package is for Apple Silicon macOS.'
-for tool in node npm xcrun curl shasum ditto codesign; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+for tool in node npm xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
 [[ ! -e "$app_path" && ! -L "$app_path" && ! -e "$receipt_path" && ! -L "$receipt_path" ]] || fail 'The preview app or receipt already exists; it will not be replaced.'
 for cache_parent in "$HOME/.cache" "$HOME/.cache/readymade" "$cache_dir"; do
   [[ ! -L "$cache_parent" ]] || fail 'A package-cache parent is a symlink.'
@@ -55,6 +58,21 @@ mkdir -p "$dist_dir" "$publish_dir"
 [[ -d "$cache_dir" && ! -L "$cache_dir" && -O "$cache_dir" && "$(stat -f '%Lp' "$cache_dir")" == 700 ]] || fail 'Package cache must be an owned, private directory.'
 [[ -d "$dist_dir" && ! -L "$dist_dir" && -O "$dist_dir" ]] || fail 'The build output directory is unsafe.'
 stage="$(mktemp -d "$dist_dir/.package.XXXXXX")"
+signing_json="$(node "$workspace_dir/packaging/macos-signing.cjs")"
+signing_identity="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).identity)' "$signing_json")"
+signing_keychain="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).keychain || "")' "$signing_json")"
+signing_args=(--sign "$signing_identity" --timestamp=none)
+sign_target() {
+  local identifier="$1" target="$2"; shift 2
+  [[ "$identifier" =~ ^[A-Za-z0-9.-]+$ ]] || fail 'Unexpected signing identifier.'
+  if [[ "$signing_identity" == - ]]; then
+    codesign --force "${signing_args[@]}" --identifier "$identifier" "$@" "$target"
+  else
+    codesign --force "${signing_args[@]}" --identifier "$identifier" \
+      --requirements "=designated => certificate leaf = H\"$signing_identity\" and identifier \"$identifier\"" "$@" "$target"
+  fi
+  node "$workspace_dir/packaging/macos-signing.cjs" verify "$target" "$signing_json" >/dev/null
+}
 xcrun clang -O2 -Wall -Wextra -Werror -x c - -o "$stage/exclusive-move" <<'PUBLISH'
 #include <stdio.h>
 #include <sys/stdio.h>
@@ -137,6 +155,11 @@ set_media_descriptions() {
   done
 }
 set_media_descriptions "$inner_app/Contents/Info.plist"
+if [[ -n "$signing_keychain" ]]; then
+  local_signing_active=1
+  node "$workspace_dir/packaging/macos-local-signing.cjs" activate
+  signing_args+=(--keychain "$signing_keychain")
+fi
 helper_index=0
 for suffix in '' ' (GPU)' ' (Plugin)' ' (Renderer)'; do
   helper_index=$((helper_index + 1)); old_helper="VSCodium Helper$suffix"; new_helper="Readymade Workspace Helper$suffix"
@@ -150,7 +173,8 @@ for suffix in '' ' (GPU)' ' (Plugin)' ' (Renderer)'; do
   set_media_descriptions "$helper_plist"
   mv -- "$helper/Contents/MacOS/$old_helper" "$helper/Contents/MacOS/$new_helper"
   mv -- "$helper" "$inner_app/Contents/Frameworks/$new_helper.app"
-  codesign --force --sign - --timestamp=none --entitlements "$stage/helper-$helper_index-entitlements.plist" "$inner_app/Contents/Frameworks/$new_helper.app" 2>> "$stage/signing.log"
+  helper_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$inner_app/Contents/Frameworks/$new_helper.app/Contents/Info.plist")"
+  sign_target "$helper_identifier" "$inner_app/Contents/Frameworks/$new_helper.app" --entitlements "$stage/helper-$helper_index-entitlements.plist" 2>> "$stage/signing.log"
   codesign --verify --strict "$inner_app/Contents/Frameworks/$new_helper.app" 2>> "$stage/signing.log"
 done
 cat > "$stage/ReadymadeLauncher.c" <<'C'
@@ -279,14 +303,19 @@ set_media_descriptions "$plist"
 cp "$inner_app/Contents/Resources/VSCodium.icns" "$staged_app/Contents/Resources/VSCodium.icns"
 # CFBundleName, package productName and helper lookup names agree; framework/main executable stay upstream.
 {
-  codesign --force --sign - --timestamp=none --entitlements "$stage/electron-entitlements.plist" "$inner_app"
+  sign_target com.vscodium "$inner_app" --entitlements "$stage/electron-entitlements.plist"
   codesign --verify --deep --strict "$inner_app"
-  codesign --force --sign - --timestamp=none "$staged_app"
+  sign_target org.pataphor.codeoss.workspace.cli "$staged_app/Contents/MacOS/ReadymadeCLI"
+  sign_target org.pataphor.codeoss.workspace "$staged_app"
   codesign --verify --deep --strict "$staged_app"
 } 2>> "$stage/signing.log"
-node - "$staged_app" "$upstream_url" "$upstream_sha" "$original_name" "$stage/receipt.json" "$source_sha" <<'NODE'
+node "$workspace_dir/packaging/macos-signing.cjs" verify "$staged_app/Contents/MacOS/ReadymadeCLI" "$signing_json" >/dev/null
+node "$workspace_dir/packaging/macos-signing.cjs" verify "$inner_app" "$signing_json" > "$stage/inner-requirement.json"
+node "$workspace_dir/packaging/macos-signing.cjs" verify "$staged_app" "$signing_json" > "$stage/outer-requirement.json"
+node - "$staged_app" "$upstream_url" "$upstream_sha" "$original_name" "$stage/receipt.json" "$source_sha" "$signing_json" "$stage" <<'NODE'
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
-const [app, url, sha256, originalExecutable, receipt, sourceFingerprint] = process.argv.slice(2);
+const [app, url, sha256, originalExecutable, receipt, sourceFingerprint, signingJSON, stage] = process.argv.slice(2);
+const signer = JSON.parse(signingJSON);
 const extension = path.join(app, 'Contents/Resources/VSCodium.app/Contents/Resources/app/extensions/pataphor.readymade-ship-workspace');
 const hashes = {};
 function scan(directory, prefix = '') {
@@ -309,7 +338,10 @@ platform.upstreamCLI = crypto.createHash('sha256').update(fs.readFileSync(path.j
 fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), upstream: { version: '1.143.17232', codeOSS: '1.143.1', url, sha256 },
   bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, platform,
   extension: { id: 'pataphor.readymade-ship-workspace', sourceFingerprint, hashes },
-  signing: 'local ad-hoc; codesign --verify --deep --strict passed',
+  signing: { identity: signer.identity, kind: signer.kind, team: signer.team,
+    verified: signer.identity === '-' ? 'codesign --verify --deep --strict passed; test-only ad-hoc identity' : 'codesign --verify --deep --strict and exact certificate requirement passed',
+    innerRequirement: JSON.parse(fs.readFileSync(path.join(stage, 'inner-requirement.json'), 'utf8')),
+    outerRequirement: JSON.parse(fs.readFileSync(path.join(stage, 'outer-requirement.json'), 'utf8')) },
   isolation: 'Native Finder/CLI launchers default to private ~/.cache/readymade/workspace-v02/{user,extensions,shared-data}; CLI overrides require owned private directories; fresh settings disable updates and use ephemeral browser storage; previous preview profiles and encrypted secret databases are never changed.',
   nativeIdentity: { name: 'Readymade Workspace', credentialNamespace: 'Readymade Workspace Safe Storage', helpers: 'Readymade Workspace Helper{, (GPU), (Plugin), (Renderer)}', preservedInnerBundleIdentifier: 'com.vscodium' },
   limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; a bounded media bootstrap runs before the original main entry.',

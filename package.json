@@ -317,7 +317,7 @@
   "scripts": {
     "build": "tsc -p .",
     "check": "tsc -p . --noEmit",
-    "lint": "eslint src tests platform backend/install/*.cjs",
+    "lint": "eslint src tests platform packaging/*.cjs backend/install/*.cjs",
     "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.cjs"
   },
   "devDependencies": {
