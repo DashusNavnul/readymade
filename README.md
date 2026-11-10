@@ -38,6 +38,10 @@ and you trust this official download, use **System Settings → Privacy & Securi
 → Open Anyway**. Follow [Apple's instructions](https://support.apple.com/en-us/102445);
 do not disable Gatekeeper globally. The release includes a checksum and build information.
 
+If macOS asks to let **Readymade Workspace** use **Readymade Workspace Safe
+Storage**, enter your Mac login password only in that macOS Keychain dialog
+and allow access. This is separate from your Urbit login code; neither belongs in chat.
+
 Choose **Home → Connect your Urbit** and sign in to your own ship privately.
 After connecting, use **Home → Join a workspace** with the host's actual project
 invitation. Shared file access uses a separate host-granted link through

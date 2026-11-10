@@ -27,6 +27,12 @@ signed and not notarized; a trusted official download may need macOS
 [Apple's instructions](https://support.apple.com/en-us/102445) explain the prompt.
 Do not disable Gatekeeper globally or remove quarantine recursively.
 
+A normal launch may also ask for access to **Readymade Workspace Safe Storage**
+in macOS Keychain. Let the operator enter the Mac login password in that native
+dialog and allow the app. Never request it in chat, extract it or replace secure
+storage with a plaintext fallback. An unanswered dialog can block app tabs
+until the operator responds; do not automatically retry the tab operation.
+
 Continue with **Home → Connect your Urbit** and the private authentication flow
 below. Backend installation and collaboration grants are separate requirements.
 Use the source-build steps only when the operator wants to build the application.
