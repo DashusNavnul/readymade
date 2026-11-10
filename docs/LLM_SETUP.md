@@ -1,12 +1,13 @@
 # LLM-assisted setup
 
-Use this guide to build the public desktop alpha and connect it to the receiving operator's own ship. Do not assume any development ship, host, account, path or port belongs to that operator.
+Use this guide to install the public desktop alpha and connect it to the receiving operator's own ship. Do not assume any development ship, host, account, path or port belongs to that operator.
 
 ## Establish the minimum facts
 
 Inspect the local environment first. Ask only for facts that remain missing:
 
-1. Is this an Apple Silicon Mac with Node.js 22, Python 3.9+ and Xcode command-line tools?
+1. Is this an Apple Silicon Mac? The prebuilt download needs no development tools.
+   Building from source separately requires Node.js 22, Python 3.9+ and Xcode command-line tools.
 2. Let the operator choose their real running planet from Readymade's list, or
    enter a hosted ship's address through **Enter a ship’s web address**.
 3. Use **Your Urbit** to discover installed app pages and coding compatibility;
@@ -16,7 +17,21 @@ The origin is not the access code. Never request an access code in chat or read 
 
 Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before selecting commands. Existing app access does not authorize ship installation, source updates, restarts or deployment.
 
-## Build locally
+## Install the download
+
+Prefer the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110)
+for a tester who wants to run the app. Open the `.dmg`, drag Readymade Workspace
+to Applications, open it there and eject the disk image. The download is ad-hoc
+signed and not notarized; a trusted official download may need macOS
+**System Settings → Privacy & Security → Open Anyway** on first launch.
+[Apple's instructions](https://support.apple.com/en-us/102445) explain the prompt.
+Do not disable Gatekeeper globally or remove quarantine recursively.
+
+Continue with **Home → Connect your Urbit** and the private authentication flow
+below. Backend installation and collaboration grants are separate requirements.
+Use the source-build steps only when the operator wants to build the application.
+
+## Build locally (optional)
 
 ```sh
 git clone https://github.com/DashusNavnul/readymade.git

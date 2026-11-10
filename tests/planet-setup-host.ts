@@ -39,10 +39,22 @@ export async function run(): Promise<void> {
     assert.equal(inventory(), undefined);
     await vscode.commands.executeCommand('readymade.getUrbit'); await until(() => inventory()?.planets.length === 2 && tabs().length === 1);
     assert.equal(tabs().length, 1); const first = tabs()[0];
-    const boundary = api.planetSetup as unknown as {panel: vscode.WebviewPanel; receive(panel: vscode.WebviewPanel, message: unknown): Promise<void>};
+    const boundary = api.planetSetup as unknown as {panel: vscode.WebviewPanel; openWebsite(uri: vscode.Uri): Promise<boolean>; receive(panel: vscode.WebviewPanel, message: unknown): Promise<void>};
+    const external: string[] = [];
+    boundary.openWebsite = async uri => {external.push(uri.toString()); return true;};
+    const html = boundary.panel.webview.html;
+    assert.match(html, /id="checkout" disabled/); assert.match(html, /Paid but no planet key/);
+    assert.equal(html.includes('data-action="checkout"'), false);
+    assert.equal(html.includes('store/checkout/planet-identity'), false);
     const before = inventory();
-    for (const action of ['signup', 'subscribe', 'buyout', 'transfer']) await boundary.receive(boundary.panel, {action});
-    assert.equal(calls, 2); assert.deepEqual(inventory(), before);
+    for (const action of ['signup', 'subscribe', 'buyout', 'transfer', 'checkout']) await boundary.receive(boundary.panel, {action});
+    assert.equal(calls, 2); assert.deepEqual(inventory(), before); assert.deepEqual(external, []);
+    await boundary.receive(boundary.panel, {action: 'support', url: 'https://wrong.invalid'});
+    assert.deepEqual(external, []);
+    await boundary.receive(boundary.panel, {action: 'support'});
+    assert.deepEqual(external, ['https://www.orraah.com/support']);
+    await boundary.receive(boundary.panel, {action: 'setup'});
+    assert.deepEqual(external, ['https://www.orraah.com/support', 'https://www.orraah.com/download']);
     assert.equal(api.media.connectedClient, undefined);
     const copy = inventory()!; copy.planets.splice(0); assert.equal(inventory()?.planets.length, 2);
     await vscode.commands.executeCommand('readymade.getUrbit'); await until(() => calls === 3);
@@ -58,7 +70,8 @@ export async function run(): Promise<void> {
     if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: true,
       installedExtension: extension.extensionPath, fixtureCatalog: true, liveProvider: false, singleton: true,
       closeAborts: true, reopen: true, emptySuccess: true, failureClearsInventory: true, inventoryCopyIsolated: true,
-      unsupportedSignupBillingAndTransferMessagesIgnored: true,
+      unsupportedSignupBillingAndTransferMessagesIgnored: true, checkoutDisabled: true, staleCheckoutMessageRefused: true,
+      fixedRecoveryAndSetupDispatch: true, fixtureExternalOpener: true, externalSitesActuallyOpened: false,
       dirtyEditorPreserved: true, layoutPreserved: true, noAutomaticConnection: true, purchaseAttempted: false}), {flag: 'wx', mode: 0o600});
   } finally {globalThis.fetch = originalFetch; for (const tab of tabs()) await vscode.window.tabGroups.close(tab);}
 }

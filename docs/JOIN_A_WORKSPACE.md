@@ -7,8 +7,10 @@ invitation and is never needed for joining a group.
 
 ## What you can set up from this repository
 
-Follow [LLM setup](LLM_SETUP.md) to build the desktop on an Apple Silicon Mac.
-Configure your ship origin, authenticate privately, then open Groups, Glurff,
+Download the `.dmg` from the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110),
+drag Readymade Workspace to Applications and open it. See [LLM setup](LLM_SETUP.md)
+for first-launch help or an optional source build; the download needs no development tools.
+Choose **Home → Connect your Urbit**, authenticate privately, then open Groups, Glurff,
 Calls or Landscape if those apps are already installed on your ship. In a new
 Readymade terminal, `groups` opens Tlon Groups and `landscape` opens the app
 launcher. Both reveal retained tabs without reloading them.
@@ -60,6 +62,10 @@ request recording, execution, review and deployment. A local fixture, shared
 chat, or successful login is not that proof.
 
 ## Join a coding project in the development build
+
+Connect your own ship first. Then **Home → Join a workspace** opens the
+project-invitation field; paste the actual link supplied by your host.
+Never use the host's ship address or login code as your own connection.
 
 The owner selects a project and chooses **Invite Collaborator** in **Project
 Invitations**. After **Check Result** confirms acceptance, **Copy Join Link**

@@ -4,7 +4,7 @@ A desktop coding workspace that brings your Urbit apps beside your code. Readyma
 
 Use **Code · Lattice · Groups · Glurff · Calls · Landscape** to switch without replacing your open app pages. Type `groups` in a new Readymade integrated terminal to open Tlon Groups, `lattice` for Lattice's document workspace, or `landscape` for your ship's app launcher. These commands are scoped to Readymade's terminal environment; they do not change your global shell configuration. Inside these terminals, `groups` opens Tlon; use `/usr/bin/groups` for the operating system group-list command.
 
-**Public alpha, built from source.** The packaged desktop currently supports **Apple Silicon macOS**. Opening the desktop does not install Urbit applications or modify your ship. The repository also supplies bounded native installation tools; full multiplayer coding parity and self-service backend installation acceptance are not established.
+**Public alpha for Apple Silicon macOS.** Download the meeting preview below, or build from source. Opening the desktop does not install Urbit applications or modify your ship. The repository also supplies bounded native installation tools; full multiplayer coding parity and self-service backend installation acceptance are not established.
 
 The [backend source recipes](backend/README.md) assemble the complete
 coding backend candidate from included application source and pinned public
@@ -24,7 +24,28 @@ native protocol is not yet qualified or included in the bundled backend, so new
 shares remain unavailable with the bundled version. Previous summary-only share
 attempts can still be checked without resending; see [parity](docs/PARITY.md).
 
-## Build and open
+## Download and install
+
+On an **Apple Silicon Mac (M1 or newer)**, download the `.dmg` from the
+[meeting preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110).
+Open it, drag **Readymade Workspace** to **Applications**, then open the app
+from Applications and eject the disk image. Running the download needs no
+Node.js, npm, Python, Xcode or source build. Intel, Windows and Linux packages
+are not included.
+
+This preview is ad-hoc signed and not notarized. If macOS blocks first launch
+and you trust this official download, use **System Settings → Privacy & Security
+→ Open Anyway**. Follow [Apple's instructions](https://support.apple.com/en-us/102445);
+do not disable Gatekeeper globally. The release includes a checksum and build information.
+
+Choose **Home → Connect your Urbit** and sign in to your own ship privately.
+After connecting, use **Home → Join a workspace** with the host's actual project
+invitation. Shared file access uses a separate host-granted link through
+**Readymade: Open Shared Project**. See [Join a workspace](docs/JOIN_A_WORKSPACE.md).
+The desktop download does not install or update a ship backend; a successful
+login alone does not establish shared coding readiness.
+
+## Build and open from source
 
 You need Node.js 22 with npm, Python 3.9+, Git, Xcode command-line tools and an Apple Silicon Mac. Python is used by the backend preparation and offline verification tests. See [compatibility](docs/COMPATIBILITY.md) for platform and backend requirements.
 
@@ -55,12 +76,15 @@ provider allocation, subscription, buyout or provisioning integration is availab
 Hosting prices and service terms are not yet published. See
 [the service policy and implementation requirements](docs/STAR_SERVICES.md).
 
-The separate direct-purchase section opens Orraah’s public catalog, checkout and
-setup links. It is not the proposed free-signup service or USD 10 buyout.
-Availability is not a reservation, and generic checkout does not select a listed
-planet. Connect a running ship through Readymade’s private login; Readymade does
-not automatically issue or boot one. **Readymade: Get an Urbit** also opens this
-page from the command palette.
+**Planet purchases through Readymade are paused:** payment-to-key delivery is
+not verified. The checkout action is disabled, including messages from older
+panels. **Recover my purchase** opens Orraah’s support page for an existing paid
+order; use the transaction ID in the Paddle receipt and request private delivery
+of the assigned planet name and master ticket/keyfile. Do not buy again to retry
+missing delivery. Public availability and setup links remain available; a listing
+or payment receipt does not prove that a planet was issued. Connect a running
+ship through Readymade’s private login. **Readymade: Get an Urbit** opens this page
+from the command palette.
 
 Packaging downloads a pinned VSCodium archive, verifies its SHA256, reruns checks and tests, then creates a locally ad-hoc signed app. It does not launch or install the app, and refuses to overwrite an existing output. This build is not notarized. Keep the entire app bundle together; use its outer launcher rather than launching the nested editor directly.
 
