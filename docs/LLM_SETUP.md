@@ -19,10 +19,10 @@ Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before select
 
 ## Install the download
 
-Prefer the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110)
+Prefer the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1)
 for a tester who wants to run the app. Open the `.dmg`, drag Readymade Workspace
-to Applications, open it there and eject the disk image. The download is ad-hoc
-signed and not notarized; a trusted official download may need macOS
+to Applications, open it there and eject the disk image. The download uses a
+persistent local signing certificate and is not notarized; a trusted official download may need macOS
 **System Settings → Privacy & Security → Open Anyway** on first launch.
 [Apple's instructions](https://support.apple.com/en-us/102445) explain the prompt.
 Do not disable Gatekeeper globally or remove quarantine recursively.

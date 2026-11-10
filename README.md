@@ -27,20 +27,22 @@ attempts can still be checked without resending; see [parity](docs/PARITY.md).
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer)**, download the `.dmg` from the
-[meeting preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110).
+[meeting preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1).
 Open it, drag **Readymade Workspace** to **Applications**, then open the app
 from Applications and eject the disk image. Running the download needs no
 Node.js, npm, Python, Xcode or source build. Intel, Windows and Linux packages
 are not included.
 
-This preview is ad-hoc signed and not notarized. If macOS blocks first launch
+This preview uses a persistent local signing certificate and is not notarized. If macOS blocks first launch
 and you trust this official download, use **System Settings → Privacy & Security
 → Open Anyway**. Follow [Apple's instructions](https://support.apple.com/en-us/102445);
 do not disable Gatekeeper globally. The release includes a checksum and build information.
 
 If macOS asks to let **Readymade Workspace** use **Readymade Workspace Safe
 Storage**, enter your Mac login password only in that macOS Keychain dialog
-and allow access. This is separate from your Urbit login code; neither belongs in chat.
+and choose **Always Allow** for this verified build. Rebuilds from the same
+signing identity retain that approval. This is separate from your Urbit login
+code; neither belongs in chat.
 
 Choose **Home → Connect your Urbit** and sign in to your own ship privately.
 After connecting, use **Home → Join a workspace** with the host's actual project
