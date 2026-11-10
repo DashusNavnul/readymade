@@ -282,8 +282,12 @@ int main(int argc, char **argv) {
   execv(binary, args); refuse(); return 1;
 }
 C
-xcrun clang -O2 -Wall -Wextra -Werror "-DORIGINAL_NAME=\"$original_name\"" "$stage/ReadymadeLauncher.c" -o "$staged_app/Contents/MacOS/ReadymadeLauncher"
-xcrun clang -O2 -Wall -Wextra -Werror -DCLI_MODE "-DORIGINAL_NAME=\"$original_name\"" "$stage/ReadymadeLauncher.c" -o "$staged_app/Contents/MacOS/ReadymadeCLI"
+xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=12.0 "-DORIGINAL_NAME=\"$original_name\"" "$stage/ReadymadeLauncher.c" -o "$staged_app/Contents/MacOS/ReadymadeLauncher"
+xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=12.0 -DCLI_MODE "-DORIGINAL_NAME=\"$original_name\"" "$stage/ReadymadeLauncher.c" -o "$staged_app/Contents/MacOS/ReadymadeCLI"
+for launcher in ReadymadeLauncher ReadymadeCLI; do
+  launcher_minimum="$(xcrun vtool -show-build "$staged_app/Contents/MacOS/$launcher" | awk '$1 == "minos" {print $2}')"
+  [[ "$launcher_minimum" == 12.0 ]] || fail 'A launcher does not match the declared macOS 12 minimum.'
+done
 cat > "$plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -336,7 +340,7 @@ platform.product = crypto.createHash('sha256').update(fs.readFileSync(path.join(
 platform.entry = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'package.json'))).digest('hex');
 platform.upstreamCLI = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'bin/codium'))).digest('hex');
 fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), upstream: { version: '1.143.17232', codeOSS: '1.143.1', url, sha256 },
-  bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, platform,
+  bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, minimumMacOS: '12.0', launcherDeploymentTargetsVerified: true, platform,
   extension: { id: 'pataphor.readymade-ship-workspace', sourceFingerprint, hashes },
   signing: { identity: signer.identity, kind: signer.kind, team: signer.team,
     verified: signer.identity === '-' ? 'codesign --verify --deep --strict passed; test-only ad-hoc identity' : 'codesign --verify --deep --strict and exact certificate requirement passed',
