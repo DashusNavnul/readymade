@@ -197,6 +197,23 @@ export class MediaWorkbench implements vscode.Disposable {
     await vscode.commands.executeCommand('workbench.action.reloadWindow');
     return true;
   }
+  /** The connected ship, when it runs on this computer and now answers at another address than this window uses. */
+  async findMoved(): Promise<{ship: string; origin: string} | undefined> {
+    const client = this.connectedClient;
+    try {
+      if (!client || !['localhost', '127.0.0.1', '[::1]'].includes(new URL(client.origin).hostname)) return undefined;
+      const ship = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length) ?? this.context.workspaceState.get<string>('readymade.ship:' + client.origin);
+      if (!ship) return undefined;
+      const found = (await discoverLocalPlanets()).planets.filter(p => p.ship === ship && p.origin !== client.origin);
+      return found.length === 1 ? {ship, origin: found[0].origin} : undefined;
+    } catch {return undefined;}
+  }
+  /** Reload this window onto a known address of one of your ships. */
+  async switchTo(origin: string, ship?: string): Promise<void> {
+    this.ensureOpen();
+    await this.context.workspaceState.update(SWITCH_KEY, switchTarget({origin: normalizeShipAddress(origin), ...(ship ? {ship} : {})}));
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  }
   /**
    * After a switch reload: the ship to connect, read once and cleared. A ship that ran on this computer is found
    * again in the running-ship list so it still signs in by itself; if it is no longer there, its saved code is used.

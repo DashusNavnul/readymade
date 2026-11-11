@@ -5,7 +5,7 @@ import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
 import {ShipClient, ShipClientError, OutcomeUnknownError} from '../src/ship-client';
 import {GUEST_DESK, GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestDeskReceipt, guestDeskServing, guestDeskStatus,
-  guestInstallActions, guestRemoveActions, guestServiceDesk, guestServiceMessage, guestServiceProbe, guestServiceState} from '../src/guest-service';
+  fullDesk, fullFollowActions, guestInstallActions, guestRemoveActions, guestServiceDesk, guestServiceMessage, guestServiceProbe, guestServiceState} from '../src/guest-service';
 
 const synced = (zest: string, ship = '~dashus-navnul', desk = 'readymade-peer') => ({sync: {ship, desk}, zest, wefts: [], hash: '0v1'});
 
@@ -152,4 +152,17 @@ test('the guest desk route: read decodes or reports an older agent as protocol 0
   await assert.rejects(client.guestDeskPublish(), e => e instanceof ShipClientError && e.code === 'refused');
   steps.push((_c, r) => {r.socket?.destroy();});
   await assert.rejects(client.guestDeskPublish(), e => e instanceof OutcomeUnknownError);
+}));
+
+test('following backend updates is one kiln poke for the full desk; the desk read reports what it follows', () => fixture(async (client, steps, captures) => {
+  assert.deepEqual(fullFollowActions('~sampel-palnet'), [{id: 1, action: 'poke', ship: 'sampel-palnet', app: 'hood', mark: 'kiln-install', json: {local: 'readymade', ship: '~dashus-navnul', desk: 'readymade'}}]);
+  assert.throws(() => fullFollowActions('~dashus-navnul'), /its own/); assert.throws(() => fullFollowActions('zod'), /Invalid/);
+  assert.equal(fullDesk({base: synced('live', '~zod', 'kids')}), null);
+  assert.deepEqual(fullDesk({readymade: {sync: null, zest: 'live'}}), {zest: 'live', source: null});
+  steps.push((_c, r) => json(r, {readymade: synced('live', '~dashus-navnul', 'readymade')}));
+  assert.deepEqual(await client.backendDeskRead(), {zest: 'live', source: {ship: '~dashus-navnul', desk: 'readymade'}});
+  const before = captures.length;
+  steps.push((_c, r) => {r.writeHead(204); r.end();}, (_c, r) => {r.writeHead(204); r.end();});
+  await client.backendFollow(); await settle(captures, before + 2);
+  assert.deepEqual(JSON.parse(captures[before].body), fullFollowActions('~zod'));
 }));

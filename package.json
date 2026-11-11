@@ -43,6 +43,7 @@
       {"command": "readymade.joinProject", "title": "Readymade: Join Project"},
       {"command": "readymade.switchShip", "title": "Readymade: Switch Ship…"},
       {"command": "readymade.doctor", "title": "Readymade: Ship Doctor"},
+      {"command": "readymade.followBackendUpdates", "title": "Readymade: Follow Pataphor Updates"},
       {"command": "readymade.checkProjectInvitation", "title": "Readymade: Check Invitation Result"},
       {"command": "readymade.leaveProject", "title": "Readymade: Leave Project"},
       {"command": "readymade.removeCollaborationService", "title": "Readymade: Remove Collaboration Service"},

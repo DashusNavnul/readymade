@@ -155,3 +155,58 @@ test('the up-front checks name a ship that cannot run the backend before any wor
   rows = preflightProgress(state);
   assert.equal(rows[1].status, 'needs-attention'); assert.equal(rows[1].reason, 'native-failure');
 });
+
+// ---- continuing an interrupted install (build checks only) ----
+const crypto = require('node:crypto');
+const journal = require('../backend/install/install-state.cjs');
+const {resumable, resume} = require('../backend/install/install-all.cjs');
+async function stagedFixture(t, finishSteps = STEPS) {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rm-install-resume-'));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const state = path.join(root, 'journal'), pier = path.join(root, 'pier'); fs.mkdirSync(path.join(pier, '.urb'), {recursive: true});
+  const plan = {schema: 'readymade-local-install-v1', ship: '~zod', desk: 'readymade', pier, vere: path.join(root, 'vere'), runtimeSHA256: 'a'.repeat(64),
+    bundle: path.join(root, 'bundle'), bundleManifestSHA256: 'b'.repeat(64), toolchainSHA256: 'c'.repeat(64), hostBindingSHA256: '4'.repeat(64), steps: STEPS};
+  const receipt = path.join(root, 'receipt.json'); fs.writeFileSync(receipt, '{"observed":true}\n', {mode: 0o600});
+  const evidence = [{path: receipt, sha256: crypto.createHash('sha256').update(fs.readFileSync(receipt)).digest('hex')}];
+  const created = journal.createState(state, plan);
+  await journal.withRunLock(state, async () => {
+    for (const step of finishSteps) {journal.startStep(state, step, {receiptDirectory: root}); journal.finishStep(state, step, {status: 'success', evidence});}
+  });
+  const previous = path.join(root, 'out'); fs.mkdirSync(previous);
+  return {root, state, pier, previous, digest: created.digest ?? journal.inspectState(state).digest};
+}
+test('a stopped build can be continued only when staging finished and nothing of the earlier run is alive', async t => {
+  const f = await stagedFixture(t);
+  assert.deepEqual(Object.keys(resumable(f.state, f.previous)).sort(), ['digest', 'installLock', 'operationLock', 'resumable']);
+  assert.equal(resumable(f.state, f.previous).resumable, true);
+  assert.match(resumable(f.state, path.join(f.root, 'never')).reason, /had not started/);
+  // A dead owner of the same build output: the lock can be released. A live owner, or another operation's lock: never.
+  const lock = path.join(f.pier, '.urb/readymade-operation.lock'); fs.mkdirSync(lock);
+  const owner = value => fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify(value));
+  owner({pid: 2 ** 22 + 12345, output: path.join(f.previous, '01-app-graf')}); assert.equal(resumable(f.state, f.previous).resumable, true); assert.equal(resumable(f.state, f.previous).operationLock, lock);
+  owner({pid: process.pid, output: path.join(f.previous, '01-app-graf')}); assert.match(resumable(f.state, f.previous).reason, /still running/);
+  owner({pid: 2 ** 22 + 12345, output: path.join(f.root, 'elsewhere', 'x')}); assert.match(resumable(f.state, f.previous).reason, /another operation/);
+  owner({nonsense: true}); assert.match(resumable(f.state, f.previous).reason, /cannot be identified/);
+  fs.rmSync(lock, {recursive: true});
+  fs.writeFileSync(path.join(f.previous, 'result.json'), '{}'); assert.match(resumable(f.state, f.previous).reason, /already finished/); fs.rmSync(path.join(f.previous, 'result.json'));
+  fs.mkdirSync(path.join(f.previous, 'activation-run')); assert.match(resumable(f.state, f.previous).reason, /never repeated/); fs.rmSync(path.join(f.previous, 'activation-run'), {recursive: true});
+  fs.writeFileSync(path.join(f.state, 'run.lock'), 'held'); assert.match(resumable(f.state, f.previous).reason, /still held by a run/); fs.rmSync(path.join(f.state, 'run.lock'));
+  const partial = await stagedFixture(t, STEPS.slice(0, 3));
+  assert.match(resumable(partial.state, partial.previous).reason, /Copying the files to your ship did not finish/);
+});
+test('resume refuses before writing anything unless the digest is the approved one; a refused resume leaves the earlier run untouched', async t => {
+  const f = await stagedFixture(t), next = path.join(f.root, 'out-2');
+  await assert.rejects(resume({state: f.state, previous: f.previous, output: next, approvedDigest: 'f'.repeat(64)}), /does not match this plan/);
+  await assert.rejects(resume({state: f.state, previous: f.previous, output: f.previous, approvedDigest: f.digest}), /new output/);
+  await assert.rejects(resume({state: f.state, previous: path.join(f.root, 'never'), output: next, approvedDigest: f.digest}), /had not started/);
+  assert.equal(fs.existsSync(next), false); assert.equal(fs.existsSync(path.join(f.previous, 'resumed.json')), false);
+  // With the approved digest it marks the earlier run, releases the dead run's locks and starts the build driver,
+  // which stops at its own first check here (this fixture has no bundle): the stop is recorded, never retried.
+  const lock = path.join(f.pier, '.urb/readymade-operation.lock'); fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({pid: 2 ** 22 + 12345, output: path.join(f.previous, '01-app-graf')}));
+  fs.writeFileSync(path.join(f.pier, '.urb/readymade-install.lock'), 'old-token');
+  const final = await resume({state: f.state, previous: f.previous, output: next, approvedDigest: f.digest});
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.previous, 'resumed.json'), 'utf8')), {schema: 'readymade-local-compilation-resumed-v1', continuedAs: next, releasedOperationLock: true});
+  assert.equal(fs.existsSync(lock), false); assert.notEqual(final.phase, 'activation-prepared');
+  assert.match(resumable(f.state, f.previous).reason, /already continued once/);
+});

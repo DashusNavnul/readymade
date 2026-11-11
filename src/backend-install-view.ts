@@ -4,7 +4,7 @@ import {BackendInstall, BackendInstallError, locateInstaller, type InstallPlan, 
 
 const viewType = 'readymade.backendInstall';
 type Step = 'checking' | 'unavailable' | 'no-ship' | 'consent' | 'working' | 'report';
-interface Presentation {step: Step; ship?: string; busy: boolean; message?: string; report?: InstallReport}
+interface Presentation {step: Step; ship?: string; busy: boolean; message?: string; report?: InstallReport; resumable?: boolean}
 
 /**
  * "Install Pataphor on this ship": consent, then the bundled installer's own progress, in plain words.
@@ -60,7 +60,11 @@ export class BackendInstallView implements vscode.Disposable {
         const report = await this.installer.status(retained);
         if (!current()) return;
         // A plan that was made but never run is not worth showing as history: offer a fresh start.
-        if (report.phase !== 'not-started') {this.plan = retained; this.set({step: 'report', ship: target.ship, busy: false, report}); return;}
+        if (report.phase !== 'not-started') {
+          const resumable = report.phase === 'needs-attention' || report.phase === 'paused' ? (await this.installer.resumable(retained)).resumable : false;
+          if (!current()) return;
+          this.plan = retained; this.set({step: 'report', ship: target.ship, busy: false, report, resumable}); return;
+        }
       } catch { /* an unreadable record falls back to the consent screen */ }
     }
     this.set({step: 'consent', ship: target.ship, busy: false});
@@ -81,6 +85,25 @@ export class BackendInstallView implements vscode.Disposable {
     } catch (error) {
       this.set({step: 'report', ship: target.ship, busy: false, report: this.state.report,
         message: error instanceof BackendInstallError ? error.message : 'The installer could not start. Nothing was sent to your ship.'});
+    }
+  }
+
+  /** Continue a stopped install from its build checks. Only offered when the bundled tool says it can be. */
+  private async resume(): Promise<void> {
+    const installer = this.installer, target = this.target, plan = this.plan;
+    if (!installer || !target || !plan || this.state.busy || this.state.step !== 'report' || !this.state.resumable) return;
+    const live = this.localShip();
+    if (!live || live.ship !== target.ship || live.pier !== target.pier || plan.ship !== target.ship) {
+      this.set({step: 'no-ship', busy: false, message: 'The connected ship changed. Connect it again first.'}); return;
+    }
+    this.set({step: 'working', ship: target.ship, busy: true, report: this.state.report, message: 'Continuing the build checks…'});
+    try {
+      const continued = await installer.resume(plan, report => {if (!this.closed) this.set({step: 'working', ship: target.ship, busy: true, report});});
+      this.plan = continued.plan;
+      this.set({step: 'report', ship: target.ship, busy: false, report: continued.report, resumable: (await installer.resumable(continued.plan)).resumable});
+    } catch (error) {
+      this.set({step: 'report', ship: target.ship, busy: false, report: this.state.report,
+        message: error instanceof BackendInstallError ? error.message : 'The install could not be continued. Nothing was sent to your ship.'});
     }
   }
 
@@ -110,6 +133,7 @@ export class BackendInstallView implements vscode.Disposable {
     if (this.state.busy) return;
     if (row.action === 'install') await this.install();
     else if (row.action === 'activate') await this.activate();
+    else if (row.action === 'resume') await this.resume();
     else if (row.action === 'connect') {if (await this.connect()) await this.refreshFromShip();}
     else if (row.action === 'recheck') await this.refreshFromShip();
   }
@@ -164,6 +188,7 @@ function render(s){
     else if(s.step==='report'&&r.phase!=='running')body.append(el('p','This install did not finish. Nothing was retried.','notice problem'));
     body.append(rows(r));
   }
+  if(s.step==='report'&&s.resumable)body.append(el('p','The files are already on your ship. The build checks can be continued from where they stopped; the ones that already passed finish quickly.','muted'),button('Continue the install','resume',s.busy));
   if(s.step==='report'&&(!s.report||s.report.phase!=='activation-prepared'))body.append(button('Check again','recheck'));
 }
 window.addEventListener('message',e=>render(e.data));

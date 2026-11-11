@@ -97,3 +97,29 @@ test('the real tool runner starts a script with this runtime and delivers whole 
   const result = await runTool(script, ['arg'], line => lines.push(line));
   assert.deepEqual(lines, ['one', 'two', 'arg']); assert.equal(result.code, 3);
 });
+
+test('a stopped install is continued into a new output under the same digest, and the retained record follows it', async t => {
+  const root = workspace(t), calls: string[][] = [];
+  const plan = {ship: target.ship, state: path.join(root, 'installs', 'sampel-1'), output: path.join(root, 'installs', 'sampel-1-compile'), digest, files: 3};
+  fs.mkdirSync(path.join(root, 'installs'), {recursive: true}); fs.writeFileSync(path.join(root, 'installs', 'sampel-palnet.json'), JSON.stringify(plan));
+  const tool: ToolRunner = async (_script, args, onLine) => {
+    calls.push([...args]);
+    if (args[0] === 'resumable') return {code: 0, stdout: JSON.stringify({resumable: true}) + '\n'};
+    if (args[0] === 'resume') {onLine?.(report('running')); onLine?.(report('activation-prepared')); return {code: 0, stdout: ''};}
+    return {code: 0, stdout: report('activation-prepared')};
+  };
+  const install = new BackendInstall({tools: '/t', bundle: '/b'}, root, tool, probes());
+  assert.deepEqual(await install.resumable(plan), {resumable: true});
+  const seen: string[] = [];
+  const continued = await install.resume(plan, r => seen.push(r.phase), 777);
+  assert.deepEqual(seen, ['running', 'activation-prepared']); assert.equal(continued.report.phase, 'activation-prepared');
+  assert.equal(continued.plan.output, plan.state + '-compile-777'); assert.equal(continued.plan.digest, digest);
+  assert.deepEqual(calls[1], ['resume', '--state', plan.state, '--previous', plan.output, '--output', plan.state + '-compile-777', '--approve', digest]);
+  assert.equal((await install.retained(target.ship))?.output, plan.state + '-compile-777');
+  // A refusal from the tool keeps the old record and says so; an unreadable answer is "cannot", never "can".
+  const refusing: ToolRunner = async (_script, args) => args[0] === 'resumable' ? {code: 0, stdout: 'garbage'} : {code: 1, stdout: ''};
+  const other = new BackendInstall({tools: '/t', bundle: '/b'}, root, refusing, probes());
+  assert.equal((await other.resumable(plan)).resumable, false);
+  await assert.rejects(other.resume(continued.plan, () => undefined, 888), BackendInstallError);
+  assert.equal((await other.retained(target.ship))?.output, plan.state + '-compile-777');
+});

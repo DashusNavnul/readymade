@@ -52,7 +52,9 @@ import { PlanetSetupView } from './planet-setup-view';
 import { BackendInstallView } from './backend-install-view';
 import { hostProbes } from './backend-install';
 import { installChoice, loomOf } from './install-choice';
+import { connectionFailureMessage } from './ship-connection';
 import { ShipDoctorView } from './ship-doctor-view';
+import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
 
 type Row = MediaTreeRow;
@@ -241,7 +243,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.registrations.push(vscode.window.onDidCloseTerminal(t => { this.terminals.get(t)?.close(); this.terminals.delete(t); }));
     this.status.text = '$(plug) Connect'; this.status.command = 'readymade.connect'; this.status.show();
     const command = (name: string, handler: (...args: unknown[]) => unknown) => this.registrations.push(vscode.commands.registerCommand('readymade.' + name, async (...args: unknown[]) => {
-      try { return await handler(...args); } catch (error) { if (error instanceof ShipClientError && error.code === 'cancelled') return; void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Readymade operation failed'); throw error; }
+      try { return await handler(...args); } catch (error) { if (error instanceof ShipClientError && error.code === 'cancelled') return; if (await this.recoverSession(error)) return; void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Readymade operation failed'); throw error; }
     }));
     command('home', () => this.home.show());
     command('getUrbit', () => this.planetSetup.show());
@@ -249,6 +251,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('startPlanet', () => this.planetBoot.show());
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
     command('doctor', () => this.doctor.show());
+    command('followBackendUpdates', () => this.followBackendUpdates());
     command('switchShip', async () => {if (await this.media.switchShip() && !this.media.connectedClient) await this.resumeSwitch();});
     command('openSharedProject', link => this.remoteSource.open(typeof link === 'string' ? link : undefined));
     command('resumeSharedProject', id => this.remoteSource.resume(typeof id === 'string' ? id : undefined));
@@ -398,6 +401,62 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (error instanceof ShipClientError && error.code === 'cancelled') return;
       void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Could not connect the ship you switched to.');
     }
+  }
+  /**
+   * Make an installed full backend follow its published source, so updates arrive by themselves. Asks first and
+   * says what following costs; sends one kiln request and then only reads until the ship reports the source.
+   */
+  private async followBackendUpdates(): Promise<void> {
+    const client = this.media.connectedClient;
+    if (!client) throw new Error('Connect the ship first.');
+    const local = await client.backendDeskRead();
+    if (!local) throw new Error('This ship has no full Pataphor install to update. Use Install Pataphor first; the collaboration service updates by itself.');
+    if (local.source?.ship === FULL_SOURCE.ship && local.source.desk === FULL_SOURCE.desk) {
+      void vscode.window.showInformationMessage(`This ship already follows ${FULL_SOURCE.ship} for Pataphor updates.`); return;
+    }
+    const detail = `Your ship will take each update ${FULL_SOURCE.ship} publishes, without being asked again. An update makes the ship rebuild what changed; a large one can keep it busy for several minutes, and it answers nothing while it builds.` +
+      (local.source ? ` It currently follows ${local.source.ship} %${local.source.desk}; that is replaced.` : '');
+    if ((await vscode.window.showWarningMessage('Follow Pataphor updates?', {modal: true, detail}, 'Follow updates')) !== 'Follow updates') return;
+    await client.backendFollow();
+    await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Asking your ship to follow Pataphor updates'}, async () => {
+      for (let n = 0; n < 40; n++) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        if (this.disposed || this.media.connectedClient !== client) throw new Error('Connection changed; read the ship again before asking twice.');
+        const now = await client.backendDeskRead().catch(() => undefined);
+        if (now?.source?.ship === FULL_SOURCE.ship && now.source.desk === FULL_SOURCE.desk) return;
+      }
+      throw new Error('The ship has not reported the new source yet. It may be building; check again later. Nothing is sent twice.');
+    });
+    void vscode.window.showInformationMessage(`This ship now follows ${FULL_SOURCE.ship} for Pataphor updates.`);
+  }
+  private recovering = false;
+  /**
+   * A command failed because the ship no longer knows this window. Two measured causes are repaired without asking
+   * for anything: the session ended (a ship forgets sessions after a restore, and cookies expire), so sign in again
+   * with the code the ship itself or the keychain supplies; or a ship on this computer restarted on another port.
+   * Returns true when the failure was explained here. The failed action is never repeated automatically.
+   */
+  private async recoverSession(error: unknown): Promise<boolean> {
+    const client = this.media.connectedClient;
+    if (!(error instanceof ShipClientError) || !client || this.recovering || this.disposed) return false;
+    this.recovering = true;
+    try {
+      if (error.code === 'authenticationRequired') {
+        try {await client.signIn();} catch {return false;}
+        if (this.client === client) await this.refresh().catch(() => undefined);
+        this.render();
+        void vscode.window.showInformationMessage('Your ship had signed this window out. Signed in again without asking; run the action once more.');
+        return true;
+      }
+      if (error.code === 'transport' && error.detail === 'down') {
+        const moved = await this.media.findMoved();
+        if (!moved || this.disposed) return false;
+        const choice = await vscode.window.showWarningMessage(connectionFailureMessage(client.origin, 'down', moved), 'Reconnect there');
+        if (choice === 'Reconnect there' && !this.disposed) await this.media.switchTo(moved.origin, moved.ship);
+        return true;
+      }
+      return false;
+    } finally {this.recovering = false;}
   }
   private readonly installOffered = new Set<string>();
   /** Once per ship per window: a local ship without Pataphor is offered the install instead of a dead end. */

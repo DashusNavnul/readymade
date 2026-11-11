@@ -34,9 +34,25 @@ export function guestServiceProbe(status: number, json: unknown): 'present' | 'a
   return 'unknown';
 }
 /** The local guest desk as kiln reports it, or null when the ship has none. Malformed reports throw. */
-export function guestServiceDesk(pikes: unknown): {zest: 'live' | 'held' | 'dead'; source: GuestSource | null} | null {
+export function guestServiceDesk(pikes: unknown): {zest: 'live' | 'held' | 'dead'; source: GuestSource | null} | null {return kilnDesk(pikes, GUEST_DESK);}
+/**
+ * The full backend desk a complete install makes on a ship, and where its updates are published.
+ * ~dashus-navnul serves %readymade publicly readable and never runs it there. A ship that follows it gets
+ * each published update by kiln; every update makes the ship rebuild what changed.
+ */
+export const FULL_DESK = 'readymade';
+export const FULL_SOURCE: GuestSource = Object.freeze({ship: '~dashus-navnul', desk: 'readymade'});
+export function fullDesk(pikes: unknown): ReturnType<typeof kilnDesk> {return kilnDesk(pikes, FULL_DESK);}
+/** The one kiln poke that makes the installed full backend follow its published source. */
+export function fullFollowActions(our: string, source: GuestSource = FULL_SOURCE): unknown[] {
+  if (!remoteShip(our) || !remoteShip(source.ship) || !desk(source.desk)) throw Error('Invalid backend update source.');
+  if (source.ship === our) throw Error('A ship cannot follow its own published backend.');
+  return [{id: 1, action: 'poke', ship: our.slice(1), app: 'hood', mark: 'kiln-install', json: {local: FULL_DESK, ship: source.ship, desk: source.desk}}];
+}
+/** One local desk as kiln reports it, or null when the ship has none. Malformed reports throw. */
+export function kilnDesk(pikes: unknown, name: string): {zest: 'live' | 'held' | 'dead'; source: GuestSource | null} | null {
   const all = record(pikes); if (!all) throw Error('Kiln returned an unreadable desk list.');
-  const entry = all[GUEST_DESK]; if (entry === undefined) return null;
+  const entry = all[name]; if (entry === undefined) return null;
   const row = record(entry); if (!row) throw Error('Kiln returned an unreadable desk list.');
   if (!['live', 'held', 'dead'].includes(String(row.zest))) throw Error('Kiln returned an unreadable desk list.');
   let source: GuestSource | null = null;

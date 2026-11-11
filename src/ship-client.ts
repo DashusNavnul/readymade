@@ -19,7 +19,7 @@ import {sessionSharingTarget, sessionSharingCommand, sessionSharingHeaders, sess
   type SessionSharingCommand, type SessionSharingSnapshot, type SessionSharingReceipt} from './session-sharing';
 import {remoteSuggestionIntent, remoteSuggestionBody, remoteSuggestionHeaders, remoteSuggestionReply, remoteSuggestionRefused, remoteSuggestionRecoveryBody, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
-import {GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestDeskReceipt, guestDeskStatus, guestInstallActions, guestRemoveActions,
+import {FULL_SOURCE, GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, fullDesk, fullFollowActions, guestDeskReceipt, guestDeskStatus, guestInstallActions, guestRemoveActions,
   guestServiceDesk, guestServiceProbe, guestServiceState, type GuestDeskStatus, type GuestServiceState, type GuestSource} from './guest-service';
 import { activityBody, activityCommand, activityHeaders, activityReply, activitySelector, type ActivityCommand, type ActivityReply, type ActivitySelector } from './editing-activity';
 import { asRecord, codingSnapshot, isInteger, isUv, isUx, validJSON, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
@@ -603,6 +603,18 @@ export class ShipClient {
    * Only the guest desk is named; a ship that runs the agent from a full backend is not changed by this.
    */
   async guestServiceRemove(): Promise<void> {return this.guestKiln(actor => guestRemoveActions(actor));}
+  /** The installed full backend desk as this ship's kiln reports it (and what it follows), or null when the ship has none. */
+  async backendDeskRead(): Promise<ReturnType<typeof fullDesk>> {
+    if (this.closed) failure('closed');
+    const actor = this.projectViewPeer(), epoch = this.generation;
+    const desks = await this.wire(GUEST_PIKES_PATH, 'GET', undefined, {}, {timeoutMs: 15000}, 2 * 1024 * 1024);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) failure('contextChanged');
+    if ([401, 403].includes(desks.status)) failure('authenticationRequired', desks.status);
+    if (desks.status !== 200) failure('unavailable', desks.status);
+    try {return fullDesk(JSON.parse(desks.data.toString('utf8')));} catch {return failure('malformed');}
+  }
+  /** Asks this ship's own kiln, once, to follow the published backend. Accepted means sent: read the desk again. */
+  async backendFollow(source: GuestSource = FULL_SOURCE): Promise<void> {return this.guestKiln(actor => fullFollowActions(actor, source));}
   private async guestKiln(build: (actor: string) => unknown[]): Promise<void> {
     if (this.closed) failure('closed');
     const actor = this.projectViewPeer();

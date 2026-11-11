@@ -169,6 +169,33 @@ export class BackendInstall {
     return last ?? this.status(plan);
   }
 
+  /** Whether a stopped install can be continued from its build checks, and the plain reason when it cannot. Reads only. */
+  async resumable(plan: InstallPlan): Promise<{resumable: boolean; reason?: string}> {
+    const result = await this.tool(path.join(this.files.tools, 'install-all.cjs'), ['resumable', '--state', plan.state, '--previous', plan.output]);
+    try {
+      const value = JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '') as {resumable?: unknown; reason?: unknown};
+      if (typeof value.resumable !== 'boolean') throw Error();
+      return {resumable: value.resumable, ...(plain(value.reason, 240) ? {reason: value.reason} : {})};
+    } catch {return {resumable: false, reason: 'The install record could not be read.'};}
+  }
+
+  /**
+   * Continue a stopped install's build checks under the same approved plan, into a new output beside the old one.
+   * The retained record then points at the new output. Copying files to the ship is never repeated.
+   */
+  async resume(plan: InstallPlan, onReport: (report: InstallReport) => void, now = Date.now()): Promise<{plan: InstallPlan; report: InstallReport}> {
+    const next: InstallPlan = {...plan, output: `${plan.state}-compile-${now}`};
+    let last: InstallReport | undefined;
+    const started = this.tool(path.join(this.files.tools, 'install-all.cjs'), ['resume', '--state', plan.state, '--previous', plan.output, '--output', next.output, '--approve', plan.digest], line => {
+      const report = parseReport(line); if (report) {last = report; onReport(report);}
+    });
+    const result = await started;
+    // The tool refuses before touching anything when the run cannot be continued: keep the old record then.
+    if (!last && result.code !== 0 && result.code !== 2) throw new BackendInstallError('This install cannot be continued. Start a new install instead.');
+    await writeFile(this.record(plan.ship), JSON.stringify(next), {mode: 0o600});
+    return {plan: next, report: last ?? await this.status(next)};
+  }
+
   /**
    * Switch on an install that finished as activation-prepared. A second, separate approval of the same plan.
    * The bundled tool submits once, then checks that the new apps started and the existing ones are unchanged.

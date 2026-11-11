@@ -4,7 +4,8 @@
 // One consented installation run reported as plain progress events, for a button to drive.
 // This adds no authority and no native request of its own: every write is still made by
 // install-local.cjs and compile-local.cjs under the exact approved plan digest. It never
-// retries, resumes a partial run, or activates anything.
+// retries or activates anything. One thing can be continued after an interruption: the build checks, which
+// only read and build on the staged, inactive desk (see `resume` below). Staging is never replayed.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -165,6 +166,58 @@ async function run({state, output, approvedDigest}, report = () => {}) {
   } finally {clearInterval(timer);}
 }
 
+const alive = pid => {try {process.kill(pid, 0); return true;} catch (error) {return error.code === 'EPERM';}};
+/**
+ * Whether an install whose build checks were cut off (the Mac slept, the app quit, the ship restarted) can be
+ * continued, and if not, why. Reads only. It can when: all six staging steps succeeded and nothing holds them;
+ * the earlier build output has no final result and was never switched on; and no process of that earlier run is
+ * alive. A request that was in flight when the run died may have left the ship's operation lock: it is only
+ * ever released here when its recorded owner is dead AND it belongs to that same build output, because every
+ * request of the build phase reads or builds and changes nothing a second run could double.
+ */
+function resumable(state, previous) {
+  const no = reason => ({resumable: false, reason});
+  if (fs.existsSync(path.join(state, 'run.lock'))) return no('Copying the files to your ship is still held by a run. That part is never repeated; start a new install.');
+  const inspected = inspect(state);
+  if (!inspected) return no('The install record could not be read.');
+  if (inspected.blocked || inspected.nextStep || inspected.steps.length !== STEPS.length ||
+      !inspected.steps.every(row => row.outcome?.status === 'success')) return no('Copying the files to your ship did not finish. That part is never repeated; start a new install.');
+  if (typeof previous !== 'string' || !fs.existsSync(previous)) return no('The build checks had not started.');
+  if (fs.existsSync(path.join(previous, 'result.json'))) return no('The build checks already finished.');
+  if (fs.existsSync(path.join(previous, 'activation-run'))) return no('Switching on was already started; it is never repeated.');
+  if (fs.existsSync(path.join(previous, 'resumed.json'))) return no('This run was already continued once; look at the newer one.');
+  const operation = path.join(inspected.plan.pier, '.urb/readymade-operation.lock'), owner = readJSON(path.join(operation, 'owner.json'));
+  if (fs.existsSync(operation)) {
+    if (!owner || !Number.isSafeInteger(owner.pid) || typeof owner.output !== 'string') return no('An earlier request to your ship is unresolved and cannot be identified.');
+    if (alive(owner.pid)) return no('An earlier request to your ship is still running.');
+    if (!owner.output.startsWith(previous + path.sep)) return no('An unresolved request to your ship belongs to another operation.');
+  }
+  return {resumable: true, digest: inspected.digest, operationLock: fs.existsSync(operation) ? operation : undefined,
+    installLock: path.join(inspected.plan.pier, '.urb/readymade-install.lock')};
+}
+/**
+ * Continue the build checks into a NEW output directory under the same approved plan. The earlier output is
+ * kept as it stopped and marked with where it was continued. Builds that already succeeded are in the ship's
+ * build cache, so they finish quickly the second time. Never called automatically.
+ */
+async function resume({state, previous, output, approvedDigest}, report = () => {}) {
+  need(typeof state === 'string' && typeof previous === 'string' && typeof output === 'string' && output !== previous && /^[0-9a-f]{64}$/.test(approvedDigest ?? ''), 'Resume requires state, the earlier output, a new output and the approved plan digest');
+  const check = resumable(state, previous);
+  need(check.resumable, check.reason ?? 'This install cannot be continued');
+  need(check.digest === approvedDigest, 'Approved digest does not match this plan');
+  need(!fs.existsSync(output), 'The new output already exists');
+  fs.writeFileSync(path.join(previous, 'resumed.json'), JSON.stringify({schema: 'readymade-local-compilation-resumed-v1', continuedAs: output, releasedOperationLock: !!check.operationLock}), {mode: 0o600, flag: 'wx'});
+  if (check.operationLock) {fs.unlinkSync(path.join(check.operationLock, 'owner.json')); fs.rmdirSync(check.operationLock);}
+  if (fs.existsSync(check.installLock)) fs.unlinkSync(check.installLock);
+  let last = '';
+  const emit = () => {const now = status(state, fs.existsSync(output) ? output : undefined), text = JSON.stringify(now); if (text !== last) {last = text; try {report(now);} catch { /* presentation cannot affect the run */ }} return now;};
+  const timer = setInterval(emit, 500);
+  try {
+    try {await compile({state, output, approvedDigest});} catch { /* compile-local recorded stopped.json; status explains it */ }
+    return emit();
+  } finally {clearInterval(timer);}
+}
+
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function child(args, log) {
   return new Promise((resolve, reject) => {
@@ -237,7 +290,14 @@ if (require.main === module) {
       need(Object.keys(options).sort().join(',') === 'approve,output,state', 'Activate requires --state, --output and --approve');
       const final = await activate({state: options.state, output: options.output, approvedDigest: options.approve}, now => console.log(JSON.stringify(now)));
       if (final.phase !== 'activated') process.exitCode = 2;
-    } else throw Error('Use status, run or activate. Create and review the plan with install-local.cjs plan first.');
+    } else if (action === 'resumable') {
+      need(Object.keys(options).sort().join(',') === 'previous,state', 'Resumable requires --state and --previous');
+      const {resumable: ok, reason} = resumable(options.state, options.previous); console.log(JSON.stringify({resumable: ok, ...(reason ? {reason} : {})}));
+    } else if (action === 'resume') {
+      need(Object.keys(options).sort().join(',') === 'approve,output,previous,state', 'Resume requires --state, --previous, --output and --approve');
+      const final = await resume({state: options.state, previous: options.previous, output: options.output, approvedDigest: options.approve}, now => console.log(JSON.stringify(now)));
+      if (final.phase !== 'activation-prepared') process.exitCode = 2;
+    } else throw Error('Use status, run, resumable, resume or activate. Create and review the plan with install-local.cjs plan first.');
   })().catch(error => {console.error(error.message); process.exitCode = 1;});
 }
-module.exports = {run, activate, status, stageProgress, compileProgress, activationProgress, preflightProgress};
+module.exports = {run, resume, resumable, activate, status, stageProgress, compileProgress, activationProgress, preflightProgress};

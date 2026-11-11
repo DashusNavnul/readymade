@@ -170,3 +170,29 @@ test('the client reports why nothing answered: refused port, unknown name, or to
     await assert.rejects(slow.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 150}), (error: unknown) => error instanceof ShipClientError && error.code === 'transport' && error.detail === 'slow');
   } finally {slow.close(); silent.closeAllConnections(); silent.close();}
 });
+
+test('a session the ship dropped is recovered by signing in again on the same client, with no prompt', async () => {
+  let current = 'first', logins = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/~/login') {
+      let body = ''; req.on('data', chunk => {body += chunk;}); req.on('end', () => {
+        if (body !== 'password=code') {res.writeHead(400); res.end(); return;}
+        logins++; current = 'session' + logins; res.writeHead(204, {'set-cookie': [`urbauth-~zod=${current}; Path=/`]}); res.end();
+      }); return;
+    }
+    const signedIn = req.headers.cookie === 'urbauth-~zod=' + current;
+    res.writeHead(signedIn ? 200 : 403, {'content-type': 'application/json'}); res.end(JSON.stringify(signedIn ? {ship: '~zod'} : {}));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  let asked = 0;
+  const client = new ShipClient(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, async () => {asked++; return 'code';});
+  try {
+    await client.signIn();
+    assert.deepEqual(await client.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 2000}), {ship: '~zod'});
+    current = 'forgotten'; // the ship restored from a backup, or the session ended
+    await assert.rejects(client.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 2000}), hasCode('authenticationRequired'));
+    await client.signIn();
+    assert.deepEqual(await client.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 2000}), {ship: '~zod'});
+    assert.equal(logins, 2); assert.equal(asked, 2); assert.equal(client.browserCookies(client.origin)[0]!.value, 'session2');
+  } finally {client.close(); server.closeAllConnections(); server.close();}
+});
