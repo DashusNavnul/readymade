@@ -79,12 +79,18 @@ Shared Project**. See [Join a workspace](docs/JOIN_A_WORKSPACE.md). If a ship is
 slow or will not connect, run **Readymade: Ship Doctor**: it measures the ship
 and the Mac and says what it found, and changes nothing.
 
-What is and is not verified: joining, leaving, rejoining, role changes and the
-automatic install were run between a planet and its moon on one computer. Two
-unrelated operators on separate computers have not yet run this release; treat
-a first session with a new collaborator as that test, and report what happens.
-Ships must be on Kelvin 408. A successful login alone does not establish shared
-coding readiness.
+What is and is not verified: the whole first-timer path was run live with the
+packaged app, the guest typing nothing. A planet hosted; the guests were its own
+moon and then a brand-new comet with no tie to the host, started with the app's
+bundled runtime. Each opened the host's join link in a fresh window with nothing
+connected: the app connected the ship by itself, the ship installed the
+collaboration service from the host over the network, and joined (about 10
+seconds where the service had been installed before, about 90 on the ship that
+never had it). After reopening, the guest left in 2 seconds and rejoined in 4.
+All three ships ran on one Mac: two people on separate computers have not yet
+run this release, so treat a first session with a new collaborator as that test
+and report what happens. Ships must be on Kelvin 408. A successful login alone
+does not establish shared coding readiness.
 
 ## Build and open from source
 

@@ -13,7 +13,20 @@ import {joinProjectLink, type GuestServiceSteps} from '../src/project-invitation
 //   remove-service  remove the collaboration service from the ship (READYMADE_NEWCOMER_SHIP)
 // Modal confirmations cannot be clicked by a test, so a stand-in answers yes and records the exact text shown.
 class Done extends Error {}
+
+/** The whole phase must finish by itself. An app left waiting for a person (a list, a box, a dialog) ends here as a failure, not a hang. */
+const PHASE_LIMIT_MS = Number(process.env.READYMADE_PHASE_LIMIT_MS ?? 120000);
 export async function run(): Promise<void> {
+  let finished = false;
+  const limit = new Promise<void>(resolve => setTimeout(() => {
+    if (finished) return resolve();
+    if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: false, phase: process.env.READYMADE_LOCAL_PHASE ?? process.env.READYMADE_NEWCOMER_PHASE,
+      error: `did not finish by itself in ${PHASE_LIMIT_MS / 1000} s: the app was waiting for a person`}), {mode: 0o600});
+    void vscode.commands.executeCommand('workbench.action.closeQuickOpen').then(() => vscode.commands.executeCommand('workbench.action.closeWindow')); resolve();
+  }, PHASE_LIMIT_MS));
+  await Promise.race([phase().finally(() => {finished = true;}), limit]);
+}
+async function phase(): Promise<void> {
   const record: Record<string, unknown> = {passed: false, fixture: false, phase: process.env.READYMADE_NEWCOMER_PHASE};
   const started = Date.now();
   try {
@@ -26,6 +39,8 @@ export async function run(): Promise<void> {
     const api = await extension.activate();
     const prompts: string[] = [], confirmations: string[] = [];
     const window = vscode.window as unknown as Record<string, unknown>;
+    // In the packaged app this stand-in cannot see the extension's own prompts (separate API objects): there the
+    // guard is the phase limit above, since an app waiting for a person never finishes by itself.
     for (const name of ['showInputBox', 'showQuickPick']) window[name] = async (...args: unknown[]) => {prompts.push(name + ': ' + JSON.stringify((args[1] ?? args[0] ?? {}) as object).slice(0, 80)); return undefined;};
     const views = api.invitations as unknown as {guest: GuestServiceSteps}, real = views.guest;
     views.guest = {...real, confirm: async (detail, title) => {confirmations.push(`${title ?? 'Install the collaboration service?'} | ${detail}`.slice(0, 400)); return true;}};

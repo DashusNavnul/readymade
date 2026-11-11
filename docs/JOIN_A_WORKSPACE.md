@@ -128,9 +128,11 @@ Collaboration Service** uninstalls the desk; it is offered only on a ship that
 has no full backend.
 
 Requirements: your ship on Kelvin 408, able to reach the inviting ship. This
-flow was run between a planet and its moon on one computer (join in about a
-second, automatic install and updates in under a minute). It has not yet been
-run between two unrelated operators; say what happened if you are the first.
+flow was run live with the packaged app: a planet hosted, and both its moon and
+an unrelated, brand-new comet joined from a link with nothing typed (about 90
+seconds on the ship that had never had the service, about 10 afterwards). All
+ran on one Mac; two people on separate computers have not run it yet, so say
+what happened if you are the first.
 
 ## Hosting a project for other people
 

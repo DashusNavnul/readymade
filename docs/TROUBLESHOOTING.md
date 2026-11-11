@@ -58,6 +58,16 @@ refresh label still say planets. The current preview lists every real ship
 running on the Mac. Automated tests do not prove live compatibility with every
 class.
 
+## My ship runs on this Mac but is not in the list
+
+Readymade lists a running ship when its runtime file is named `urbit` or
+starts with `vere` (the names the runtime ships under), the ship is real (not a
+fake), and it answers its own identity check within a few seconds. A runtime
+copied under another name is not recognised (measured: a comet started from a
+renamed copy was invisible until restarted as `urbit`). A busy ship shows as
+"did not answer in time"; refresh the list. You can always connect by web
+address instead, which asks for the login code once.
+
 ## The ship is slow, will not connect, or a build fails
 
 Run **Readymade: Ship Doctor** from the command palette while connected. It
