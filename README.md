@@ -21,7 +21,7 @@ is made for one named ship.
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer) running macOS 12 or later**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.4).
 Quit any older Readymade first. Open the image, drag **Readymade Workspace** to
 **Applications** (choose Replace if asked), then open the app from Applications
 and eject the disk image. Running the download needs no
@@ -122,14 +122,16 @@ connected: the app connected the ship by itself, the ship installed the
 collaboration service from the host over the network, and joined (about 10
 seconds where the service had been installed before, about 90 on the ship that
 never had it). After reopening, the guest left in 2 seconds and rejoined in 4.
-All the ships ran on one Mac: two people on separate computers have not yet
+A role change was run the same way: the owner offered the moon another role, the
+moon accepted the new link, left with **Readymade: Leave Project**, was not
+offered Leave again, and rejoined. All the ships ran on one Mac: two people on separate computers have not yet
 run this release, so treat a first session with a new collaborator as that test
 and report what happens. Ships must be on Kelvin 408. A successful login alone
 does not establish shared coding readiness.
 
 ## Build and open from source
 
-You need Node.js 22 with npm, Python 3.9+, Git, Xcode command-line tools, OpenSSL, zig 0.15.2 exactly, and an Apple Silicon Mac. The first `./package.sh` on a Mac builds the Urbit runtime from source with zig and downloads a boot pill; later runs reuse it. Most people should use the download instead. Python is used by the backend preparation and offline verification tests. See [compatibility](docs/COMPATIBILITY.md) for platform and backend requirements.
+You need Node.js 22 with npm, Python 3.9+, Git, Xcode command-line tools, OpenSSL, zig 0.15.2 exactly, and an Apple Silicon Mac. The first `./package.sh` on a Mac builds the Urbit runtime from source with zig and downloads a boot pill; later runs reuse it. That first build was run here with no prepared runtime and an empty compiler cache: the whole `./package.sh`, tests included, took about four and a half minutes. Most people should use the download instead. Python is used by the backend preparation and offline verification tests. See [compatibility](docs/COMPATIBILITY.md) for platform and backend requirements.
 
 ```sh
 git clone https://github.com/DashusNavnul/readymade.git

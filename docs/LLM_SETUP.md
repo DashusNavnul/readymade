@@ -33,15 +33,15 @@ minutes before treating it as stuck.
 ```sh
 bash -e <<'INSTALL'
 mkdir -p ~/Downloads/readymade && cd ~/Downloads/readymade
-base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.3
-curl -fLO $base/Readymade-0.2.0-alpha.20261111.3-macos-arm64.dmg
+base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.4
+curl -fLO $base/Readymade-0.2.0-alpha.20261111.4-macos-arm64.dmg
 curl -fLO $base/SHA256SUMS.txt
 shasum -a 256 -c SHA256SUMS.txt
 dest=/Applications; [ -w "$dest" ] || { dest="$HOME/Applications"; mkdir -p "$dest"; }
 pkill -TERM -f "Readymade Workspace.app/Contents/Resources/VSCodium.app/Contents/MacOS/[V]SCodium" && sleep 3 || true
 [ ! -e "$dest/Readymade Workspace.app" ] || mv "$dest/Readymade Workspace.app" "replaced-$(date +%Y%m%d-%H%M%S).app"
 hdiutil detach "$PWD/mnt" 2>/dev/null || true
-hdiutil attach Readymade-0.2.0-alpha.20261111.3-macos-arm64.dmg -nobrowse -mountpoint "$PWD/mnt"
+hdiutil attach Readymade-0.2.0-alpha.20261111.4-macos-arm64.dmg -nobrowse -mountpoint "$PWD/mnt"
 cp -R "mnt/Readymade Workspace.app" "$dest/"
 hdiutil detach "$PWD/mnt"
 open "$dest/Readymade Workspace.app"
@@ -133,7 +133,7 @@ Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before select
 
 ## Install the download
 
-Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3)
+Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.4)
 for a tester who wants to run the app. Quit any older Readymade, open the
 `.dmg`, drag Readymade Workspace to Applications (Replace if asked), open it
 there and eject the disk image. The download uses a

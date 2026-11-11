@@ -111,7 +111,7 @@ Activity** in the project view collect what needs you and what happened.
 
 ## Your own apps in Readymade
 
-Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3),
+Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.4),
 quit any older Readymade, drag Readymade Workspace to Applications (Replace if
 asked) and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
