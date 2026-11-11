@@ -199,7 +199,27 @@ async function remoteSourceAcceptance(extensionPath: string) {
     await view.open(link); assert.equal(posts, unknownPosts); await assert.rejects(view.refresh());
     assert.match(JSON.stringify(view.rows()), /Outcome unknown/);
     assert.equal(document.getText(), 'original shared source');
+    const historicalUri = view.rows()[0].children!.find(row => row.command?.command === 'readymade.openSharedSource')!.command!.arguments![0] as string;
+    await view.openFile(historicalUri);
+    const historical = vscode.window.activeTextEditor!.document, historicalText = view.provideTextDocumentContent(historical.uri);
+    const draftBeforeTamper = drafts.get(retained.id), suggestionBeforeTamper = suggestions.get(suggestionRequest);
+    const localBeforeTamper = draftDocument.getText(), dirtyBeforeTamper = draftDocument.isDirty;
+    const alter = new vscode.WorkspaceEdit(); alter.insert(historical.uri, new vscode.Position(0, 0), 'altered evidence ');
+    assert.equal(await vscode.workspace.applyEdit(alter), true);
+    assert.notEqual(historical.getText(), historicalText);
+    await assert.rejects(view.openFile(historicalUri), /Historical evidence buffer changed/);
+    assert.equal(view.provideTextDocumentContent(historical.uri), historicalText);
+    const original = await vscode.workspace.openTextDocument(vscode.Uri.parse(retained.originalUri));
+    const originalBytes = Buffer.from(provider.readFile(original.uri));
+    const alterOriginal = new vscode.WorkspaceEdit(); alterOriginal.insert(original.uri, new vscode.Position(0, 0), 'altered original ');
+    assert.equal(await vscode.workspace.applyEdit(alterOriginal), true);
+    assert.notEqual(original.getText(), originalBytes.toString());
+    await assert.rejects(view.compare(retained.id), /Historical evidence buffer changed/);
+    assert.deepEqual(Buffer.from(provider.readFile(original.uri)), originalBytes);
+    assert.deepEqual(drafts.get(retained.id), draftBeforeTamper); assert.deepEqual(suggestions.get(suggestionRequest), suggestionBeforeTamper);
+    assert.equal(draftDocument.getText(), localBeforeTamper); assert.equal(draftDocument.isDirty, dirtyBeforeTamper);
+    assert.equal(posts, unknownPosts); assert.equal(suggestionPosts, 1);
     current = undefined; await assert.rejects(view.refresh()); assert.ok(view.rows()[0].children!.some(row => row.label.includes('Connection changed')));
-    return {resumeSavedProject: true, resumeFreshRead: true, unknownSuggestionPreservedOnResume: true, dirtyBufferPreservedOnResume: true, independentProjectSwitching: true, correlatedMissingExplicitRefresh: true, uncorrelatedReadNeverRetried: true, explicitConflictReconciliation: true, oldDraftPreserved: true, staleBasisRefused: true, suggestionLostResponseRecovered: true, suggestionPosts, suggestionRecoveries, editableLocalDraft: true, privateDraftRestored: true, originalDiff: true, renderedReadOnlySource: true, immutableOlderRevision: true, noLocalViki: true, peerBoundLink: true, singleSubmission: true, explicitRecovery: true, posts, reads};
+    return {historicalSnapshotReuseRefused: true, originalComparisonReuseRefused: true, extensionAPIBufferImmutability: false, historicalBackingUnchanged: true, resumeSavedProject: true, resumeFreshRead: true, unknownSuggestionPreservedOnResume: true, dirtyBufferPreservedOnResume: true, independentProjectSwitching: true, correlatedMissingExplicitRefresh: true, uncorrelatedReadNeverRetried: true, explicitConflictReconciliation: true, oldDraftPreserved: true, staleBasisRefused: true, suggestionLostResponseRecovered: true, suggestionPosts, suggestionRecoveries, editableLocalDraft: true, privateDraftRestored: true, originalDiff: true, renderedReadOnlySource: true, immutableOlderRevision: true, noLocalViki: true, peerBoundLink: true, singleSubmission: true, explicitRecovery: true, posts, reads};
   } finally {resumeCommand.dispose(); view.dispose(); registrations.forEach(item => item.dispose()); client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
 }

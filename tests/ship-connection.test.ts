@@ -7,6 +7,8 @@ import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions} 
 import {ShipClient, ShipClientError} from '../src/ship-client';
 
 const hasCode = (code: string) => (error: unknown) => error instanceof ShipClientError && error.code === code;
+const shipNames = ['~zod', '~marzod', '~sampel-palnet', '~doznec-sampel-palnet', '~bondyl-libpen-dashus-navnul',
+  ...Array.from({length: 4}, (_, index) => '~' + Array(index + 1).fill('doznec').join('-') + '--bondyl-libpen-dashus-navnul')];
 async function fixture(run: (origin: string, requests: string[], replies: Array<(res: http.ServerResponse) => void>) => Promise<void>) {
   const requests: string[] = [], replies: Array<(res: http.ServerResponse) => void> = [];
   const server = http.createServer((req, res) => {
@@ -102,34 +104,41 @@ test('ambiguous or malformed authenticated identity fails before saving without 
   });
 });
 test('invalid selected identity is refused before reading credentials or constructing a client', async () => {
-  for (const expectedShip of ['~zod\n', '~ZOD', '~foo-', '', null, 123]) {
+  for (const expectedShip of [...shipNames.map(ship => ship + '\n'), '~ZOD', '~foo-', '~doznec--sampel-palnet', '~doznec-bondyl-libpen-dashus-navnul', '', null, 123]) {
     let reads = 0, clients = 0;
     await assert.rejects(authenticateShip('http://127.0.0.1:8080', callbacks({expectedShip: expectedShip as string,
       readCode: async () => {reads++; return 'private';}, onClient: () => {clients++;}})), hasCode('identityUnavailable'));
     assert.equal(reads, 0); assert.equal(clients, 0);
   }
 });
-test('selected planet mismatch closes stored-code and replacement-code logins without saving or reprompting', async () => {
+test('selected ship mismatch at every rank closes stored-code and replacement-code logins without saving or reprompting', async () => {
   await fixture(async (origin, requests, replies) => {
-    for (const remembered of ['stored', undefined]) {
-      replies.push(accepted); let asks = 0, saves = 0, client: ShipClient | undefined;
-      await assert.rejects(authenticateShip(origin, callbacks({expectedShip: '~sampel-palnet', readCode: async () => remembered,
+    for (const [index, expectedShip] of shipNames.entries()) for (const remembered of ['stored', undefined]) {
+      const other = shipNames[(index + 1) % shipNames.length];
+      replies.push(res => {res.writeHead(204, {'Set-Cookie': 'urbauth-' + other + '=session; Path=/; HttpOnly'}); res.end();});
+      let asks = 0, saves = 0, client: ShipClient | undefined;
+      await assert.rejects(authenticateShip(origin, callbacks({expectedShip, readCode: async () => remembered,
         askCode: async () => {asks++; return 'replacement';}, saveCode: async () => {saves++;}, onClient: value => {client = value;}})),
-      error => hasCode('identityUnavailable')(error) && error instanceof Error && error.message.includes('selected planet') && !error.message.includes('replacement'));
+      error => hasCode('identityUnavailable')(error) && error instanceof Error && error.message.includes('selected ship') && !error.message.includes('replacement'));
       assert.equal(asks, remembered ? 0 : 1); assert.equal(saves, 0);
       assert.throws(() => client!.browserCookies(origin), hasCode('closed'));
     }
-    assert.deepEqual(requests, ['stored', 'replacement']);
+    assert.deepEqual(requests, shipNames.flatMap(() => ['stored', 'replacement']));
   });
 });
-test('selected identity is captured across awaits and matching replacement may be saved', async () => {
+test('selected identities of every rank are captured across awaits and matching replacements may be saved', async () => {
   await fixture(async (origin, requests, replies) => {
-    replies.push(accepted, accepted); const saved: string[] = [];
-    const options = callbacks({expectedShip: '~zod', askCode: async () => {options.expectedShip = '~nec'; return 'replacement';}, saveCode: async (_origin, code) => {saved.push(code);}});
-    const client = await authenticateShip(origin, options);
-    try {assert.deepEqual(saved, ['replacement']); assert.equal(client.browserCookies(origin)[0].name, 'urbauth-~zod');}
-    finally {client.close();}
-    const manual = await authenticateShip(origin, callbacks({readCode: async () => 'manual'})); manual.close();
-    assert.deepEqual(requests, ['replacement', 'manual']);
+    for (const expectedShip of shipNames) {
+      const acceptedOwner = (res: http.ServerResponse) => {res.writeHead(204, {'Set-Cookie': 'urbauth-' + expectedShip + '=session; Path=/; HttpOnly'}); res.end();};
+      replies.push(acceptedOwner, acceptedOwner); const saved: string[] = [];
+      const options = callbacks({expectedShip, askCode: async () => {options.expectedShip = '~nec'; return 'replacement';}, saveCode: async (_origin, code) => {saved.push(code);}});
+      const client = await authenticateShip(origin, options);
+      try {assert.deepEqual(saved, ['replacement']); assert.equal(client.browserCookies(origin)[0].name, 'urbauth-' + expectedShip);}
+      finally {client.close();}
+      const manual = await authenticateShip(origin, callbacks({readCode: async () => 'manual'}));
+      try {assert.equal(manual.browserCookies(origin)[0].name, 'urbauth-' + expectedShip);}
+      finally {manual.close();}
+    }
+    assert.deepEqual(requests, shipNames.flatMap(() => ['replacement', 'manual']));
   });
 });

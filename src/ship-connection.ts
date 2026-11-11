@@ -40,7 +40,7 @@ export async function authenticateShip(origin: string, options: ShipAuthenticati
   if (expectedShip !== undefined && (typeof expectedShip !== 'string' || expectedShip.length > 128 ||
       !/^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6}){0,3}(?:--[a-z]{6}(?:-[a-z]{6}){3})?)(?![\s\S])/.test(expectedShip))) {
     const error = new ShipClientError('identityUnavailable');
-    error.message = 'The selected planet could not be identified. Choose it again from Connect.';
+    error.message = 'The selected ship could not be identified. Choose it again from Connect.';
     throw error;
   }
   let replacement: string | undefined;
@@ -78,7 +78,7 @@ export async function authenticateShip(origin: string, options: ShipAuthenticati
     if (error instanceof ShipClientError) {
       if (error.code === 'credentialStorage') error.message = 'Your login could not be saved securely. Check this computer’s credential storage and reconnect.';
       else if (error.code === 'identityUnavailable') error.message = expectedShip !== undefined ?
-        'The selected planet’s connection changed. Choose your planet again from Connect; your login code has not been saved.' :
+        'The selected ship’s connection changed. Choose your ship again from Connect; your login code has not been saved.' :
         'The server did not identify one Urbit. Check that this is your ship’s web address.';
       else if (error.code === 'authenticationRequired') error.message = 'Your ship could not complete sign-in. Check that it opens normally in your browser.';
       else if (['transport', 'timeout'].includes(error.code)) error.message = 'Could not reach your Urbit. Check that its web address opens in your browser.';

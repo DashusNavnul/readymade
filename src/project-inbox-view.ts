@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import {createHash} from 'node:crypto';
 import type {ShipClient} from './ship-client';
+import {sourceSessionChoice} from './session-selection';
 import type {SourceStore, SourceSnapshot} from './source-store';
 import {sameBasis, sourceBasis} from './source-store';
 import type {SourceLoader} from './source-loader';
@@ -107,7 +108,9 @@ export class ProjectInboxView implements vscode.Disposable {
         try {return row.project === c.project && typeof row.id === 'string' && inboxBasisMatches(detail, sourceBasis(row.source), owner);} catch {return false;}
       });
       if (!choices.length) throw new Error('No current owner session matches this suggestion’s source revision. No draft was changed.');
-      const session = choices.length === 1 ? String(choices[0].id) : (await vscode.window.showQuickPick(choices.map(row => ({label: String(row.id)})), {title: 'Import into owner coding session'}))?.label;
+      const choice = choices.length === 1 ? sourceSessionChoice(choices[0]) : await vscode.window.showQuickPick(choices.map(sourceSessionChoice),
+        {title: 'Choose the task for this suggestion', matchOnDescription: true, matchOnDetail: true});
+      const session = choice ? String(choice.session.id) : undefined;
       if (!session || !this.active(c)) return;
       const selected = await c.client.codingState(session), row = selected.sessions.find(row => row.id === session && row.project === c.project);
       if (!row || !this.active(c) || selected.owner !== owner) throw new Error('Owner session changed.');

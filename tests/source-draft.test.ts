@@ -12,6 +12,7 @@ const origin = 'https://files.example';
 const basis = { id: '0xabc', owner: '~zod', desk: 'fixture', number: 1, root: '0v1', commit: '0v2' };
 function state(records: JsonObject[] = []): CodingSnapshot {
   return { nonce: '0v1', cursor: '0x123', session: '0x1', owner: '~zod', ready: true, after: records.length,
+    fileReadReady: {schema: 'native-coding-file-read-ready-v1', owner: '~zod', session: '0x1', available: true, ready: true, reason: 'ready'},
     projects: [], sessions: [{ id: '0x1', source: basis }], records, reviews: [] };
 }
 function page(text: string, start = 1, total = 1, next: number | null = null): JsonObject {

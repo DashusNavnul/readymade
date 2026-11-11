@@ -11,6 +11,12 @@ interface Intent { count: number; request?: string; previous?: Intent }
 export class PagePendingError extends Error {}
 export class PageSizeError extends Error {}
 export class PageCancelledError extends Error {}
+export class PageBusyError extends Error {
+  constructor(readonly reason: string) {
+    super((reason === 'candidate-review-pending' ? 'Finish the pending review before reading another file.' :
+      'This task is still working or unavailable. Wait for it to settle before reading another file.') + ' No new file-read request was sent.');
+  }
+}
 export class PageRefusedError extends Error {
   constructor(readonly reason: string) {super(`The ship refused this file read: ${reason}.`);}
 }
@@ -28,6 +34,17 @@ function refusal(state: CodingSnapshot, file: SourceProgress, request: string | 
   }
   if (reasons.size > 1) throw new Error('Conflicting native file-read refusals.');
   return reasons.values().next().value;
+}
+
+function requireReadReady(state: CodingSnapshot, file: SourceProgress): void {
+  const raw = state.fileReadReady;
+  const view = raw && typeof raw === 'object' && !Array.isArray(raw) ? asRecord(raw) : {};
+  if (view.schema !== 'native-coding-file-read-ready-v1' || view.owner !== file.ship || view.session !== file.session ||
+      view.available !== true || typeof view.ready !== 'boolean' || typeof view.reason !== 'string' ||
+      !/^[a-z][a-z0-9-]{0,127}$/.test(view.reason) || view.ready !== (view.reason === 'ready')) {
+    throw new Error('File-read readiness is unavailable. Update or reconnect the ship backend before starting a new read. No new file-read request was sent.');
+  }
+  if (!view.ready) throw new PageBusyError(view.reason);
 }
 
 /** One explicit page request. A durable pre-send marker prevents replay after a lost reply. */
@@ -82,6 +99,9 @@ export class SourcePager {
         throw new PagePendingError('This page was already requested. Refresh to observe its result; it will not be sent again.');
       }
       if (prior?.count === 1) throw new Error('A single line exceeds the ship’s 16,384-byte page limit.');
+      // Canonical busy state is an observation, not permission or a race-free
+      // admission. Existing uncertain intents above always remain protected.
+      requireReadReady(state, held);
       const intent: Intent = {count: prior ? Math.min(count, Math.max(1, Math.floor(prior.count / 2))) : count, ...(prior ? {previous: prior} : {})};
       await this.journal.update(marker, intent);
       const result = await this.client.codingTool(held.session, held.source.id, `/read ${held.path} ${start} ${intent.count}`);

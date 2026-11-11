@@ -8,7 +8,19 @@ const ui = {EventEmitter: class {event = () => {}; fire(value) {changes.push(val
   FileSystemError: {FileNotFound: () => Error('missing'), NoPermissions: message => Error(message), Unavailable: message => Error(message)}};
 ui.env = {uriScheme: 'readymade'};
 ui.Uri = {parse: uri, from: value => uri(value.scheme + '://' + (value.authority ?? '') + value.path + (value.query ? '?' + value.query : ''))};
-ui.workspace = {registerTextDocumentContentProvider: () => ({dispose() {}}), openTextDocument: async value => value};
+const contentProviders = new Map();
+ui.workspace = {
+  registerTextDocumentContentProvider: (scheme, provider) => {
+    contentProviders.set(scheme, provider);
+    return {dispose() {if (contentProviders.get(scheme) === provider) contentProviders.delete(scheme);}};
+  },
+  openTextDocument: async value => {
+    const provider = contentProviders.get(value.scheme);
+    assert.ok(provider, 'Opening a document requires its registered content provider');
+    const text = await provider.provideTextDocumentContent(value);
+    return {uri: value, getText: () => text, isDirty: false, isClosed: false};
+  },
+};
 ui.window = {showTextDocument: async () => {}}; ui.commands = {executeCommand: async () => {}};
 const original = Module._load; let RemoteDraftProvider, RemoteSourceView, sharedProjectLink, ProjectSharingView;
 try {
@@ -95,9 +107,9 @@ test('shared file links validate exact fields and never fall back to another fil
   assert.equal(sharedProjectLink(projectLink(), 'test.extension').file, undefined);
   for (const file of ['', '/lib/../hoon', '/lib/a/hoon?bad', '/lib/a.js']) assert.throws(() => sharedProjectLink(projectLink(file), 'test.extension'));
   assert.throws(() => sharedProjectLink(uri(projectLink(second.path).toString() + '&file=/lib/other/hoon'), 'test.extension'));
-  await view.open(projectLink(second.path)); assert.equal(posts, 1); assert.equal(view.provideTextDocumentContent(shown), 'second');
+  await view.open(projectLink(second.path)); assert.equal(posts, 1); assert.equal(view.provideTextDocumentContent(shown.uri), 'second');
   shown = undefined; await assert.rejects(view.open(projectLink('/lib/missing/hoon')), /not currently shared/); assert.equal(shown, undefined);
-  await view.open(projectLink()); assert.equal(view.provideTextDocumentContent(shown), observation.files[0].text);
+  await view.open(projectLink()); assert.equal(view.provideTextDocumentContent(shown.uri), observation.files[0].text);
   shown = undefined; status = 'refused'; await view.open(projectLink(second.path)); assert.equal(shown, undefined);
   const count = posts; client.browserCookies = () => [{name: 'urbauth-~wes'}];
   await assert.rejects(view.open(projectLink(second.path)), /for ~nec/); assert.equal(posts, count);
@@ -125,8 +137,7 @@ for (const mode of ['ready', 'revoked', 'missing-file', 'pending', 'changed-peer
   test(`remote activity needs no local coding session and fresh granted source: ${mode}`, async t => {
     const {directory, row, observation} = savedProject(t), store = new RemoteDraftStore(directory);
     let sourceReads = 0, queries = 0, phase = 'ready', moved = false, peer = '~nec', opened = [];
-    t.mock.method(ui.workspace, 'openTextDocument', async value => value);
-    t.mock.method(ui.window, 'showTextDocument', async value => {opened.push(value.toString());});
+    t.mock.method(ui.window, 'showTextDocument', async value => {opened.push(value.uri.toString());});
     const client = {origin: observation.origin, browserCookies: () => [{name: 'urbauth-' + peer}],
       codingState: async () => {throw Error('No local Viki session may be queried');},
       projectViewSubmit: async target => {sourceReads++; return {...target, request: '0x' + sourceReads, status: 'pending'};},

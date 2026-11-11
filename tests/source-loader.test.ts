@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SourceLoader} from '../src/source-loader';
-import {SourcePager, type PageJournal} from '../src/source-pager';
+import {PageBusyError, SourcePager, type PageJournal} from '../src/source-pager';
 import {SourceStore} from '../src/source-store';
 import type {CodingSnapshot, JsonObject} from '../src/protocol';
 
@@ -10,8 +10,9 @@ const path = '/lib/test/hoon';
 function rig() {
   const records: JsonObject[] = [], commands: string[] = [], disk = new Map<string, unknown>();
   let active = true, current = basis;
+  let readiness: unknown = {schema: 'native-coding-file-read-ready-v1', owner: '~zod', session: '0x1', available: true, ready: true, reason: 'ready'};
   const state = (): CodingSnapshot => ({nonce: '0v1', cursor: '0x123', session: '0x1', owner: '~zod', ready: true,
-    after: records.length, projects: [], sessions: [{id: '0x1', project: 'demo', source: current}], records: [...records], reviews: []});
+    fileReadReady: readiness, after: records.length, projects: [], sessions: [{id: '0x1', project: 'demo', source: current}], records: [...records], reviews: []});
   const add = (text: string, start: number, total: number, next: number | null) => {
     const request = `0x${records.length + 100}`, sequence = records.length;
     const value = {path, mark: 'hoon', blob: '0x99', start, total, text, bytes: Buffer.byteLength(text), lines: text.split('\n').length - (text.endsWith('\n') ? 1 : 0), next};
@@ -25,7 +26,7 @@ function rig() {
   const store = new SourceStore(client), pager = new SourcePager(client, store, journal);
   const loader = (wait: () => Promise<void> = async () => {}) => new SourceLoader(store, pager, wait);
   const options = {active: () => active, progress: () => {}};
-  return {client, store, journal, commands, records, add, state, loader, options,
+  return {client, store, journal, commands, records, add, state, loader, options, disk, readiness: (value: unknown) => {readiness = value;},
     cancel: () => {active = false;}, resume: () => {active = true;}, drift: () => {current = {...basis, commit: '0v3'};}};
 }
 
@@ -135,4 +136,42 @@ test('contradictory refusals cannot authorize a smaller page', async () => {
   r.client.codingTool = async (_s, _b, command) => {r.commands.push(command); return rejectRead(r, {}, ['read-page-too-large', 'standing-grant-revoked']);};
   await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), /Conflicting native file-read refusals/);
   assert.equal(r.commands.length, 1);
+});
+
+test('canonical busy state refuses before a page intent or command, including a paused task', async () => {
+  for (const reason of ['turn-still-pending', 'tool-still-pending', 'candidate-review-pending']) {
+    const r = rig(); r.readiness({...r.state().fileReadReady as JsonObject, ready: false, reason});
+    r.client.codingState = async () => ({...r.state(), phase: 'paused'});
+    await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), (e: unknown) => e instanceof PageBusyError && e.reason === reason);
+    assert.equal(r.disk.size, 0); assert.equal(r.commands.length, 0);
+    r.readiness({...r.state().fileReadReady as JsonObject, ready: true, reason: 'ready'});
+    r.client.codingTool = async (_s, _b, command) => {r.commands.push(command); r.add('done\n', 1, 1, null); return r.state();};
+    assert.ok(await r.loader().load('0x1', basis, path, 'demo', r.options)); assert.equal(r.commands.length, 1);
+  }
+});
+
+test('absent, unavailable, contradictory or unbound readiness cannot create a page intent', async () => {
+  const valid = rig().state().fileReadReady as JsonObject;
+  for (const readiness of [undefined, null, [], {...valid, available: false}, {...valid, owner: '~nec'}, {...valid, session: '0x2'},
+    {...valid, schema: 'other'}, {...valid, ready: 'true'}, {...valid, ready: true, reason: 'turn-still-pending'}, {...valid, ready: false, reason: 'ready'}]) {
+    const r = rig(); r.readiness(readiness);
+    await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), /File-read readiness is unavailable/);
+    assert.equal(r.disk.size, 0); assert.equal(r.commands.length, 0);
+  }
+});
+
+test('later idle readiness never authorizes replaying an unknown page', async () => {
+  const r = rig(); await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), /still pending/);
+  const retained = structuredClone([...r.disk]); r.readiness({...r.state().fileReadReady as JsonObject, ready: false, reason: 'turn-still-pending'});
+  await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), /still pending/);
+  r.readiness({...r.state().fileReadReady as JsonObject, ready: true, reason: 'ready'});
+  await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), /still pending/);
+  assert.deepEqual([...r.disk], retained); assert.equal(r.commands.length, 1);
+});
+
+test('completed retained source remains readable when new tools are busy or unavailable', async () => {
+  for (const readiness of [undefined, {schema: 'native-coding-file-read-ready-v1', owner: '~zod', session: '0x1', available: true, ready: false, reason: 'tool-still-pending'}]) {
+    const r = rig(); r.add('already read\n', 1, 1, null); r.readiness(readiness);
+    assert.ok(await r.loader().load('0x1', basis, path, 'demo', r.options)); assert.equal(r.commands.length, 0); assert.equal(r.disk.size, 0);
+  }
 });

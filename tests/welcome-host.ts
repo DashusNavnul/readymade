@@ -41,13 +41,18 @@ export async function run(): Promise<void> {
   assert.deepEqual(await vscode.commands.executeCommand('vscode.getEditorLayout'), layout);
   const config = vscode.workspace.getConfiguration('readymade'), previous = config.inspect<boolean>('callNotifications')?.globalValue;
   await config.update('callNotifications', false, vscode.ConfigurationTarget.Global);
-  const requests: string[] = [];
+  const requests: string[] = []; let invitationService = false, joinDispatches = 0;
   const server = http.createServer((request, response) => {
     requests.push(`${request.method} ${request.url}`);
     if (request.method === 'POST' && request.url === '/~/login') {
       request.resume(); request.on('end', () => {response.writeHead(204, {'Set-Cookie': 'urbauth-~zod=fixture-session-secret; Path=/'}); response.end();}); return;
     }
     assert.equal(request.method, 'GET');
+    if (invitationService && request.url === '/apps/readymade-collab/project-invitation-requests') {
+      assert.equal(request.headers['x-readymade-invitation-offset'], '0');
+      response.writeHead(200, {'Content-Type': 'application/json'});
+      response.end(JSON.stringify({schema: 'readymade-project-invitation-catalog-v1', owner: '~zod', permissionGranted: false, catalog: '0x1', offset: 0, total: 0, next: null, requests: []})); return;
+    }
     if (['/apps/landscape/', '/apps/glurff/', '/apps/noltbook/', '/apps/groups/', '/apps/lattice/app'].includes(request.url!)) {
       response.writeHead(200, {'Content-Type': 'text/html'}); response.end('<!doctype html><title>Fixture app</title>');
     } else {response.writeHead(404, {'Content-Type': 'application/json'}); response.end('{"error":"missing"}');}
@@ -70,7 +75,7 @@ export async function run(): Promise<void> {
     assert.equal(boundary.panel.webview.html.includes('fixture-session-secret'), false); assert.equal(boundary.panel.webview.html.includes('fixture-private-code'), false);
     const before = requests.length;
     await api.setup.show(); assert.equal(panels()[0], firstSetup);
-    for (const action of ['install', 'signup', 'buyout', 'transfer', 'coding']) await boundary.receive(boundary.panel, {action});
+    for (const action of ['install', 'signup', 'buyout', 'transfer', 'coding', 'join']) await boundary.receive(boundary.panel, {action});
     await boundary.receive(boundary.panel, {action: 'groups', extra: 'forbidden'});
     assert.equal(requests.length, before); assert.equal(requests.filter(row => row.startsWith('POST ')).length, 1);
     assert.equal(document.getText(), original); assert.equal(document.isDirty, dirty);
@@ -78,9 +83,32 @@ export async function run(): Promise<void> {
     assert.equal(api.media.connectedClient, client);
     assert.equal(await vscode.window.tabGroups.close(firstSetup!), true);
     await until(() => panels().length === 0); assert.equal(api.setup.state.origin, undefined);
+    invitationService = true;
+    await api.setup.show(client); await until(() => !api.setup.state.checking && !!api.setup.state.report);
+    assert.equal(api.setup.state.report!.checks.find(row => row.name === 'Project invitations')!.status, 'observed');
+    assert.equal(api.setup.state.report!.owner, undefined); assert.equal(api.client, undefined);
+    assert.match(boundary.panel.webview.html, /<button data-action="join">Join a workspace<\/button>/);
+    assert.match(boundary.panel.webview.html, /do not need a local coding worker/);
+    const originalJoin = api.invitations.join;
+    api.invitations.join = async () => {joinDispatches++;};
+    try {
+      const beforeJoin = requests.length;
+      await boundary.receive(boundary.panel, {action: 'join', extra: 'forbidden'});
+      await boundary.receive(boundary.panel, {action: 'coding'});
+      assert.equal(joinDispatches, 0);
+      await boundary.receive(boundary.panel, {action: 'join'});
+      assert.equal(joinDispatches, 1, 'Setup dispatches the existing invitation flow without local coding');
+      assert.equal(requests.length, beforeJoin, 'The host test traps joining before prompting or sending a command');
+    } finally {api.invitations.join = originalJoin;}
+    assert.equal(document.getText(), original); assert.equal(document.isDirty, dirty);
+    assert.deepEqual(await vscode.commands.executeCommand('vscode.getEditorLayout'), layout);
+    assert.equal(api.media.connectedClient, client);
+    assert.equal(requests.filter(row => row.startsWith('POST ')).length, 1);
+    assert.equal(await vscode.window.tabGroups.close(panels()[0]!), true);
+    await until(() => panels().length === 0);
   } finally {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await config.update('callNotifications', previous, vscode.ConfigurationTarget.Global);
   }
-  if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: true, installedExtension: extension.extensionPath, actualHomeCommand: true, singleton: true, reopen: true, dirtyEditorPreserved: true, layoutPreserved: true, startupDoesNotStealExistingEditor: true, noAutomaticConnection: true, appOnlyConnectionRetained: true, missingCodingDoesNotLogout: true, unsupportedActionsRefused: true, fixture: true, nativeCalls: 0, buttonDispatchTested: false, serializedRestartTested: false}), {flag: 'wx', mode: 0o600});
+  if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: true, installedExtension: extension.extensionPath, actualHomeCommand: true, singleton: true, reopen: true, dirtyEditorPreserved: true, layoutPreserved: true, startupDoesNotStealExistingEditor: true, noAutomaticConnection: true, appOnlyConnectionRetained: true, missingCodingDoesNotLogout: true, unsupportedActionsRefused: true, guestJoinWithoutLocalCoding: true, joinDispatches, joinSubmissionTrapped: true, fixture: true, nativeCalls: 0, buttonDispatchTested: false, serializedRestartTested: false}), {flag: 'wx', mode: 0o600});
 }

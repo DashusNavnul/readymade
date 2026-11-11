@@ -1,4 +1,20 @@
-import {asRecord, isUx, type CodingSnapshot} from './protocol';
+import {asRecord, isUx, type CodingSnapshot, type JsonObject} from './protocol';
+
+const taskStatuses = new Map([
+  ['idle', 'Idle'], ['ready', 'Ready'], ['inference', 'AI working'], ['tools', 'Tool running'],
+  ['judgment', 'Awaiting review'], ['paused', 'Paused'], ['unknown', 'Outcome unknown'],
+  ['complete', 'Complete'], ['refused', 'Refused']
+]);
+
+/** Task names aid selection; only the retained row's exact id selects a session. */
+export function sourceSessionChoice(session: JsonObject) {
+  const objective = typeof session.objective === 'string' ? session.objective.trim().replace(/\s+/g, ' ') : '';
+  const source = session.source && typeof session.source === 'object' && !Array.isArray(session.source) ? asRecord(session.source) : {};
+  const revision = typeof source.desk === 'string' && Number.isSafeInteger(source.number) ? `${source.desk} · revision ${source.number}` : '';
+  return {label: Array.from(objective).slice(0, 120).join('') || 'Untitled task',
+    description: [taskStatuses.get(String(session.phase)) ?? 'Status unavailable', session.project, revision].filter(Boolean).join(' · '),
+    detail: `Session ${session.id}`, session};
+}
 
 export const sessionSelectionKey = (origin: string, ship: string): string =>
   'readymade.session:' + JSON.stringify([origin, ship]);

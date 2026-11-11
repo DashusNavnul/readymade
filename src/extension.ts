@@ -14,7 +14,7 @@ import { EditingActivityView } from './editing-activity-view';
 import { existsSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
 import { ShipClient, ShipClientError } from './ship-client';
-import { restoredSession, sessionSelection, sessionSelectionKey, projectSessionSelectionKey } from './session-selection';
+import { restoredSession, sessionSelection, sessionSelectionKey, projectSessionSelectionKey, sourceSessionChoice } from './session-selection';
 import { JsonObject, asRecord } from './protocol';
 import { SourceStore, SourceDescriptor, sourceBasis, sameBasis, validPath, type SourceBasis } from './source-store';
 import { DirectoryView } from './directory-view';
@@ -280,6 +280,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       return this.media.connectedClient;
     }, async action => {
       if (action === 'coding') return this.connect(this.media.connectedClient?.origin);
+      if (action === 'join') return this.invitations.join();
       if (action === 'guide') return vscode.env.openExternal(vscode.Uri.parse('https://github.com/DashusNavnul/readymade/blob/main/docs/LLM_SETUP.md'));
       if (action === 'newWindow') return vscode.commands.executeCommand('workbench.action.newWindow');
       return this.media.open(action);
@@ -333,11 +334,11 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('grantProjectAccess', () => this.projectSharing.change());
     command('revokeProjectAccess', () => this.projectSharing.change(true));
     command('recoverProjectAccess', request => this.projectSharing.recover(String(request)));
-    command('reviewAnswer', session => this.answerReview.observe(typeof session === 'string' ? session : undefined));
     command('shareSession', session => this.projectSharing.sessionSharing('share', typeof session === 'string' ? session : undefined));
     command('unshareSession', session => this.projectSharing.sessionSharing('unshare', typeof session === 'string' ? session : undefined));
     command('removeCollaborator', () => this.projectSharing.removeCollaborator());
     command('projectSessionSharing', setting => this.projectSharing.projectSessionSharing(setting !== 'off'));
+    command('reviewAnswer', session => this.answerReview.observe(typeof session === 'string' ? session : undefined));
     command('acceptAnswer', () => this.answerReview.accept());
     command('recoverAnswer', proposal => this.answerReview.recover(String(proposal)));
     command('readNextPage', key => this.readNextPage(typeof key === 'string' ? key : undefined));
@@ -565,9 +566,9 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     await this.activity.contextChanged();
     const state = await client.codingState();
     if (!current()) return;
-    const choices = state.sessions.filter(s => (!this.selectedProject || s.project === this.selectedProject) && typeof s.id === 'string' && s.source && typeof s.source === 'object').map(s => ({ label: String(s.id), description: String(s.project ?? ''), session: s }));
+    const choices = state.sessions.filter(s => (!this.selectedProject || s.project === this.selectedProject) && typeof s.id === 'string' && s.source && typeof s.source === 'object').map(sourceSessionChoice);
     if (!choices.length) { void vscode.window.showInformationMessage('This project has no coding session yet.'); return; }
-    const selected = requestedSession ? choices.find(s => s.label === requestedSession) : await vscode.window.showQuickPick(choices, { title: 'Choose a ship coding session for the explicit file read' });
+    const selected = requestedSession ? choices.find(s => s.session.id === requestedSession) : await vscode.window.showQuickPick(choices, { title: 'Choose the task for this file read', matchOnDescription: true, matchOnDetail: true });
     if (!selected) { if (requestedSession) throw new Error('File session is outside the selected project.'); return; }
     await this.activity.contextChanged();
     const session = String(selected.session.id); const fresh = await client.codingState(session);

@@ -103,9 +103,9 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if ((retainedOrigin || link.file) && this.state !== 'Read-only shared files') return;
     if (link.file) {
       if (!source || !client || !activeLink || this.observation !== source || !this.sameTarget(activeLink, link) || !this.valid(client, activeLink) || !source.files.some(file => file.path === link.file)) throw new Error('The requested file is not currently shared.');
-      const document = await vscode.workspace.openTextDocument(this.uri(source, link.file));
-      if (!this.valid(client, activeLink) || this.observation !== source) throw new Error('Shared project connection changed.');
-      await vscode.window.showTextDocument(document, {preview: false});
+      await this.showHistorical(this.uri(source, link.file), () => {
+        if (!this.valid(client, activeLink) || this.observation !== source) throw new Error('Shared project connection changed.');
+      });
     } else await this.revealFirst();
   }
   private async revealFirst(): Promise<void> {
@@ -173,10 +173,20 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (this.closed || uri.scheme !== scheme || text === undefined) throw vscode.FileSystemError.FileNotFound(uri);
     return text;
   }
+  private verifyHistorical(document: vscode.TextDocument, expected: string, guard: () => void): void {
+    guard();
+    if (this.closed || document.getText() !== expected) throw new Error('Historical evidence buffer changed. Reopen a new window to inspect the retained evidence.');
+  }
+  private async showHistorical(uri: vscode.Uri, guard: () => void = () => {}): Promise<void> {
+    guard(); const expected = this.provideTextDocumentContent(uri);
+    const document = await vscode.workspace.openTextDocument(uri);
+    this.verifyHistorical(document, expected, guard);
+    await vscode.window.showTextDocument(document, {preview: false});
+    this.verifyHistorical(document, expected, guard);
+  }
   async openFile(value: unknown): Promise<void> {
     if (typeof value !== 'string') throw new Error('Choose a shared file.');
-    const uri = vscode.Uri.parse(value, true); this.provideTextDocumentContent(uri);
-    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), {preview: false});
+    await this.showHistorical(vscode.Uri.parse(value, true));
   }
   async editDraft(path?: string): Promise<void> {
     const source = this.observation;
@@ -200,9 +210,18 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.parse(draft.uri)), {preview: false});
   }
   async compare(id?: string): Promise<void> {
-    const draft = this.selectedDraft(id);
-    await vscode.commands.executeCommand('vscode.diff', vscode.Uri.parse(draft.originalUri), vscode.Uri.parse(draft.uri),
+    const draft = this.selectedDraft(id), client = this.current();
+    const expected = draft.observation.files.find(file => file.path === draft.path)!.text;
+    const guard = () => {
+      if (this.closed || this.current() !== client) throw new Error('Shared project connection changed.');
+      this.selectedDraft(draft.id);
+    };
+    guard();
+    const original = await vscode.workspace.openTextDocument(vscode.Uri.parse(draft.originalUri));
+    this.verifyHistorical(original, expected, guard);
+    await vscode.commands.executeCommand('vscode.diff', original.uri, vscode.Uri.parse(draft.uri),
       draft.path + ' · Observed source ↔ local draft', {preview: false});
+    this.verifyHistorical(original, expected, guard);
   }
   async reconcile(id?: string): Promise<void> {
     const draft = this.selectedDraft(id), client = this.current(), link = this.link;
@@ -309,9 +328,9 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     const fresh = this.activityContext();
     if (fresh.client !== activity.client || fresh.link !== activity.link || fresh.source === activity.source || fresh.source.desk !== row.desk || !fresh.source.files.some(file => file.path === row.path))
       throw new Error('This file is not in the fresh owner-granted source. No historical file was opened.');
-    const document = await vscode.workspace.openTextDocument(this.uri(fresh.source, row.path));
-    if (!this.currentActivity(fresh)) throw new Error('Shared project changed before opening the file.');
-    await vscode.window.showTextDocument(document, {preview: false});
+    await this.showHistorical(this.uri(fresh.source, row.path), () => {
+      if (!this.currentActivity(fresh)) throw new Error('Shared project changed before opening the file.');
+    });
   }
   private sessionLinks(client: ShipClient | undefined, peer: string | undefined): SharedProjectLink[] {
     const links = new Map<string, SharedProjectLink>();

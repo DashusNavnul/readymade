@@ -27,6 +27,18 @@ export async function run(): Promise<void> {
     const origin = process.env.READYMADE_LIVE_ORIGIN, owner = process.env.READYMADE_EXPECTED_SHIP;
     assert.ok(origin && owner && evidence);
     assert.equal(new URL(origin).origin, origin);
+    // Explicit test-only access to an existing same-port loopback credential.
+    // Native discovery below must establish the selected ship before it is read.
+    // Product credential lookup remains exact-origin; no cache entry is written.
+    const credentialOrigin = process.env.READYMADE_TEST_CREDENTIAL_ORIGIN ?? origin;
+    if (credentialOrigin !== origin) {
+      const target = new URL(origin), credential = new URL(credentialOrigin);
+      const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
+      assert.equal(credential.origin, credentialOrigin);
+      assert.equal(target.protocol, 'http:'); assert.equal(credential.protocol, target.protocol);
+      assert.ok(loopback.has(target.hostname) && loopback.has(credential.hostname));
+      assert.equal(credential.port, target.port);
+    }
     assert.match(owner, /^~[a-z-]{3,128}(?![\s\S])/);
     const extension = vscode.extensions.getExtension<ReadymadeWorkspace>('pataphor.readymade-ship-workspace');
     assert.ok(extension);
@@ -51,7 +63,7 @@ export async function run(): Promise<void> {
     let retainedCode: string | undefined;
     const connecting = api.media.connectClient(undefined, async address => {
       assert.equal(address, origin);
-      retainedCode = await readSavedCode(address);
+      retainedCode = await readSavedCode(credentialOrigin);
       if (!retainedCode) throw Error('Private saved credentials are unavailable.');
       return retainedCode;
     });
@@ -105,6 +117,7 @@ export async function run(): Promise<void> {
     assert.equal(api.media.controller!.state().length, 0);
     writeFileSync(evidence, JSON.stringify({passed: true, fixture: false, actualExistingShipLogin: true, owner, origin,
       actualPlanetPicker: true, selectionVerified: true, noTypedOrigin: true, discoveryStatus: api.media.localDiscoveryStatus,
+      testCredentialOrigin: credentialOrigin, productCredentialAliasing: false,
       landscapeOpened: true, landscapeNativeBindingReady: true, landscapeDOMVerified: false, appOnlyConnection: true,
       noShipInstallation: true, noCodingOrModelExecution: true, callNotificationsDisabled: true,
       onlyCreatedTabClosed: true, secretValuesExcluded: true, checks: report.checks}), {flag: 'wx', mode: 0o600});
