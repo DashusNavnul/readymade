@@ -29,7 +29,7 @@ function scan(directory, prefix) {
     if (entry.isDirectory()) scan(file, relative); else add(file, relative);
   }
 }
-for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); scan(path.join(root, 'packaging'), 'packaging'); scan(path.join(root, 'backend/install'), 'backend/install'); for (const file of ['backend/assembly-manifest.json', 'backend/prepare.py', 'backend/application/source.tar.gz']) add(path.join(root, file), file); console.log(digest.digest('hex'));
+for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); scan(path.join(root, 'packaging'), 'packaging'); scan(path.join(root, 'backend/install'), 'backend/install'); for (const file of ['backend/assembly-manifest.json', 'backend/prepare.py', 'backend/application/source.tar.gz']) add(path.join(root, file), file); scan(path.join(root, 'runtime'), 'runtime'); console.log(digest.digest('hex'));
 FINGERPRINT
 }
 cleanup() {
@@ -45,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail 'This package is for Apple Silicon macOS.'
-for tool in node npm python3 xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+for tool in node npm python3 git xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
 [[ ! -e "$app_path" && ! -L "$app_path" && ! -e "$receipt_path" && ! -L "$receipt_path" ]] || fail 'The preview app or receipt already exists; it will not be replaced.'
 for cache_parent in "$HOME/.cache" "$HOME/.cache/readymade" "$cache_dir"; do
   [[ ! -L "$cache_parent" ]] || fail 'A package-cache parent is a symlink.'
@@ -132,6 +132,44 @@ backend_stage="$(mktemp -d "${TMPDIR:-/tmp}/readymade-backend.XXXXXX")"
 python3 "$workspace_dir/backend/prepare.py" --output "$backend_stage/prepared" > "$stage/backend-prepare.log" 2>&1 || { tail -n 12 "$stage/backend-prepare.log" >&2; fail 'Backend bundle preparation failed.'; }
 [[ -f "$backend_stage/prepared/prepared.json" && -d "$backend_stage/prepared/package/desk" && -f "$backend_stage/prepared/package/assembly.json" ]] || fail 'Prepared backend bundle is incomplete.'
 ditto "$backend_stage/prepared/package" "$extension/backend/package"
+# The Urbit runtime the backend needs (bounded evaluation) and the pinned Kelvin-408 boot pill travel
+# inside the app too, so starting a planet downloads and builds nothing on the user's machine.
+# The runtime is built from the pinned public source plus runtime/readymade-vere.patch and must pass
+# the bounded-evaluation proof; a finished build is reused while runtime/ is unchanged.
+runtime_key="$(cd "$workspace_dir/runtime" && cat source-manifest.json readymade-vere.patch bounded-evaluation-proof.hoon | shasum -a 256 | awk '{print $1}')"
+runtime_cache="$HOME/.cache/readymade/runtime/$runtime_key"
+runtime_proof='[%native-coding-bounded-evaluation-proof-v1 %.y]'
+# The proof prints its result inside terminal colour codes, so look for the line rather than compare it
+# whole; require a clean exit; and on failure show what the runtime actually printed.
+prove_runtime() {
+  local binary="$1" label="$2" log="$stage/runtime-proof-$2.log"
+  if "$binary" eval < "$workspace_dir/runtime/bounded-evaluation-proof.hoon" > "$log" 2>&1 && grep -qF -- "$runtime_proof" "$log"; then return 0; fi
+  printf 'Runtime proof output (%s):\n' "$label" >&2; tail -n 8 "$log" | LC_ALL=C tr -cd '\11\12\40-\176' >&2
+  return 1
+}
+if [[ ! -f "$runtime_cache/urbit" || ! -f "$runtime_cache/proved" ]]; then
+  command -v zig >/dev/null || fail 'Missing tool: zig 0.15.2 (needed once to build the Urbit runtime).'
+  [[ "$(zig version)" == 0.15.2 ]] || fail 'The Urbit runtime is qualified with zig 0.15.2.'
+  python3 "$workspace_dir/runtime/prepare.py" --output "$backend_stage/runtime" > "$stage/runtime-prepare.log" 2>&1 || { tail -n 12 "$stage/runtime-prepare.log" >&2; fail 'Runtime source preparation failed.'; }
+  (cd "$backend_stage/runtime/source" && zig build -j2 -Doptimize=ReleaseFast) > "$stage/runtime-build.log" 2>&1 || { tail -n 20 "$stage/runtime-build.log" >&2; fail 'Runtime build failed.'; }
+  built="$backend_stage/runtime/source/zig-out/aarch64-macos-none/urbit"
+  [[ -f "$built" && -x "$built" ]] || fail 'The built runtime is missing.'
+  prove_runtime "$built" built || fail 'The built runtime failed the bounded-evaluation proof.'
+  mkdir -p "$runtime_cache"; chmod 700 "$HOME/.cache/readymade/runtime" "$runtime_cache"
+  cp "$built" "$runtime_cache/urbit.partial" && mv "$runtime_cache/urbit.partial" "$runtime_cache/urbit" && : > "$runtime_cache/proved"
+fi
+pill_sha='b4babd14e9f1acbdb421b3c31c215ee637ad6691b7e382b99c6fd8991e623708'
+pill_url='https://media.githubusercontent.com/media/urbit/urbit/0a9a312e133891937de9c4df1ebecad5cf669c7c/bin/brass.pill'
+pill_cache="$HOME/.cache/readymade/pills/$pill_sha.pill"
+if [[ ! -f "$pill_cache" || "$(shasum -a 256 "$pill_cache" | awk '{print $1}')" != "$pill_sha" ]]; then
+  mkdir -p "$(dirname "$pill_cache")"
+  curl --fail --location --silent --show-error --max-time 600 --output "$pill_cache.partial" "$pill_url" || fail 'The boot pill could not be downloaded.'
+  [[ "$(shasum -a 256 "$pill_cache.partial" | awk '{print $1}')" == "$pill_sha" ]] || { rm -f -- "$pill_cache.partial"; fail 'The downloaded boot pill does not match its pinned hash.'; }
+  mv "$pill_cache.partial" "$pill_cache"
+fi
+mkdir "$extension/backend/runtime"
+cp "$runtime_cache/urbit" "$extension/backend/runtime/urbit"; chmod 755 "$extension/backend/runtime/urbit"
+cp "$pill_cache" "$extension/backend/runtime/brass.pill"; chmod 644 "$extension/backend/runtime/brass.pill"
 kernel_app="$inner_app/Contents/Resources/app"
 node "$workspace_dir/platform/browser-reveal.cjs" "$kernel_app"
 node "$workspace_dir/platform/task-terminal.cjs" "$kernel_app"
@@ -322,6 +360,11 @@ set_media_descriptions "$plist"
 cp "$inner_app/Contents/Resources/VSCodium.icns" "$staged_app/Contents/Resources/VSCodium.icns"
 # CFBundleName, package productName and helper lookup names agree; framework/main executable stay upstream.
 {
+  # Sign the nested runtime first, prove the signed file still works, and record the hash that ships.
+  sign_target org.pataphor.codeoss.workspace.urbit "$extension/backend/runtime/urbit"
+  prove_runtime "$extension/backend/runtime/urbit" signed || fail 'The signed runtime failed the bounded-evaluation proof.'
+  printf '{"runtimeSHA256":"%s","pillSHA256":"%s","runtimeSource":"%s","proof":"bounded-evaluation-proof.hoon passed after signing"}\n' \
+    "$(shasum -a 256 "$extension/backend/runtime/urbit" | awk '{print $1}')" "$pill_sha" "$runtime_key" > "$extension/backend/runtime/runtime.json"
   sign_target com.vscodium "$inner_app" --entitlements "$stage/electron-entitlements.plist"
   codesign --verify --deep --strict "$inner_app"
   sign_target org.pataphor.codeoss.workspace.cli "$staged_app/Contents/MacOS/ReadymadeCLI"
