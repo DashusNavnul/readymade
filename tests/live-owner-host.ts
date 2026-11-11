@@ -9,7 +9,7 @@ import {LiveFailure, LiveTimeout, acceptQuickInput, copied, errorInfo, invitatio
   readHandoff, seen, sleep, within, type LiveContext} from './live-ship-support';
 
 // Live acceptance on the OWNER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
-// invite | share | revoke | members | share-session | unshare-session | remove. Every write is the product
+// invite | share | revoke | members | share-session | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
 // screen's own single submission; an unknown outcome is recorded and fails the phase, and nothing is sent twice.
 
 /** What an owner does first: connect coding to the ship already signed in, then choose the project. Reads only. */
@@ -158,7 +158,7 @@ async function standing(c: LiveContext, peer: string, step: string): Promise<Ses
  * journal for these, so the receipt records how the screen settled it and then the standing a fresh read shows.
  * `maySend` is false only while it is certain that nothing left this computer.
  */
-async function sessionCommand(c: LiveContext, peer: string, operation: 'share' | 'unshare' | 'remove', act: () => Promise<void>, maySend: () => boolean = () => true): Promise<SessionSharingSnapshot> {
+async function sessionCommand(c: LiveContext, peer: string, operation: SessionSharingCommand['operation'], act: () => Promise<void>, maySend: () => boolean = () => true): Promise<SessionSharingSnapshot> {
   let failed: unknown, after: SessionSharingSnapshot | undefined;
   try {await c.timed(operation + '-submit', act, 90000);} catch (error) {failed = error;}
   const last = internals(c).sessions?.last, outcome = last?.command.operation === operation && last.command.peer === peer ? last.outcome : undefined;
@@ -193,6 +193,29 @@ async function sessionChange(c: LiveContext, operation: 'share' | 'unshare'): Pr
   if (after.sessions.find(row => row.id === session)?.shared !== shared) throw new LiveFailure(shared ? 'session-not-shared' : 'session-still-shared');
 }
 
+async function projectSetting(c: LiveContext): Promise<void> {
+  const peer = needShip('READYMADE_PEER_SHIP'), setting = need('READYMADE_SETTING'), project = await ownProject(c);
+  if (setting !== 'on' && setting !== 'off') throw new LiveFailure('invalid-READYMADE_SETTING');
+  c.record.peer = peer; c.record.setting = setting;
+  const before = await standing(c, peer, 'sharing-before');
+  c.record.sharedBefore = before.sessions.filter(row => row.shared).map(row => row.id);
+  if (before.sessionSharing === setting) throw new LiveFailure('requested-state-already-holds');
+  const offered = (c.api.projectSharing.rows()[0].children ?? []).some(item => item.children?.some(action => action.command?.command === 'readymade.projectSessionSharing' && action.command.arguments?.[0] === setting));
+  c.record.offeredInTree = offered;
+  if (!offered) throw new LiveFailure('project-sharing-not-offered');
+  // Scripted stand-in for the modal dialog: Confirm only to text naming the project and the policy change.
+  let accepted = false, confirmations = 0;
+  internals(c).confirm = async detail => {
+    confirmations++; accepted = confirmations === 1 && detail.includes(project) && detail.includes('inspect') && (setting === 'on' ? /Allow agent sessions/.test(detail) : /Stop all session sharing/.test(detail));
+    Object.assign(c.record, {scriptedConfirmation: true, confirmations, confirmationOffered: detail.slice(0, 600), confirmationTextVerified: accepted});
+    return accepted;
+  };
+  const after = await sessionCommand(c, peer, setting === 'on' ? 'sharing-on' : 'sharing-off', () => c.api.projectSharing.projectSessionSharing(setting === 'on'), () => accepted);
+  c.record.sharedAfter = after.sessions.filter(row => row.shared).map(row => row.id);
+  if (after.sessionSharing !== setting) throw new LiveFailure('project-setting-not-changed');
+  if (setting === 'off' && (after.inspectable || after.sessions.some(row => row.shared))) throw new LiveFailure('sharing-still-live-after-off');
+}
+
 async function remove(c: LiveContext): Promise<void> {
   const peer = needShip('READYMADE_PEER_SHIP'), project = await ownProject(c); c.record.peer = peer;
   await standing(c, peer, 'sharing-before');
@@ -212,5 +235,5 @@ async function remove(c: LiveContext): Promise<void> {
 }
 
 export function run(): Promise<void> {
-  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'unshare-session': c => sessionChange(c, 'unshare'), remove});
+  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
 }

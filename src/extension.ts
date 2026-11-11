@@ -337,6 +337,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('shareSession', session => this.projectSharing.sessionSharing('share', typeof session === 'string' ? session : undefined));
     command('unshareSession', session => this.projectSharing.sessionSharing('unshare', typeof session === 'string' ? session : undefined));
     command('removeCollaborator', () => this.projectSharing.removeCollaborator());
+    command('projectSessionSharing', setting => this.projectSharing.projectSessionSharing(setting !== 'off'));
     command('acceptAnswer', () => this.answerReview.accept());
     command('recoverAnswer', proposal => this.answerReview.recover(String(proposal)));
     command('readNextPage', key => this.readNextPage(typeof key === 'string' ? key : undefined));

@@ -13,7 +13,7 @@ const share: SessionSharingCommand = {...target, operation: 'share', session: id
 const remove: SessionSharingCommand = {...target, operation: 'remove', session: '0x0'};
 const row = (session = id, shared = false, patch: object = {}) => ({id: session, phase: 'judgment', desk: 'pataphor-native-work', revision: '1', shared, inspection: shared ? '0x595.9100' : null, ...patch});
 const state = (sessions: unknown[] = [row()], patch: object = {}) => ({schema: 'readymade-session-sharing-v1', ...target, observedAt: '~2026.11.11..05.00.01..8000',
-  member: true, role: 'contributor', inspectable: true, viewGrant: 'none', truncated: false, sessions, ...patch});
+  member: true, role: 'contributor', inspectable: true, viewGrant: 'none', truncated: false, sessionSharing: 'on', sessionSharingBlocked: null, sessions, ...patch});
 const gone = () => state([row()], {member: false, role: null, inspectable: false, viewGrant: 'revoked'});
 const receipt = (operation = 'share', status = 'submitted', pokes = 1) => ({schema: 'readymade-session-sharing-receipt-v1', status, operation, pokes, confirmed: false});
 const decode = (value: unknown) => sessionSharingSnapshot(value, target);
@@ -35,7 +35,7 @@ test('a standing decodes to an immutable snapshot for every role, phase and gran
 test('standing decoder rejects substituted context, inconsistent membership and malformed fields', () => {
   for (const patch of [{schema: 'readymade-session-sharing-v2'}, {owner: '~wes'}, {peer: '~wes'}, {project: 'other'}, {observedAt: '2026-11-11'}, {observedAt: '~2026.11.11..05.00.00..0000'},
     {member: 'true'}, {role: null}, {role: 'owner'}, {member: false}, {inspectable: 1}, {viewGrant: 'pending'}, {viewGrant: null}, {truncated: 0}, {truncated: true}, {sessions: {}},
-    {sessions: many(129)}, {permissionGranted: false}]) assert.throws(() => decode(state([row()], patch)));
+    {sessions: many(129)}, {permissionGranted: false}, {sessionSharing: 'maybe'}, {sessionSharing: true}, {sessionSharing: 'off'}, {sessionSharing: 'unregistered'}, {sessionSharingBlocked: 'busy'}, {sessionSharingBlocked: false}]) assert.throws(() => decode(state([row()], patch)));
   assert.throws(() => decode(state(many(127), {truncated: true}))); assert.throws(() => decode({...gone(), role: 'observer'}));
   for (const key of Object.keys(state())) {const value: Record<string, unknown> = state(); delete value[key]; assert.throws(() => decode(value));}
   assert.throws(() => decode(null)); assert.throws(() => decode([state()])); assert.throws(() => sessionSharingSnapshot(state(), {...target, peer: '~zod'}));
@@ -253,3 +253,22 @@ test('an ambiguous signed-in identity is rejected before dispatch', () => fixtur
   await assert.rejects(client.sessionSharingRead(target.project, target.peer), e => e instanceof ShipClientError && e.code === 'authenticationRequired');
   await assert.rejects(client.sessionSharingSubmit(share), e => e instanceof ShipClientError && e.code === 'authenticationRequired'); assert.equal(captures.length, 1);
 }, ['urbauth-~zod=fixture; Path=/', 'urbauth-~wes=fixture; Path=/']));
+
+test('the project-wide setting decodes, commands name no session, holds reads the setting, and messages say what changed', () => {
+  for (const sessionSharing of ['unregistered', 'off', 'on'] as const) assert.equal(decode(state([], {inspectable: false, sessionSharing})).sessionSharing, sessionSharing);
+  const on: SessionSharingCommand = {...target, operation: 'sharing-on', session: '0x0'}, off: SessionSharingCommand = {...on, operation: 'sharing-off'};
+  assert.deepEqual(sessionSharingCommand(on), on); assert.deepEqual(sessionSharingCommand(off), off);
+  for (const bad of [{...on, session: id}, {...off, session: '0x1'}, {...on, operation: 'sharing'}]) assert.throws(() => sessionSharingCommand(bad));
+  assert.equal(sessionSharingHolds(on, decode(state())), true); assert.equal(sessionSharingHolds(off, decode(state())), false);
+  const closed = decode(state([], {inspectable: false, sessionSharing: 'off'}));
+  assert.equal(sessionSharingHolds(off, closed), true); assert.equal(sessionSharingHolds(on, closed), false);
+  assert.equal(sessionSharingReceipt(202, receipt('sharing-off'), off).operation, 'sharing-off');
+  assert.throws(() => sessionSharingReceipt(202, receipt('policy'), off));
+  assert.match(sessionSharingMessage(on, {status: 'confirmed', holds: true}), /can now be shared/);
+  assert.match(sessionSharingMessage(off, {status: 'confirmed', holds: true}), /every shared session stopped at once/);
+  assert.match(sessionSharingMessage(off, {status: 'unchanged', holds: true}), /already off/);
+  assert.match(sessionSharingMessage(on, {status: 'refused', reason: 'session-sharing-policy-invalid'}), /could not change this project's policy/);
+  assert.match(sessionSharingMessage(off, {status: 'refused', reason: 'session-sharing-project-not-private'}), /readable by other ships/);
+  assert.equal(decode(state([], {sessionSharingBlocked: 'project-not-private'})).sessionSharingBlocked, 'project-not-private');
+  assert.throws(() => decode(state([], {inspectable: false, sessionSharing: 'unregistered', sessionSharingBlocked: 'work-not-isolated'})));
+});

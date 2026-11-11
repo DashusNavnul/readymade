@@ -185,7 +185,15 @@ export class ProjectSharingView implements vscode.Disposable {
     if (!v || s.check) rows.push({label: 'Check again', tooltip: 'Reads your ship again. Nothing is sent or resent.',
       command: {command: 'readymade.projectSharing', title: 'Check again', arguments: [s.peer]}});
     if (!v) return rows;
-    if (!v.inspectable) rows.push(v.member ? {label: `Sessions cannot be shared with ${v.peer} as ${v.role}`, tooltip: 'That role, or this project’s policy, does not allow looking at agent sessions.'} :
+    if (v.sessionSharing === 'unregistered') rows.push({label: 'Session sharing: this project is not set up for coding on your ship'});
+    else if (v.sessionSharingBlocked) rows.push({label: `Session sharing for this project: ${v.sessionSharing} (cannot be changed now)`,
+      tooltip: v.sessionSharingBlocked === 'project-not-private' ? 'The project’s source desk is readable by other ships; your ship only changes coding policy for private projects.' :
+        v.sessionSharingBlocked === 'work-not-isolated' ? 'The project’s work desk is running or claimed.' : 'One of the project’s desks is missing on your ship.'});
+    else rows.push({label: `Session sharing for this project: ${v.sessionSharing}`, tooltip: 'The project’s own setting. When it is off, no session of it can be shared with anyone.',
+      children: [v.sessionSharing === 'on' ? {label: 'Turn off session sharing for this project…', command: {command: 'readymade.projectSessionSharing', title: 'Turn off', arguments: ['off']}} :
+        {label: 'Turn on session sharing for this project…', command: {command: 'readymade.projectSessionSharing', title: 'Turn on', arguments: ['on']}}]});
+    if (!v.inspectable && v.member && v.sessionSharing === 'off') rows.push({label: `Sessions cannot be shared until session sharing is turned on for this project`});
+    else if (!v.inspectable) rows.push(v.member ? {label: `Sessions cannot be shared with ${v.peer} as ${v.role}`, tooltip: 'That role, or this project’s policy, does not allow looking at agent sessions.'} :
       {label: `Sessions cannot be shared: ${v.peer} is not a member of this project`, tooltip: 'Invite this ship and let it join first.'});
     else if (!v.sessions.length) rows.push({label: 'This project has no agent sessions to share'});
     // Stopping must stay reachable, so a session still shared is listed even when new sharing is not allowed.
@@ -226,6 +234,21 @@ export class ProjectSharingView implements vscode.Disposable {
       if (!v.sessions.some(row => row.id === session)) throw new Error('This session is not in the list. Check again first.');
       if (!stop && !v.inspectable) throw new Error(`Sessions cannot be shared with ${v.peer} right now.`);
       await this.settle(client, context, s, {owner: v.owner, project: v.project, peer: v.peer, operation, session}, remoteSessionShortId(session));
+    } finally {this.busy = false; this.changed();}
+  }
+  /** The whole project's setting, through the same one-send-then-read path. Turning it off stops every shared session at once. */
+  async projectSessionSharing(on: boolean): Promise<void> {
+    this.sync(); const client = this.client, context = this.context, s = this.standing(), v = s?.snapshot;
+    if (!client || !s || !v || this.busy) throw new Error('Choose a collaborator and read their agent sessions first.');
+    if (v.sessionSharing === 'unregistered') throw new Error('This project is not set up for coding on your ship.');
+    this.busy = true;
+    try {
+      const detail = on ?
+        `Allow agent sessions of ${v.project} to be shared?\n\nNothing is shared by this: you still choose each session and each collaborator, one at a time, and a collaborator only sees ` +
+          'what that session shows (read only). Collaborators need the contributor role or higher.\n\nThis adds “inspect” to the project’s coding policy on your ship. Sessions already running keep working.' :
+        `Stop all session sharing for ${v.project}?\n\nEvery session shared with any collaborator stops at once. The sessions themselves keep running.\n\nThis removes “inspect” from the project’s coding policy on your ship.`;
+      if (!await this.confirm(detail)) return;
+      await this.settle(client, context, s, {owner: v.owner, project: v.project, peer: v.peer, operation: on ? 'sharing-on' : 'sharing-off', session: '0x0'}, '');
     } finally {this.busy = false; this.changed();}
   }
   async removeCollaborator(): Promise<void> {
