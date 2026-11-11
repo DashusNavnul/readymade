@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {createRequire} from 'node:module';
-import {encodeQuery, decodeQuery, queryNative, NativeObservationFailure, LOCAL_OBSERVATION_TIMEOUT_MS, type NativeQuery, type NativeObservationReason} from '../src/planet-discovery-wire';
+import {encodeLoginCodeRequest, decodeLoginCode, queryLoginCode, encodeQuery, decodeQuery, queryNative, NativeObservationFailure, LOCAL_OBSERVATION_TIMEOUT_MS, type NativeQuery, type NativeObservationReason} from '../src/planet-discovery-wire';
 const failure = (reason: NativeObservationReason) => (error: unknown) => error instanceof NativeObservationFailure && error.reason === reason && error.message === 'Local planet observation unavailable.';
 // Independent existing offline decoder checks the generated fixed query nouns.
 const {cue} = createRequire(__filename)('../../backend/install/inspect-spider.cjs') as {cue(frame: Buffer): Noun};
@@ -86,4 +86,44 @@ test('a busy native worker may return one real observation after the former 1500
   t.after(() => clearTimeout(timer));
   assert.deepEqual(await queryNative(fixture.socket, 'real'), {ship: '~sampel-palnet', fake: false});
   assert.equal(fixture.count(), 1);
+});
+
+const codeReply = (id = 73n, value: Noun = cord('lidlut-tabwed-pillex-ridrup'), failed = 0n, mark = cord('noun')) => frame(tup(id, cord('avow'), failed, mark, value));
+test('login code request is one owner-guarded strand that only reads the ship\'s own code', () => {
+  const [id, kind, desk, thread, output, input, source] = (function parts(n: Noun, k: number): Noun[] {const r: Noun[] = []; for (let i = 1; i < k; i++) {assert.ok(Array.isArray(n)); r.push(n[0]); n = n[1];} return [...r, n];})(cue(encodeLoginCodeRequest(73)), 7);
+  assert.deepEqual([id, kind, desk, thread, output, input], [73n, cord('fyrd'), cord('base'), cord('khan-eval'), cord('noun'), cord('ted-eval')]);
+  assert.equal(typeof source, 'bigint');
+  let hex = (source as bigint).toString(16); if (hex.length % 2) hex = '0' + hex;
+  const text = Buffer.from(hex, 'hex').reverse().toString('utf8');
+  assert.match(text, /\?>  =\(our\.b src\.b\)/);
+  assert.match(text, /\(scry @p \/j\/code\/\(scot %p our\.b\)\)/);
+  assert.doesNotMatch(text, /poke|send-raw|%pass|%c |%dirk|%mont|\.\^/);
+  assert.throws(() => encodeLoginCodeRequest(-1));
+});
+test('login code reply is accepted only as a correlated success holding one well-formed code', () => {
+  assert.equal(decodeLoginCode(73, codeReply()), 'lidlut-tabwed-pillex-ridrup');
+  for (const [name, bad] of [
+    ['wrong request id', codeReply(74n)],
+    ['reported thread failure', codeReply(73n, cord('lidlut-tabwed-pillex-ridrup'), 1n, cord('thread-fail'))],
+    ['unexpected mark', codeReply(73n, cord('lidlut-tabwed-pillex-ridrup'), 0n, cord('json'))],
+    ['ship name instead of a code', codeReply(73n, cord('~sampel-palnet'))],
+    ['code with a leading sig', codeReply(73n, cord('~lidlut-tabwed-pillex-ridrup'))],
+    ['cell payload', codeReply(73n, [1n, 2n])],
+  ] as const) assert.throws(() => decodeLoginCode(73, bad), failure('envelope'), name);
+  assert.throws(() => decodeLoginCode(73, Buffer.from([0, 9, 0, 0, 0, 1])), failure('frame-or-decode'));
+});
+test('login code query uses the socket once and returns only a matching reply', async t => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rm-code-')); t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const socket = path.join(root, 'conn.sock'); let requests = 0, mode: 'good' | 'fail' = 'good';
+  const server = net.createServer(connection => {
+    connection.once('data', request => {
+      requests++; const id = (cue(request) as [bigint, Noun])[0];
+      connection.end(mode === 'good' ? codeReply(id) : codeReply(id, 0n, 1n, cord('thread-fail')));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(socket, resolve)); t.after(() => server.close());
+  assert.equal(await queryLoginCode(socket), 'lidlut-tabwed-pillex-ridrup');
+  mode = 'fail'; await assert.rejects(queryLoginCode(socket), failure('envelope'));
+  assert.equal(requests, 2, 'A refused reply is never retried');
+  await assert.rejects(queryLoginCode(path.join(root, 'absent.sock')), failure('connection'));
 });

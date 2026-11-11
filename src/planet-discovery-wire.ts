@@ -92,20 +92,37 @@ export function decodeQuery(query: NativeQuery, id: number, frame: Buffer): bigi
   return {ship: name, fake: value === 0n};
   } catch {throw new NativeObservationFailure(reason);}
 }
-export function queryNative(socket: string, query: 'real', signal?: AbortSignal): Promise<NativeReality>;
-export function queryNative(socket: string, query: Exclude<NativeQuery, 'real'>, signal?: AbortSignal): Promise<bigint>;
-export function queryNative(socket: string, query: NativeQuery, signal?: AbortSignal): Promise<bigint | NativeReality>;
-export function queryNative(socket: string, query: NativeQuery, signal?: AbortSignal): Promise<bigint | NativeReality> {
+/** The ship's own strand renders its own login code; nothing else is read and nothing is written. */
+const LOGIN_CODE_STRAND = `=/  m  (strand ,vase)
+;<  b=bowl  bind:m  get-bowl
+?>  =(our.b src.b)
+;<  code=@p  bind:m  (scry @p /j/code/(scot %p our.b))
+(pure:m !>((crip (slag 1 (scow %p code)))))
+`;
+export function encodeLoginCodeRequest(id: number): Buffer {
+  need(Number.isSafeInteger(id) && id >= 0 && id <= 0xffffffff);
+  return jam(tuple(BigInt(id), atom('fyrd'), atom('base'), atom('khan-eval'), atom('noun'), atom('ted-eval'), atom(LOGIN_CODE_STRAND)));
+}
+export function decodeLoginCode(id: number, frame: Buffer): string {
+  let reason: NativeObservationReason = 'frame-or-decode';
+  try {
+    const noun = cue(frame); reason = 'envelope';
+    const [rid, kind, failed, mark, value] = parts(noun, 5);
+    need(rid === BigInt(id) && kind === atom('avow') && failed === 0n && mark === atom('noun'));
+    const code = text(value); need(/^[a-z]{6}(?:-[a-z]{6}){3}(?![\s\S])/.test(code)); return code;
+  } catch {throw new NativeObservationFailure(reason);}
+}
+/** One request, one bounded reply, no retry. */
+function exchange<T>(socket: string, request: Buffer, decode: (frame: Buffer) => T, signal?: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
-    const id = randomInt(0x100000000), request = encodeQuery(query, id);
     if (!(typeof socket === 'string' && socket.startsWith('/') && Buffer.byteLength(socket) < 104 && !/[\x00-\x1f\x7f]/.test(socket))) {reject(new NativeObservationFailure('connection')); return;}
     if (signal?.aborted) {reject(new NativeObservationFailure('connection')); return;}
     let connection: net.Socket;
     try {connection = net.createConnection({path: socket});} catch {reject(new NativeObservationFailure('connection')); return;}
     let data = Buffer.alloc(0), settled = false;
-    const finish = (value?: bigint | NativeReality, reason: NativeObservationReason = 'connection') => {
+    const finish = (value?: {value: T}, reason: NativeObservationReason = 'connection') => {
       if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener('abort', abort); connection.destroy();
-      if (value !== undefined) resolve(value); else reject(new NativeObservationFailure(reason));
+      if (value !== undefined) resolve(value.value); else reject(new NativeObservationFailure(reason));
     };
     const abort = () => finish(), timer = setTimeout(() => finish(undefined, 'timeout'), LOCAL_OBSERVATION_TIMEOUT_MS);
     signal?.addEventListener('abort', abort, {once: true});
@@ -117,8 +134,24 @@ export function queryNative(socket: string, query: NativeQuery, signal?: AbortSi
         need(data.length + chunk.length <= MAX); data = Buffer.concat([data, chunk]);
         if (data.length < 5) return;
         const size = data.readUInt32LE(1) + 5; need(data[0] === 0 && size >= 6 && size <= MAX && data.length <= size);
-        if (data.length === size) finish(decodeQuery(query, id, data));
+        if (data.length === size) finish({value: decode(data)});
       } catch (error) {finish(undefined, error instanceof NativeObservationFailure ? error.reason : 'frame-or-decode');}
     });
   });
+}
+/**
+ * Ask a ship running on this computer for its own web login code over its owner-only native socket.
+ * The caller must already have verified the socket's ship; the code is returned, never logged or stored here.
+ */
+export function queryLoginCode(socket: string, signal?: AbortSignal): Promise<string> {
+  const id = randomInt(0x100000000);
+  return Promise.resolve().then(() => exchange(socket, encodeLoginCodeRequest(id), frame => decodeLoginCode(id, frame), signal));
+}
+export function queryNative(socket: string, query: 'real', signal?: AbortSignal): Promise<NativeReality>;
+export function queryNative(socket: string, query: Exclude<NativeQuery, 'real'>, signal?: AbortSignal): Promise<bigint>;
+export function queryNative(socket: string, query: NativeQuery, signal?: AbortSignal): Promise<bigint | NativeReality>;
+export function queryNative(socket: string, query: NativeQuery, signal?: AbortSignal): Promise<bigint | NativeReality> {
+  const id = randomInt(0x100000000);
+  // Inside the promise chain: an invalid query rejects, as it did before the exchange was shared.
+  return Promise.resolve().then(() => exchange(socket, encodeQuery(query, id), frame => decodeQuery(query, id, frame), signal));
 }

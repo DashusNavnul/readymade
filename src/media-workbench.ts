@@ -12,6 +12,7 @@ import { CallNotificationFeed, type CallNotice } from './call-notifications';
 import { ComposerJournal, attachComposerJournal } from './composer-journal';
 import {authenticateShip, normalizeShipAddress} from './ship-connection';
 import {discoverLocalPlanets, recheckLocalPlanet, type LocalPlanet} from './planet-discovery';
+import {queryLoginCode} from './planet-discovery-wire';
 
 export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
 interface SelectedOrigin {origin: string; planet?: LocalPlanet}
@@ -172,14 +173,14 @@ export class MediaWorkbench implements vscode.Disposable {
     this.ensureOpen();
     const configured = vscode.workspace.getConfiguration('readymade').inspect<string>('origin');
     const remembered = this.context.workspaceState.get<string>('readymade.origin') ?? configured?.workspaceFolderValue ?? configured?.workspaceValue ?? configured?.globalValue;
-    let address = selected ?? this.connectedClient?.origin ?? this.connectingOrigin, expectedShip: string | undefined;
+    let address = selected ?? this.connectedClient?.origin ?? this.connectingOrigin, expectedShip: string | undefined, local: LocalPlanet | undefined;
     if (!address) {
       this.selectingOrigin ??= this.pickOrigin(remembered);
       let choice: SelectedOrigin | undefined;
       try {choice = await this.selectingOrigin;} finally {this.selectingOrigin = undefined;}
       this.ensureOpen();
       if (!choice) throw new ShipClientError('cancelled');
-      address = choice.origin; expectedShip = choice.planet?.ship;
+      address = choice.origin; expectedShip = choice.planet?.ship; local = choice.planet;
     }
     const origin = normalizeShipAddress(address);
     const existing = this.connectedClient;
@@ -191,7 +192,7 @@ export class MediaWorkbench implements vscode.Disposable {
       return shared;
     }
     this.connectingOrigin = origin;
-    this.clientConnecting = this.authenticate(origin, credentials, expectedShip);
+    this.clientConnecting = this.authenticate(origin, credentials, expectedShip, local);
     try { return await this.clientConnecting; }
     finally { this.clientConnecting = undefined; this.connectingOrigin = undefined; this.authenticatingClient = undefined; }
   }
@@ -201,7 +202,7 @@ export class MediaWorkbench implements vscode.Disposable {
       const choices = discoverLocalPlanets().then(result => {
         this.ensureOpen(); this.discovered = result.planets; this.scanReport = result;
         return [...result.planets.map(planet => ({label: planet.ship, description: new URL(planet.origin).host,
-          detail: 'Verified real planet running on this computer', planet})),
+          detail: 'Running on this computer. Signs in for you.', planet})),
         {label: 'Enter a ship’s web address', description: 'For hosted planets or another computer', operation: 'manual'},
         {label: 'Refresh running planets', operation: 'refresh'}] as PlanetChoice[];
       }).finally(() => {this.scanning = false;});
@@ -217,12 +218,20 @@ export class MediaWorkbench implements vscode.Disposable {
       this.ensureOpen(); return address ? {origin: normalizeShipAddress(address)} : undefined;
     }
   }
-  private async authenticate(origin: string, credentials?: (origin: string) => Promise<string | undefined>, expectedShip?: string): Promise<ShipClient> {
+  /**
+   * A ship chosen from the running-ship list was just verified on this computer, so ask it for its own
+   * login code instead of sending a newcomer to its terminal for +code. Read fresh each time, never
+   * stored; any failure falls through to the saved code and then the private prompt.
+   */
+  private async localCode(local: LocalPlanet): Promise<string | undefined> {
+    try {return await queryLoginCode(join(local.pier, '.urb/conn.sock'));} catch {return undefined;}
+  }
+  private async authenticate(origin: string, credentials?: (origin: string) => Promise<string | undefined>, expectedShip?: string, local?: LocalPlanet): Promise<ShipClient> {
     let client: ShipClient | undefined;
     try {
       client = await authenticateShip(origin, {
         expectedShip,
-        readCode: credentials ?? (async address => await this.context.secrets.get('code:' + address) ?? await readSavedCode(address)),
+        readCode: credentials ?? (async address => (local && await this.localCode(local)) || (await this.context.secrets.get('code:' + address) ?? await readSavedCode(address))),
         askCode: async (address, rejected) => vscode.window.showInputBox({title: rejected ? 'Try your Urbit login code again' : 'Sign in to your Urbit',
           prompt: `${rejected ? 'That code wasn’t accepted. ' : ''}Private login for ${address}`, password: true, ignoreFocusOut: true}),
         saveCode: async (address, code) => this.context.secrets.store('code:' + address, code),
