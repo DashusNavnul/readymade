@@ -7,7 +7,7 @@ invitation and is never needed for joining a group.
 
 ## What you can set up from this repository
 
-Download the `.dmg` from the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1),
+Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111),
 drag Readymade Workspace to Applications and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
 Choose **Home → Connect your Urbit**, authenticate privately, then open Groups, Glurff,
@@ -16,10 +16,10 @@ Readymade terminal, `groups` opens Tlon Groups and `landscape` opens the app
 launcher. Both reveal retained tabs without reloading them.
 
 Current source supports verified local discovery for real galaxies, stars,
-planets, moons and comets, with another identity check before sign-in. The linked
-preview lists local planets only; use **Enter a ship’s web address** for other
-classes or hosted ships. Automated discovery and login tests do not qualify live
-acceptance for every class or a first backend installation on your own ship.
+planets, moons and comets, with another identity check before sign-in. Use
+**Enter a ship’s web address** for hosted ships. Automated discovery and login
+tests do not qualify live acceptance for every class or a first backend
+installation on your own ship.
 
 Tlon's first synchronization in a fresh tab can take several minutes. Wait for
 the actual interface to appear; successful authentication alone is not enough.
@@ -100,6 +100,57 @@ grants last until revoked. **Pending Invitations** provides explicit revoke and
 expired-invitation cleanup actions. A join link contains project and recipient
 identities, not ship login credentials. Group membership and project membership
 remain separate.
+
+## What joining does on your own ship
+
+Joining a project needs one small agent on your ship, the collaboration
+service. When you paste an invitation link and your ship does not have it:
+
+1. Readymade says so and asks once. Declining leaves your ship unchanged and
+   the project unjoined.
+2. Your ship's own package manager installs the desk `%readymade-peer` from the
+   ship named in the link (the inviter), or from `~dashus-navnul` when the link
+   names none. It holds only the collaboration agent and what it compiles
+   against: no coding worker, no model connection, nothing that runs code.
+3. Readymade waits until the agent answers, checks that it speaks the protocol
+   this app needs (an older one is updated the same way first), then sends the
+   join once. **Check Result** reads the outcome later; it never joins twice.
+
+Your ship keeps that desk synced to its source, so the host's updates arrive by
+themselves. A ship that already runs the full backend installs nothing.
+
+To undo: **Leave Project** on the joined row ends your membership (the owner's
+ship ends your file and session grants at the same moment). **Remove
+Collaboration Service** uninstalls the desk; it is offered only on a ship that
+has no full backend.
+
+Requirements: your ship on Kelvin 408, able to reach the inviting ship. This
+flow was run between a planet and its moon on one computer (join in about a
+second, automatic install and updates in under a minute). It has not yet been
+run between two unrelated operators; say what happened if you are the first.
+
+## Hosting a project for other people
+
+A host's ship needs the full backend: **Home → Install Pataphor** on a planet
+or larger running on your Mac. Readymade first says which install your ship can
+run and why. Then, under **Project Invitations** for your project:
+
+- **Invite Collaborator…**, then **Copy Join Link**. The link names your ship
+  as the place the guest installs from; your ship publishes that desk itself
+  the first time. A project holds sixteen ships in all.
+- **Members** shows each member's role, whether files are shared and how many
+  sessions are shared. **Offer Another Role…** changes a role when the member
+  accepts the new link; until then nothing changes.
+- **Pending Invitations** lists open invitations with **Copy Join Link**,
+  **Revoke** and, once past their deadline, **Close Expired**.
+- **Project History** reads the project's own record: who invited, joined,
+  declined, left or was removed, and when.
+- **Remove** takes a member out together with their file grant and every
+  session grant. A member who leaves or rejoins starts with no grants.
+
+Session sharing is off unless you turned it on for the project; you then choose
+each session and each member yourself. **Waiting on You** and **Project
+Activity** in the project view collect what needs you and what happened.
 
 ## Shared project drafts in the development build
 

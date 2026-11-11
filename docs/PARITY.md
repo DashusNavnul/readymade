@@ -43,7 +43,7 @@ refusals, unchanged backing bytes and journals, and preservation of the editable
 dirty draft. It also exercised saved-project resume and lost-response recovery.
 Privileged extensions can still modify editor buffers; these checks detect
 alteration when evidence is reused, rather than make the editor immutable.
-The receipt is `/Users/tgb/.readymade-test-evidence/host-SIrJMC/result.json`;
+The receipt is `~/.readymade-test-evidence/host-SIrJMC/result.json`;
 package source fingerprint:
 `276c9e4d67aac574b322be8e69051fe112692b9bc1d15c5e3380902b70f0e3d5`.
 This is installed-editor fixture acceptance, not a new native peer exchange,

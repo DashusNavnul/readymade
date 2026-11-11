@@ -19,7 +19,7 @@ Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before select
 
 ## Install the download
 
-Prefer the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1)
+Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111)
 for a tester who wants to run the app. Open the `.dmg`, drag Readymade Workspace
 to Applications, open it there and eject the disk image. The download uses a
 persistent local signing certificate and is not notarized; a trusted official download may need macOS

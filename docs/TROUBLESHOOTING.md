@@ -53,10 +53,24 @@ Ordinary app/login links are accepted, but query strings, fragments and URL
 credentials are refused. Enter the access code only in the private password
 field. Never paste it into chat or use it as a command-line argument.
 
-The linked November 10 meeting preview predates discovery of all ship classes:
-its list and refresh label still say planets. Use its web address option for
-other classes. Current automated tests do not prove live compatibility with
-every class or qualify a new downloadable release.
+The November 10 preview predates discovery of all ship classes: its list and
+refresh label still say planets. The current preview lists every real ship
+running on the Mac. Automated tests do not prove live compatibility with every
+class.
+
+## The ship is slow, will not connect, or a build fails
+
+Run **Readymade: Ship Doctor** from the command palette while connected. It
+reads, once, how fast the ship answers, the runtime and `--loom` it was started
+with, the snapshot against its memory arena, free disk, the Mac's swap, how busy
+the ship is at rest, which timers are due and who set them, and the ship's
+Kelvin against this app's backend. It changes nothing. Connection errors now
+say what was measured: the ship answered too slowly, nothing is listening at
+that address, the address was not found, the connection dropped, the login code
+was refused, or a ship on this Mac came back on another port (Readymade offers
+to reconnect there). The Doctor also prints a recovery recipe for a local ship
+with its real paths: how to back it up, restore it, and which runtime file it
+must be started with.
 
 If the selected ship changed or the login identifies another ship, refresh the
 local list and check the intended runtime and address. The login is refused and
@@ -86,8 +100,8 @@ In current source, **Your Urbit** checks **Project invitations** separately from
 the local coding backend. **Join a workspace** is enabled there only after the
 read-only invitation catalog matches the authenticated ship and supported
 protocol. A guest does not need a local Viki session or model/provider connection
-to accept the owner's invitation. This setup-page check is not in the linked
-meeting preview; that build uses the existing **Home → Join a workspace** flow.
+to accept the owner's invitation. The November 10 preview lacks this setup-page
+check and uses **Home → Join a workspace** only.
 
 HTTP 404 means the invitation service is missing. A refused, malformed,
 foreign-owner or unavailable response leaves it unverified. Keep the working

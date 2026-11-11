@@ -145,7 +145,7 @@ test('selected identities of every rank are captured across awaits and matching 
 
 test('a remembered switch target is a normalized origin and at most one ship name', () => {
   assert.deepEqual(switchTarget({origin: 'http://localhost:8080'}), {origin: 'http://localhost:8080'});
-  assert.deepEqual(switchTarget({origin: 'https://ship.example', ship: '~bondyl-libpen-dashus-navnul'}), {origin: 'https://ship.example', ship: '~bondyl-libpen-dashus-navnul'});
+  assert.deepEqual(switchTarget({origin: 'https://ship.example', ship: '~doznec-salfun-sampel-palnet'}), {origin: 'https://ship.example', ship: '~doznec-salfun-sampel-palnet'});
   for (const bad of [undefined, null, [], 'http://localhost:8080', {}, {origin: 'localhost:8080'}, {origin: 'http://localhost:8080/'}, {origin: 'http://ship.example'},
     {origin: 'http://localhost:8080', ship: 'zod'}, {origin: 'http://localhost:8080', ship: '~Zod'}, {origin: 'http://localhost:8080', code: 'x'}]) assert.throws(() => switchTarget(bad), /Invalid switch target|web address/);
 });

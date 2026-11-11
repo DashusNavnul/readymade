@@ -4,7 +4,7 @@ A desktop coding workspace that brings your Urbit apps beside your code. Readyma
 
 Use **Code · Lattice · Groups · Glurff · Calls · Landscape** to switch without replacing your open app pages. Type `groups` in a new Readymade integrated terminal to open Tlon Groups, `lattice` for Lattice's document workspace, or `landscape` for your ship's app launcher. These commands are scoped to Readymade's terminal environment; they do not change your global shell configuration. Inside these terminals, `groups` opens Tlon; use `/usr/bin/groups` for the operating system group-list command.
 
-**Public alpha for Apple Silicon macOS.** Download the meeting preview below, or build from source. Opening the desktop does not install Urbit applications or modify your ship. The repository also supplies bounded native installation tools; full multiplayer coding parity and self-service backend installation acceptance are not established.
+**Public alpha for Apple Silicon macOS.** Download the current preview below, or build from source. Opening the desktop does not install Urbit applications or modify your ship. The repository also supplies bounded native installation tools; full multiplayer coding parity and self-service backend installation acceptance are not established.
 
 The [backend source recipes](backend/README.md) assemble the complete
 coding backend candidate from included application source and pinned public
@@ -27,7 +27,7 @@ Previous summary-only attempts remain check-only, without resending; see
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer)**, download the `.dmg` from the
-[meeting preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111).
 Open it, drag **Readymade Workspace** to **Applications**, then open the app
 from Applications and eject the disk image. Running the download needs no
 Node.js, npm, Python, Xcode or source build. Intel, Windows and Linux packages
@@ -45,11 +45,39 @@ signing identity retain that approval. This is separate from your Urbit login
 code; neither belongs in chat.
 
 Choose **Home → Connect your Urbit** and sign in to your own ship privately.
-After connecting, use **Home → Join a workspace** with the host's actual project
-invitation. Shared file access uses a separate host-granted link through
-**Readymade: Open Shared Project**. See [Join a workspace](docs/JOIN_A_WORKSPACE.md).
-The desktop download does not install or update a ship backend; a successful
-login alone does not establish shared coding readiness.
+Any real ship works: a ship running on this Mac is found and signed in for you;
+for a hosted ship enter its web address.
+
+## Work with someone else
+
+**To join someone's project** you need only your own ship and their invitation
+link. Use **Home → Join a workspace** and paste the link. If your ship does not
+have the collaboration service yet, Readymade asks once, then has your ship's
+own package manager install it from the inviting ship (falling back to
+`~dashus-navnul`). That is one small agent; it needs no coding worker, model
+or provider on your ship, and your ship keeps it updated by itself. Nothing is
+installed without that one confirmation. **Leave Project** and **Remove
+Collaboration Service** undo both steps.
+
+**To host a project for others** your ship needs the full backend. On a planet
+(or larger) running on this Mac, **Home → Install Pataphor** installs it from
+inside the app after showing what it will do; the collaboration service alone is
+offered instead when the ship is a moon or comet or was started with too little
+memory. Then open **Project Invitations**: invite a ship, copy its join link,
+see each member's role and what is shared with them, offer another role, read
+the project's history, and remove a member together with every grant.
+
+Shared file access uses a separate host-granted link through **Readymade: Open
+Shared Project**. See [Join a workspace](docs/JOIN_A_WORKSPACE.md). If a ship is
+slow or will not connect, run **Readymade: Ship Doctor**: it measures the ship
+and the Mac and says what it found, and changes nothing.
+
+What is and is not verified: joining, leaving, rejoining, role changes and the
+automatic install were run between a planet and its moon on one computer. Two
+unrelated operators on separate computers have not yet run this release; treat
+a first session with a new collaborator as that test, and report what happens.
+Ships must be on Kelvin 408. A successful login alone does not establish shared
+coding readiness.
 
 ## Build and open from source
 

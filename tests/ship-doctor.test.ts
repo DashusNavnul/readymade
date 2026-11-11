@@ -4,8 +4,8 @@ import {doctorFindings, parseProcess, parseReading, parseSwap, recoveryRecipe, r
 import {decodeDoctorReading, encodeDoctorRequest} from '../src/planet-discovery-wire';
 
 const GB = 1024 ** 3;
-const healthy: DoctorFacts = {ship: '~dashus-navnul', httpMs: 24, bundledKelvin: 408,
-  command: '/Users/x/vere-v4.6 work --snap-dir /piers/dashus --loom 34 --toss 0', cpuPercent: 5, residentBytes: 500 * 1024 ** 2,
+const healthy: DoctorFacts = {ship: '~sampel-palnet', httpMs: 24, bundledKelvin: 408,
+  command: '/Users/x/vere-v4.6 work --snap-dir /piers/sampel --loom 34 --toss 0', cpuPercent: 5, residentBytes: 500 * 1024 ** 2,
   snapshotBytes: 4 * GB, eventLogBytes: 9 * GB, freeDiskBytes: 46 * GB, swapUsedBytes: 1.8 * GB, swapTotalBytes: 3 * GB, memoryBytes: 8 * GB,
   reading: {kelvin: 408, timers: 60, soon: [{seconds: 4, owner: 'ames'}, {seconds: 30, owner: 'behn'}]}};
 const level = (facts: DoctorFacts, id: string) => doctorFindings(facts).find(f => f.id === id)?.level;
@@ -35,7 +35,7 @@ test('a healthy ship has no warnings; each measured fault raises exactly its own
   assert.equal(level({...healthy, command: healthy.command!.replace('--loom 34', '--loom 33'), snapshotBytes: 4.5 * GB}, 'snapshot'), 'warning');
   assert.equal(level({...healthy, snapshotBytes: 4.5 * GB}, 'snapshot'), 'ok');
   assert.equal(level({...healthy, command: '/x/vere work --snap-dir /p --loom 31'}, 'loom'), 'warning');
-  assert.equal(level({...healthy, ship: '~bondyl-libpen-dashus-navnul', command: '/x/vere work --snap-dir /p --loom 31'}, 'loom'), 'note');
+  assert.equal(level({...healthy, ship: '~doznec-salfun-sampel-palnet', command: '/x/vere work --snap-dir /p --loom 31'}, 'loom'), 'note');
   assert.equal(level({...healthy, freeDiskBytes: 10 * GB}, 'disk'), 'warning');
   assert.equal(level({...healthy, swapUsedBytes: 6.5 * GB, swapTotalBytes: 7 * GB}, 'swap'), 'warning');
   assert.equal(level({...healthy, eventLogBytes: 20 * GB}, 'log'), 'note');
@@ -50,8 +50,8 @@ test('missing readings are said, never guessed', () => {
   assert.equal(level({...healthy, reading: undefined, readingFailure: 'timeout'}, 'reading'), 'warning');
 });
 test('the recovery recipe names the real pier and runtime and the two rules that lose ships', () => {
-  const recipe = recoveryRecipe('~dashus-navnul', '/piers/dashus', healthy.command);
-  assert.match(recipe, /Pier \(the whole ship\): \/piers\/dashus/); assert.match(recipe, /\/Users\/x\/vere-v4\.6 --loom 34 \/piers\/dashus/);
+  const recipe = recoveryRecipe('~sampel-palnet', '/piers/sampel', healthy.command);
+  assert.match(recipe, /Pier \(the whole ship\): \/piers\/sampel/); assert.match(recipe, /\/Users\/x\/vere-v4\.6 --loom 34 \/piers\/sampel/);
   assert.match(recipe, /Never copy a running pier/); assert.match(recipe, /Never run a backup and the original at the same time/); assert.match(recipe, /stale snapshot/);
   assert.match(recoveryRecipe('~zod', '/p', undefined), /not read \(the ship is not running\)/);
 });

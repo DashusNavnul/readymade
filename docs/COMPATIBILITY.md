@@ -72,9 +72,9 @@ window. The `landscape` command in new integrated local terminals opens the same
 retained Landscape tab. `groups` opens Tlon Groups; `lattice` opens Lattice's
 document workspace. Each command accepts no arguments.
 
-The linked [November 10 meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1)
-predates discovery of all ship classes and lists local planets only. Use its web
-address option for other classes. The all-class change has automated discovery
+The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111) discovers every
+real ship class running on the Mac; the November 10 preview listed local planets
+only. The all-class change has automated discovery
 and authentication coverage; it does not yet establish live acceptance for every
 class, a newly qualified downloadable package or installed app availability.
 
@@ -111,7 +111,7 @@ recipient and current authenticated connection before submitting.
 | Local discovery and selected-identity login for every real ship class | Automated identity/rank, stale-selection and authentication checks | Exact-package and live receiving-ship acceptance for every class |
 | Guest invitation readiness without a local coding backend | Read-only HTTP fixtures, schema and authenticated-owner checks | Exact-package UI acceptance and real owner/guest invitation, join and revocation checks |
 
-These additions are not included in the linked meeting preview. They do not
+These additions are included in the current preview. They do not
 qualify a first installation on the receiving operator's ship or a twelve-person
 workspace. Follow the separate [native installation guide](../backend/install/README.md)
 when owner-authorized installation is needed, and retain receiver-specific proof.
