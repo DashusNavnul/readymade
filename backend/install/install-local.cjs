@@ -69,15 +69,29 @@ function programDigest(file) {
   requireThat(info.isFile() && info.nlink === 1 && [0, process.getuid()].includes(info.uid) && !(info.mode & 0o022) && (info.mode & 0o111) && info.size < 256 * 1024 * 1024, 'Unsafe executable');
   return sha(fs.readFileSync(file));
 }
+/** Distinct pids that lsof -Fpn reports as having exactly this file open. */
+function lockHolders(listing, lock) {
+  const holders = new Set(); let pid = 0;
+  for (const line of String(listing).split('\n')) {
+    if (/^p[1-9][0-9]{0,9}$/.test(line)) pid = Number(line.slice(1));
+    else if (line === 'n' + lock && pid) holders.add(pid);
+  }
+  return [...holders];
+}
 function captureHost(plan, selectedPython) {
   requireThat(process.platform === 'darwin', 'Local installer host binding is currently macOS-only');
-  const lock = path.join(plan.pier, '.vere.lock'), raw = read(lock, 64).toString('utf8');
-  requireThat(/^[1-9][0-9]{0,9}\n?(?![\s\S])/.test(raw), 'Invalid native worker PID');
-  const pid = Number(raw.trim()), query = field => execFileSync('/bin/ps', ['-p', String(pid), '-o', field + '='], {encoding: 'utf8', timeout: 5000, maxBuffer: 65536}).trim();
+  // The worker is whoever holds the lock open, not what the file says. Vere writes its pid after the
+  // bytes of a leftover lock without truncating, so after one unclean stop the text names dead or
+  // nonexistent processes (seen live: "60038 8169 94133" while pid 4133 held the lock).
+  const lock = path.join(plan.pier, '.vere.lock');
+  let listing;
+  try {safePath(lock); listing = execFileSync('/usr/sbin/lsof', ['-nP', '-Fpn', '--', lock], {encoding: 'utf8', timeout: 5000, maxBuffer: 65536});}
+  catch {requireThat(false, 'No running ship holds this pier lock');}
+  const holders = lockHolders(listing, lock);
+  requireThat(holders.length === 1, 'Exactly one process must hold this pier lock');
+  const pid = holders[0], query = field => execFileSync('/bin/ps', ['-p', String(pid), '-o', field + '='], {encoding: 'utf8', timeout: 5000, maxBuffer: 65536}).trim();
   const started = query('lstart'), executable = fs.realpathSync(query('comm'));
   requireThat(executable === plan.vere, 'Selected runtime is not the live worker executable');
-  const openFiles = execFileSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(pid), '-Fpn', '--', lock], {encoding: 'utf8', timeout: 5000, maxBuffer: 65536}).split('\n');
-  requireThat(openFiles.includes('p' + pid) && openFiles.includes('n' + lock), 'Worker does not hold this pier lock');
   const python = selectedPython || fs.realpathSync(execFileSync('python3', ['-I', '-c', 'import sys; print(sys.executable)'], {encoding: 'utf8', timeout: 5000, maxBuffer: 65536}).trim());
   const node = fs.realpathSync(process.execPath);
   return {pid, started, executable, executableSHA256: programDigest(executable), node, nodeSHA256: programDigest(node), python, pythonSHA256: programDigest(python)};
@@ -250,4 +264,4 @@ if (require.main === module) {
     } else throw Error('Use plan, inspect or execute. Source staging is not compilation, activation, payment or first-use readiness.');
   })().catch(() => {console.error('Local installation stopped. Inspect private retained receipts; do not resubmit an uncertain operation.'); process.exitCode = 1;});
 }
-module.exports = {createPlan, execute, sequence, validateBundle, toolchainDigest, captureHost, nativeEvidence};
+module.exports = {createPlan, execute, sequence, validateBundle, toolchainDigest, captureHost, lockHolders, nativeEvidence};

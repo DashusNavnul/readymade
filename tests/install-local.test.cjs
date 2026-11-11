@@ -163,3 +163,17 @@ test('plan admission refuses unsupported desks and unknown inputs before reading
     assert.throws(() => createPlan(path.join(f.root, 'other'), {ship: '~zod', desk: 'readymade', pier: f.root, vere: f.root, bundle: f.root, command: 'unsafe'}), /Unexpected/);
   } finally {f.close();}
 });
+
+test('the worker is the single process holding the pier lock, whatever the lock file says', () => {
+  const {lockHolders} = require('../backend/install/install-local.cjs');
+  const lock = '/pier/.vere.lock';
+  // One holder, reported once per open descriptor.
+  assert.deepEqual(lockHolders(`p4133\nf10\nn${lock}\nf11\nn${lock}\n`, lock), [4133]);
+  // Other files of the same process and other piers' locks do not count.
+  assert.deepEqual(lockHolders(`p7\nn/other/.vere.lock\np4133\nn/pier/.urb/conn.sock\nn${lock}\n`, lock), [4133]);
+  // Two holders are reported as two, so the caller refuses.
+  assert.deepEqual(lockHolders(`p12\nn${lock}\np13\nn${lock}\n`, lock), [12, 13]);
+  // A deleted lock, a name before any pid, a malformed pid and empty output hold nothing.
+  for (const text of [`p13\nn${lock} (deleted)\n`, `n${lock}\n`, `p0\nn${lock}\n`, `p-4\nn${lock}\n`, ''])
+    assert.deepEqual(lockHolders(text, lock), []);
+});
