@@ -345,6 +345,7 @@
   "tests/terminal.test.ts",
   "tests/tls-client-child.ts",
   "tests/tls-transport.test.ts",
+  "tests/urbit-hookup-host.ts",
   "tests/validate-keyfile.test.cjs",
   "tests/verify-compilation.test.cjs",
   "tests/verify-operation.test.cjs",
