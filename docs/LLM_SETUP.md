@@ -2,6 +2,71 @@
 
 Use this guide to install the public desktop alpha and connect it to the receiving operator's own ship. Do not assume any development ship, host, account, path or port belongs to that operator.
 
+## Fast path: install, connect, join (about five minutes)
+
+This is the whole job for a tester who was sent a join link. Do these steps in
+order; stop and report at the first one that does not behave as described.
+
+**1. Check the Mac and the ship.** Apple Silicon Mac, macOS 12 or later. The
+person's own Urbit ship must be on Kelvin 408. Readymade works with a ship
+running on this Mac or one hosted elsewhere.
+
+**2. Download, verify, install, open.** No build tools are needed.
+
+```sh
+mkdir -p ~/Downloads/readymade && cd ~/Downloads/readymade
+base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111
+curl -fLO $base/Readymade-0.2.0-alpha.20261111-macos-arm64.dmg
+curl -fLO $base/SHA256SUMS.txt
+shasum -a 256 -c SHA256SUMS.txt          # must print: OK
+hdiutil attach Readymade-0.2.0-alpha.20261111-macos-arm64.dmg -nobrowse
+cp -R "/Volumes/Readymade Workspace/Readymade Workspace.app" /Applications/
+hdiutil detach "/Volumes/Readymade Workspace"
+open -a "Readymade Workspace"
+```
+
+A file fetched with `curl` carries no quarantine mark, so the app opens
+directly. If the person downloaded it in a browser instead, macOS may block the
+first launch: use **System Settings → Privacy & Security → Open Anyway**. The
+app is signed with a local certificate and is not notarized. macOS may ask once
+for **Readymade Workspace Safe Storage**: the person types their Mac password
+into that macOS dialog themselves and chooses **Always Allow**.
+
+**3. Connect the person's own ship.** Nothing is typed for a ship on this Mac.
+
+- *Ship running on this Mac:* if it is the only one running, Readymade connects
+  it by itself when the app opens and says so. Otherwise choose it once under
+  **Home → Connect your Urbit**. It is listed when its runtime file is named
+  `urbit` or starts with `vere` and it answers within a few seconds.
+- *Hosted ship:* **Home → Connect your Urbit → Enter a ship's web address**,
+  then the person types the ship's login code into Readymade's own private box,
+  once. Never ask for that code in chat.
+
+**4. Join.** The host sends a join link. In Readymade choose **Home → Join a
+workspace** (or run **Readymade: Join Project** from the command palette) and
+paste the whole link. Prefer pasting to clicking the link: its `vscodium://`
+form can open another editor if one is installed. The link names the ship it is
+for; a ship on this Mac that matches is connected without a question.
+
+If the ship has no collaboration service yet, Readymade asks once to install
+it. The person confirms; the ship then installs one small agent from the host's
+ship and keeps it updated. Expect about a minute and a half the first time on a
+ship that never had it, a few seconds afterwards. When it finishes the project
+row reads **join · accepted**.
+
+**5. Report.** Tell the host the row's text. If anything stalls, run
+**Readymade: Ship Doctor** from the command palette and send what it shows.
+**Leave Project** and **Remove Collaboration Service** undo steps 4 and the
+install.
+
+**To host instead of join:** the ship needs the full backend. **Home → Install
+Pataphor** on a planet or larger running on this Mac, then **Project
+Invitations → Invite Collaborator…** and **Copy Join Link**.
+
+Do not start, stop, restart or reconfigure the person's ship, and do not
+install anything on it yourself: the two confirmations above belong to the
+person. Everything below this section is the careful, complete version.
+
 ## Establish the minimum facts
 
 Inspect the local environment first. Ask only for facts that remain missing:

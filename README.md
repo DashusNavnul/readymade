@@ -24,6 +24,14 @@ backends may lack the full-report protocol and report new shares unavailable.
 Previous summary-only attempts remain check-only, without resending; see
 [parity](docs/PARITY.md).
 
+## Set it up with an assistant
+
+Give your coding assistant this repository and say: "Follow the fast path in
+docs/LLM_SETUP.md to install Readymade, connect my own ship and join the project
+from the link I was sent." That section is five steps with the exact commands:
+download and verify the release, install and open it, connect your ship (nothing
+to type for a ship on your Mac), paste the join link, report the result.
+
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer)**, download the `.dmg` from the

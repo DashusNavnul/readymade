@@ -1,5 +1,7 @@
 # Readymade contributor and setup instructions
 
+To set a tester up (install, connect their own ship, join from a link), follow
+the "Fast path" section at the top of docs/LLM_SETUP.md, step by step.
 For connecting a user's Urbit, read README.md and docs/LLM_SETUP.md first.
 Read docs/COMPATIBILITY.md before assuming backend availability.
 For collaborating with the maintainer or another host, follow
