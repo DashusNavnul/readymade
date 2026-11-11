@@ -26,6 +26,7 @@ export class MediaWorkbench implements vscode.Disposable {
   private callFeed?: CallNotificationFeed;
   private ensureOpen(): void { if (this.disposed) throw new Error('This Readymade workspace is closed.'); }
   private clientConnecting?: Promise<ShipClient>;
+  private localPlanet?: LocalPlanet;
   private connectingOrigin?: string;
   private selectingOrigin?: Promise<SelectedOrigin | undefined>;
   private discovered: LocalPlanet[] = [];
@@ -49,8 +50,10 @@ export class MediaWorkbench implements vscode.Disposable {
     }
   }
   get connectedClient(): ShipClient | undefined { return this.client ?? this.currentClient(); }
+  /** The verified ship on this computer behind the current connection, when it was chosen from the running-ship list. */
+  get connectedLocalPlanet(): LocalPlanet | undefined { return this.client ? this.localPlanet : undefined; }
   private releaseClient(): void {
-    const client = this.client, feed = this.callFeed; this.callFeed = undefined; this.client = undefined;
+    const client = this.client, feed = this.callFeed; this.callFeed = undefined; this.client = undefined; this.localPlanet = undefined;
     void (feed?.close() ?? Promise.resolve()).finally(() => { if (client !== this.currentClient()) client?.close(); });
   }
   private watchCalls(client: ShipClient): void {
@@ -240,7 +243,7 @@ export class MediaWorkbench implements vscode.Disposable {
       this.ensureOpen();
       await this.context.workspaceState.update('readymade.origin', client.origin);
       this.ensureOpen();
-      this.client = client; this.watchCalls(client); this.changed(); return client;
+      this.client = client; this.localPlanet = local; this.watchCalls(client); this.changed(); return client;
     } catch (error) { client?.close(); throw error; }
   }
   private async connect(): Promise<MediaController<vscode.BrowserTab>> {

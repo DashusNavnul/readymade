@@ -49,6 +49,7 @@ import { installAppCommand } from './landscape-command';
 import { SetupView } from './setup-view';
 import { WelcomeView } from './welcome-view';
 import { PlanetSetupView } from './planet-setup-view';
+import { BackendInstallView } from './backend-install-view';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -71,6 +72,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   readonly media: MediaWorkbench;
   readonly home: WelcomeView;
   readonly planetSetup: PlanetSetupView;
+  readonly backendInstall: BackendInstallView;
   readonly setup: SetupView;
   readonly workspaceRequests: WorkspaceRequestView;
   readonly files: DirectoryView;
@@ -207,6 +209,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       return {ship, origin: ship ? client?.origin : undefined, project: client && this.client === client ? this.selectedProject : undefined};
     };
     this.planetSetup = new PlanetSetupView(connection, () => this.connectApps());
+    this.backendInstall = new BackendInstallView(context.extensionPath, join(context.globalStorageUri.fsPath, 'backend-install'), () => this.media.connectedLocalPlanet, () => this.connectApps());
+    this.registrations.push(this.backendInstall);
     this.home = new WelcomeView(connection, async action => {
       if (action === 'openProject') return vscode.commands.executeCommand('workbench.action.files.openFolder');
       if (action === 'connect') {if (await this.connectApps()) await this.setup.show(this.media.connectedClient); return;}
@@ -227,6 +231,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     }));
     command('home', () => this.home.show());
     command('getUrbit', () => this.planetSetup.show());
+    command('installBackend', () => this.backendInstall.show());
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
     command('openSharedProject', link => this.remoteSource.open(typeof link === 'string' ? link : undefined));
     command('resumeSharedProject', id => this.remoteSource.resume(typeof id === 'string' ? id : undefined));
