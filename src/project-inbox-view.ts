@@ -132,6 +132,10 @@ export class ProjectInboxView implements vscode.Disposable {
       void vscode.window.showInformationMessage('Suggestion imported as a local draft. Prepare a candidate, run checks, and review before accepting.');
     } finally {this.busy = false; this.changed();}
   }
+  /** The suggestion receipts held from the last read (peer, path, time), or undefined when not read for this project. */
+  get receipts(): ProjectInbox['receipts'] | undefined {this.sync(); return this.held?.receipts;}
+  /** Suggestions held from the last read, or undefined when the inbox has not been read for this project. */
+  get waiting(): number | undefined {this.sync(); return this.held?.receipts.length;}
   rows(): MediaTreeRow[] {
     this.sync(); const children: MediaTreeRow[] = [{label: this.busy ? 'Reading owner inbox…' : 'Refresh Inbox',
       ...(!this.busy ? {command: {command: 'readymade.projectInbox', title: 'Refresh Inbox'}} : {})}];

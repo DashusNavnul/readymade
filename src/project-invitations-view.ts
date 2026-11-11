@@ -3,7 +3,7 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import {OutcomeUnknownError, type ShipClient} from './ship-client';
 import {GUEST_DESK, GUEST_PROTOCOL, GUEST_SOURCE, guestDeskServing, guestServiceMessage, type GuestServiceState, type GuestSource} from './guest-service';
 import {remoteShip} from './remote-project-view';
-import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type MemberRow, type MembersKind} from './project-invitations';
+import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type EventRow, type MemberRow, type MembersKind} from './project-invitations';
 import type {SessionSharingSnapshot} from './session-sharing';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
 import type {MediaTreeRow} from './media-workbench';
@@ -333,6 +333,13 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (!this.active(client, actor, project)) throw new Error('Project changed; check the retained invitation result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
+  }
+  /** The first page of the project's history when that is what was last read, else undefined. */
+  get history(): EventRow[] | undefined {this.sync(); return this.page?.kind === 'events' && this.page.offset === 0 ? this.page.rows as EventRow[] : undefined;}
+  /** Expired invitations in the last read pending list, or undefined when that list is not what is held. */
+  get expiredInvitations(): number | undefined {
+    this.sync(); if (this.page?.kind !== 'invitations') return undefined;
+    return (this.page.rows as InvitationRow[]).filter(row => row.expired).length;
   }
   rows(): MediaTreeRow[] {
     this.sync(); const client = this.current(); let actor: string | undefined;

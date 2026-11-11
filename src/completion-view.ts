@@ -86,6 +86,8 @@ export class CompletionView implements vscode.Disposable {
     try {const result = await this.journal.recover(client, held[0].intent); this.sync(); if (scope === this.scope && client === this.client) await this.show(result);}
     finally {this.busy = false; this.changed();}
   }
+  /** Whether the last observed answer review holds a proposal to accept; undefined when none was observed. */
+  get waiting(): boolean | undefined {this.sync(); return this.observation ? !!this.observation.proposal : undefined;}
   rows(): MediaTreeRow[] {
     this.sync(); const children: MediaTreeRow[] = [{label: 'Observe answer review…', command: {command: 'readymade.reviewAnswer', title: 'Review answer'}}];
     if (this.observation) children.push(this.observation.proposal ?

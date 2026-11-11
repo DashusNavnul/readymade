@@ -60,6 +60,11 @@ export class WorkspaceRequestView implements vscode.Disposable {
     this.model?.dispose(); this.model = undefined; this.selectionKey = undefined;
     this.snapshot = 'Disconnected. No current native request observation.'; this.changedDocument.fire(this.uri); this.changed();
   }
+  /** Loaded requests of this project still waiting for the owner's permission review; undefined before any were loaded. */
+  waiting(project?: string): number | undefined {
+    if (!this.model || !this.model.catalog) return undefined;
+    return this.model.requests.filter(row => (!project || row.project === project) && row.status === 'reserved').length;
+  }
   rows(project?: string): MediaTreeRow[] {
     this.project = project;
     if (!this.model) return [];

@@ -54,6 +54,8 @@ import { hostProbes } from './backend-install';
 import { installChoice, loomOf } from './install-choice';
 import { connectionFailureMessage } from './ship-connection';
 import { ShipDoctorView } from './ship-doctor-view';
+import { waitingReport, waitingSummary, type WaitingReport } from './owner-inbox';
+import { projectActivity, type ActivityEntry } from './project-activity';
 import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
 
@@ -251,6 +253,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('startPlanet', () => this.planetBoot.show());
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
     command('doctor', () => this.doctor.show());
+    command('ownerInbox', () => this.checkWaiting());
+    command('projectActivity', () => this.readActivity());
     command('followBackendUpdates', () => this.followBackendUpdates());
     command('switchShip', async () => {if (await this.media.switchShip() && !this.media.connectedClient) await this.resumeSwitch();});
     command('openSharedProject', link => this.remoteSource.open(typeof link === 'string' ? link : undefined));
@@ -430,6 +434,59 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       throw new Error('The ship has not reported the new source yet. It may be building; check again later. Nothing is sent twice.');
     });
     void vscode.window.showInformationMessage(`This ship now follows ${FULL_SOURCE.ship} for Pataphor updates.`);
+  }
+  private feed?: {project: string; entries: ActivityEntry[]; partial: boolean};
+  /** The project's activity feed: its own history and the suggestions received, read fresh and merged by time. */
+  private async readActivity(): Promise<void> {
+    const project = this.selectedProject; this.requireClient();
+    if (!project) throw new Error('Choose a project first.');
+    let partial = false;
+    await this.invitations.observe('events');
+    const history = this.invitations.history ?? [];
+    try {await this.inbox.observe();} catch {partial = true;}
+    if (this.selectedProject !== project) return;
+    this.feed = {project, entries: projectActivity(history, this.inbox.receipts ?? []), partial}; this.render();
+  }
+  private activityRows(): MediaTreeRow[] {
+    const feed = this.feed?.project === this.selectedProject ? this.feed : undefined;
+    const children: MediaTreeRow[] = [{label: feed ? 'Refresh Activity' : 'Read Project Activity', command: {command: 'readymade.projectActivity', title: 'Read Project Activity'}}];
+    for (const entry of feed?.entries ?? []) children.push({label: entry.text, description: entry.day, icon: entry.kind === 'suggestion' ? 'lightbulb' : 'organization'});
+    if (feed && !feed.entries.length) children.push({label: 'Nothing recorded yet'});
+    if (feed?.partial) children.push({label: 'Suggestions could not be read; showing membership only'});
+    return [{id: 'project-activity', label: 'Project Activity', icon: 'history', children}];
+  }
+  private waiting?: WaitingReport;
+  private checkingWaiting = false;
+  /**
+   * The owner inbox: ask each existing screen for its own current state, then count what needs the owner.
+   * Each source is read on its own; one that cannot be read (no project, a busy ship) is named as not checked.
+   */
+  private async checkWaiting(): Promise<void> {
+    if (this.checkingWaiting) return;
+    this.requireClient(); this.checkingWaiting = true; this.render();
+    const quiet = async (work: () => Promise<unknown>) => {try {await work();} catch { /* reported as not checked */ }};
+    try {
+      const project = this.selectedProject, session = this.selectedSession;
+      await quiet(() => this.workspaceRequests.store?.load() ?? Promise.reject(new Error('no store')));
+      if (project) {
+        await quiet(() => this.inbox.observe());
+        if (session && session !== '0x0') await quiet(() => this.codeReview.observe(session));
+        await quiet(() => this.invitations.observe('invitations'));
+      }
+      const candidates = this.codeReview.waiting;
+      this.waiting = waitingReport({requests: this.workspaceRequests.waiting(project), suggestions: project ? this.inbox.waiting : undefined,
+        review: candidates?.review, apply: candidates?.apply, answer: this.answerReview.waiting,
+        expiredInvitations: project ? this.invitations.expiredInvitations : undefined}, Date.now());
+    } finally {this.checkingWaiting = false; this.render();}
+    void vscode.window.setStatusBarMessage(waitingSummary(this.waiting), 6000);
+  }
+  private waitingRows(): MediaTreeRow[] {
+    const report = this.waiting, children: MediaTreeRow[] = [{label: this.checkingWaiting ? 'Checking…' : report ? 'Check Again' : 'Check What Is Waiting',
+      ...(this.checkingWaiting ? {} : {command: {command: 'readymade.ownerInbox', title: 'Check What Is Waiting'}})}];
+    for (const item of report?.items ?? []) children.push({label: item.label, command: {command: item.command.command, title: item.command.title, arguments: [...(item.command.arguments ?? [])]}});
+    if (report && !report.items.length) children.push({label: 'Nothing is waiting on you'});
+    if (report?.unchecked.length) children.push({label: `Not checked: ${report.unchecked.join(', ')}`, tooltip: 'Choose a project and a task, or open that screen, to include these.'});
+    return [{id: 'owner-inbox-all', label: 'Waiting on You', icon: 'bell', description: report ? waitingSummary(report) : undefined, children}];
   }
   private recovering = false;
   /**
@@ -616,6 +673,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       command: {command: 'readymade.openSavedDraft', title: 'Open saved local draft'}});
     if (this.snapshot) {
       rows.unshift({ id: 'project', label: this.selectedProject ?? 'Choose project…', icon: 'folder', command: { command: 'readymade.selectProject', title: 'Choose project' } });
+      rows.push(...this.waitingRows());
+      if (this.selectedProject) rows.push(...this.activityRows());
       rows.push(...this.workspaceRequests.rows(this.selectedProject));
       rows.push(...this.files.rows());
       rows.push(...this.checks.rows());

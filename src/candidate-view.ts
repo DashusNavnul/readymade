@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import {waitingCandidates} from './owner-inbox';
 import { observeCandidates } from './candidate-store';
 import { CandidateJournal, CandidateDecisionJournal } from './candidate-journal';
 import { join } from 'node:path';
@@ -57,6 +58,11 @@ export class CandidateView implements vscode.Disposable {
       this.held = result;
     } catch (error) {this.held = undefined; throw error;}
     finally {this.busy = false; this.changed();}
+  }
+  /** Candidates of the last observed session that need the owner, or undefined when none was observed. */
+  get waiting(): {review: number; apply: number} | undefined {
+    this.sync(); if (!this.held) return undefined;
+    return waitingCandidates(this.held.candidates, new Set((this.held.review?.campaigns ?? []).map(row => row.candidate)));
   }
   rows(): MediaTreeRow[] {
     this.sync();
