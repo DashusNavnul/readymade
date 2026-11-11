@@ -171,5 +171,15 @@ export async function run(): Promise<void> {
     assert.match(line.error, /a ship you did not type\)\. Nothing was run\.$/);
     assert.equal(homes().length, 1);
   } finally {await settings.update('assistantPath', earlier, vscode.ConfigurationTarget.Global); rmSync(askDir, {recursive: true, force: true});}
-  if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: true, installedExtension: extension.extensionPath, actualHomeCommand: true, singleton: true, reopen: true, dirtyEditorPreserved: true, layoutPreserved: true, startupDoesNotStealExistingEditor: true, noAutomaticConnection: true, appOnlyConnectionRetained: true, missingCodingDoesNotLogout: true, unsupportedActionsRefused: true, guestJoinWithoutLocalCoding: true, joinDispatches, joinSubmissionTrapped: true, fixture: true, nativeCalls: 0, buttonDispatchTested: false, serializedRestartTested: false}), {flag: 'wx', mode: 0o600});
+  // READYMADE_ASK_LIVE=1: the same line, answered by the real assistant installed on this Mac (one real request on
+  // the tester's own account). It must find the assistant by itself, get a usable plan and run it.
+  let liveAsk: Record<string, unknown> | undefined;
+  if (process.env.READYMADE_ASK_LIVE === '1') {
+    const line = api.home as unknown as {panel: vscode.WebviewPanel; reply: string; error: string; receive(panel: vscode.WebviewPanel, message: unknown): Promise<void>};
+    await vscode.commands.executeCommand('readymade.home'); await until(() => homes().length === 1);
+    const started = Date.now(); await line.receive(line.panel, {ask: 'show the home page'});
+    liveAsk = {seconds: Math.round((Date.now() - started) / 100) / 10, reply: line.reply, error: line.error};
+    assert.equal(line.error, '', line.error); assert.match(line.reply, /(^|\n)Ran: Home$/);
+  }
+  if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: true, ...(liveAsk ? {liveAsk} : {}), installedExtension: extension.extensionPath, actualHomeCommand: true, singleton: true, reopen: true, dirtyEditorPreserved: true, layoutPreserved: true, startupDoesNotStealExistingEditor: true, noAutomaticConnection: true, appOnlyConnectionRetained: true, missingCodingDoesNotLogout: true, unsupportedActionsRefused: true, guestJoinWithoutLocalCoding: true, joinDispatches, joinSubmissionTrapped: true, fixture: true, nativeCalls: 0, buttonDispatchTested: false, serializedRestartTested: false}), {flag: 'wx', mode: 0o600});
 }
