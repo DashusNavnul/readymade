@@ -6,7 +6,7 @@ import json
 import tarfile
 from pathlib import Path, PurePosixPath
 
-ARCHIVE_SHA256 = "f6f005b9dd0c863f0111a5dc1a78606cb6eb0f09ac2f16c1d6a6d147b52c872e"
+ARCHIVE_SHA256 = "c8db396775c3fbc458c7092cbdbeef29e397a5229b8b6acd154d72e9ccdb7ada"
 LICENSE_SHA256 = "150e19f883107e85b8d2748bf5c722076070f0fb98463cfc8c468eba8941a41e"
 
 

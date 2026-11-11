@@ -1925,14 +1925,14 @@
     "lib/cantrip-project-access-runtime.hoon": {
       "component": "application",
       "source": "lib/cantrip-project-access-runtime.hoon",
-      "sha256": "b10fe75da719fd83b25a12587ca42e66193da855a93a9e7072cfd5a88cb97ac0",
-      "bytes": 9044
+      "sha256": "456c964ffe5f3b91c5a88b1a847b10b8814b2cb4bf07f96af272276ea039f0c2",
+      "bytes": 9059
     },
     "lib/cantrip-project-access.hoon": {
       "component": "application",
       "source": "lib/cantrip-project-access.hoon",
-      "sha256": "d3dfd36848be4ef386e56071a99ac0d7c62a58d4bf9beaec5597ac54112ea7ae",
-      "bytes": 8117
+      "sha256": "e521ae5a30f5716ab1edadd51da488aa51672d1e8f5b14e378d7e7c1e826f72d",
+      "bytes": 9001
     },
     "lib/cantrip-project-receipt.hoon": {
       "component": "application",
@@ -8819,8 +8819,8 @@
     "ui/native-coding-onboarding.js": {
       "component": "application",
       "source": "ui/native-coding-onboarding.js",
-      "sha256": "3d7c93a936a8ad4cf5953ee40d463d6ac51760d1427d5adaed7f588ba9492745",
-      "bytes": 8421
+      "sha256": "3c3f35387e5b0b8e774d4a87ce6c3ab18e87936ebd396c26ae1fbefe72c1769f",
+      "bytes": 9439
     },
     "ui/native-coding-session-workspace.js": {
       "component": "application",
