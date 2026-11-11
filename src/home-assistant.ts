@@ -117,7 +117,7 @@ function validArg(kind: ArgKind, value: string): boolean {
   return (url.protocol === 'http:' || url.protocol === 'https:') && (url.pathname === '/' || url.pathname === '') && !url.search && !url.hash && !url.username && !url.password;
 }
 /** What the person typed, word by word, with and without the punctuation around a word. An argument must be one of these, whole: part of a longer name does not count. */
-const typedWords = (instruction: string) => new Set(instruction.split(/\s+/).flatMap(word => [word, word.replace(/^[("'<[]+|[)"'>\],.;:!?]+$/g, '')]));
+const typedWords = (instruction: string) => new Set(instruction.split(/\s+/).flatMap(word => [word, word.replace(/^[("'`<[\u2018\u201c]+|[)"'`>\],.;:!?\u2019\u201d]+$/g, '')]));
 const plain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const unusable = (why: string) => new AssistantError(`The assistant's answer could not be used (${why}). Nothing was run.`);
 
@@ -128,7 +128,7 @@ export function parsePlan(answer: string, instruction: string): Plan {
   let value: unknown; try {value = JSON.parse(answer.slice(start, end + 1));} catch {throw unusable('it was not the expected form');}
   if (!plain(value) || Object.keys(value).some(key => key !== 'say' && key !== 'steps') || typeof value.say !== 'string' || !Array.isArray(value.steps)) throw unusable('it was not the expected form');
   if (value.steps.length > MAX_STEPS) throw unusable(`more than ${MAX_STEPS} steps`);
-  const typed = typedWords(instruction);
+  const typed = typedWords(instruction), typedLower = typedWords(instruction.toLowerCase());
   const steps = value.steps.map((row: unknown): PlanStep => {
     if (!plain(row) || Object.keys(row).some(key => key !== 'command' && key !== 'args') || typeof row.command !== 'string') throw unusable('a step was not the expected form');
     const known = byCommand.get(row.command);
@@ -137,7 +137,7 @@ export function parsePlan(answer: string, instruction: string): Plan {
     if (!Array.isArray(args) || args.length > kinds.length) throw unusable(`${known.title} was given arguments it does not take`);
     args.forEach((arg: unknown, index) => {
       if (typeof arg !== 'string' || !validArg(kinds[index], arg)) throw unusable(`${known.title} was given ${aNoun(kinds[index])} that is not valid`);
-      if (!typed.has(arg)) throw unusable(`${known.title} was given ${aNoun(kinds[index])} you did not type`);
+      if (!(kinds[index] === 'role' ? typedLower : typed).has(arg)) throw unusable(`${known.title} was given ${aNoun(kinds[index])} you did not type`);
     });
     return {command: known.command, title: known.title, args: args as string[]};
   });

@@ -67,7 +67,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
     const elsewhere = state.source && (state.source.ship !== from.ship || state.source.desk !== from.desk);
     const detail = [guestServiceMessage(state), 'Joining a shared project needs it.',
-      `Your ship will install it from ${from.ship} (desk %${from.desk}, about 400 files) and keep it updated from there.`,
+      `Your ship will install it from ${from.ship} (desk %${from.desk}, about 400 files) and keep it updated from there. Only do this for a ship you trust.`,
       ...(elsewhere ? [`It currently follows ${state.source!.ship} (desk %${state.source!.desk}); installing switches it to ${from.ship}.`] : []),
       'Nothing is joined until it is running.'].join(' ');
     if (state.status !== 'starting' && !await this.guest.confirm(detail)) throw new Error('Not joined: your ship needs the collaboration service to join.');
@@ -141,6 +141,10 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private async ensureProtocol(client: ShipClient, actor: string, from: GuestSource): Promise<void> {
     let seen = (await client.guestDeskRead()).protocol;
     if (seen >= GUEST_PROTOCOL) return;
+    // An update changes the ship exactly as a first install does, from a ship the link may have named: ask first, naming it.
+    if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
+    if (!await this.guest.confirm(`Your ship's collaboration service is older than this Readymade needs. Your ship will install the current one from ${from.ship} (desk %${from.desk}, about 400 files) and keep it updated from there. Only do this for a ship you trust. Nothing is joined until it is updated.`,
+      'Update the collaboration service?', 'Update')) throw new Error('Not joined: your ship\'s collaboration service is older than this Readymade needs.');
     await this.guest.progress('Updating the collaboration service on your ship', async () => {
       try {await client.guestServiceInstall(from);} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
       for (const end = Date.now() + this.guest.deadlineMs; Date.now() < end;) {

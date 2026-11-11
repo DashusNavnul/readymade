@@ -58,6 +58,8 @@ test('an argument must be valid and must be text the person typed', () => {
   assert.throws(() => parsePlan(step('readymade.inviteAndCopyLink', '~doznec-salfun'), 'invite ~doznec-salfun-sampel-palnet'), /a ship you did not type/, 'part of a longer name is not what was typed');
   assert.throws(() => parsePlan(step('readymade.inviteAndCopyLink', '~sampel-palnet', 'observer'), 'invite ~sampel-palnet, not as observers'), /a role you did not type/);
   assert.deepEqual(parsePlan(step('readymade.inviteAndCopyLink', '~sampel-palnet', 'observer'), 'Invite (~sampel-palnet) as "observer".').steps[0].args, ['~sampel-palnet', 'observer']);
+  assert.deepEqual(parsePlan(step('readymade.inviteAndCopyLink', '~sampel-palnet', 'observer'), 'invite \u201c~sampel-palnet\u201d as an `Observer`').steps[0].args, ['~sampel-palnet', 'observer']);
+  assert.throws(() => parsePlan(step('readymade.inviteAndCopyLink', '~sampel-palnet'), 'invite ~Sampel-Palnet'), /a ship you did not type/, 'only a role is matched without regard to capitals');
   assert.throws(() => parsePlan(step('readymade.inviteAndCopyLink', 'sampel-palnet'), 'invite sampel-palnet'), /a ship that is not valid/);
   assert.throws(() => parsePlan(step('readymade.inviteAndCopyLink', '~sampel-palnet', 'owner'), 'make ~sampel-palnet owner'), /a role that is not valid/);
   assert.throws(() => parsePlan(step('readymade.inviteAndCopyLink', 7), 'invite 7'), /not valid/);

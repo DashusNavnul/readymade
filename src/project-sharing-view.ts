@@ -237,10 +237,12 @@ export class ProjectSharingView implements vscode.Disposable {
     } finally {this.busy = false; this.changed();}
   }
   /** The whole project's setting, through the same one-send-then-read path. Turning it off stops every shared session at once. */
-  async projectSessionSharing(on: boolean): Promise<void> {
+  /** With no setting named (the command palette, the Home command line) it offers the opposite of what the project has now. */
+  async projectSessionSharing(setting?: boolean): Promise<void> {
     this.sync(); const client = this.client, context = this.context, s = this.standing(), v = s?.snapshot;
     if (!client || !s || !v || this.busy) throw new Error('Choose a collaborator and read their agent sessions first.');
     if (v.sessionSharing === 'unregistered') throw new Error('This project is not set up for coding on your ship.');
+    const on = setting ?? v.sessionSharing !== 'on';
     this.busy = true;
     try {
       const detail = on ?
