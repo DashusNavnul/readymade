@@ -13,7 +13,7 @@ app_name='Readymade Workspace.app'
 publish_dir="${READYMADE_PACKAGE_OUTPUT_DIR:-$dist_dir}"
 app_path="$publish_dir/$app_name"
 receipt_path="$publish_dir/readymade-workspace-package-receipt.json"
-stage=''; downloaded=''; local_signing_active=''
+stage=''; downloaded=''; local_signing_active=''; backend_stage=''
 fail() { printf 'Packaging refused: %s\n' "$1" >&2; exit 1; }
 source_fingerprint() {
   node - "$workspace_dir" <<'FINGERPRINT'
@@ -29,7 +29,7 @@ function scan(directory, prefix) {
     if (entry.isDirectory()) scan(file, relative); else add(file, relative);
   }
 }
-for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); scan(path.join(root, 'packaging'), 'packaging'); console.log(digest.digest('hex'));
+for (const file of ['package.json', 'package.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) add(path.join(root, file), file); scan(path.join(root, 'src'), 'src'); scan(path.join(root, 'platform'), 'platform'); scan(path.join(root, 'packaging'), 'packaging'); scan(path.join(root, 'backend/install'), 'backend/install'); for (const file of ['backend/assembly-manifest.json', 'backend/prepare.py', 'backend/application/source.tar.gz']) add(path.join(root, file), file); console.log(digest.digest('hex'));
 FINGERPRINT
 }
 cleanup() {
@@ -40,11 +40,12 @@ cleanup() {
   if [[ "$result" != 0 && -n "$stage" && -f "$stage/signing.log" ]]; then tail -n 12 "$stage/signing.log" >&2; fi
   if [[ -n "$downloaded" && -f "$downloaded" && ! -L "$downloaded" ]]; then rm -- "$downloaded"; fi
   if [[ -n "$stage" && "$stage" == "$dist_dir"/.package.* && -d "$stage" && ! -L "$stage" ]]; then rm -r -- "$stage"; fi
+  if [[ -n "$backend_stage" && "$backend_stage" == */readymade-backend.* && -d "$backend_stage" && ! -L "$backend_stage" ]]; then rm -r -- "$backend_stage"; fi
   return "$result"
 }
 trap cleanup EXIT
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail 'This package is for Apple Silicon macOS.'
-for tool in node npm xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+for tool in node npm python3 xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
 [[ ! -e "$app_path" && ! -L "$app_path" && ! -e "$receipt_path" && ! -L "$receipt_path" ]] || fail 'The preview app or receipt already exists; it will not be replaced.'
 for cache_parent in "$HOME/.cache" "$HOME/.cache/readymade" "$cache_dir"; do
   [[ ! -L "$cache_parent" ]] || fail 'A package-cache parent is a symlink.'
@@ -117,6 +118,20 @@ cp "$workspace_dir/LICENSE" "$workspace_dir/THIRD_PARTY_NOTICES.md" "$extension/
 mkdir "$extension/platform"
 cp "$workspace_dir/platform/urbit.svg" "$workspace_dir/platform/hoon-language.json" "$workspace_dir/platform/hoon.tmLanguage" "$extension/platform/"
 ditto "$dist_dir/src" "$extension/dist/src"
+# The backend installer and its verified bundle travel inside the app, so installing Pataphor on a
+# ship builds and downloads nothing on the user's machine. Same relative layout as the checkout:
+# backend/install (tools), backend/assembly-manifest.json (pins), backend/package (prepared bundle).
+mkdir -p "$extension/backend/install"
+for tool_file in "$workspace_dir"/backend/install/*.cjs "$workspace_dir"/backend/install/*.py "$workspace_dir"/backend/install/*.hoon; do
+  [[ -f "$tool_file" && ! -L "$tool_file" ]] || fail 'Unexpected backend installer file.'
+  cp "$tool_file" "$extension/backend/install/"
+done
+cp "$workspace_dir/backend/assembly-manifest.json" "$extension/backend/assembly-manifest.json"
+backend_stage="$(mktemp -d "${TMPDIR:-/tmp}/readymade-backend.XXXXXX")"
+# prepare.py verifies every input pin and the assembled desk; it refuses output inside the checkout.
+python3 "$workspace_dir/backend/prepare.py" --output "$backend_stage/prepared" > "$stage/backend-prepare.log" 2>&1 || { tail -n 12 "$stage/backend-prepare.log" >&2; fail 'Backend bundle preparation failed.'; }
+[[ -f "$backend_stage/prepared/prepared.json" && -d "$backend_stage/prepared/package/desk" && -f "$backend_stage/prepared/package/assembly.json" ]] || fail 'Prepared backend bundle is incomplete.'
+ditto "$backend_stage/prepared/package" "$extension/backend/package"
 kernel_app="$inner_app/Contents/Resources/app"
 node "$workspace_dir/platform/browser-reveal.cjs" "$kernel_app"
 node "$workspace_dir/platform/task-terminal.cjs" "$kernel_app"
