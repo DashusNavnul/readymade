@@ -17,8 +17,11 @@ function validate(value: unknown): InvitationIntent {
 export class InvitationJournal {
   constructor(readonly directory: string) {}
   private key(i: InvitationIntent): string {
+    // The same action is retained once, whatever request id a window gave it. A leave is the exception: it names
+    // no invitation, so leaving a project again after rejoining is the same action; each leave is its own entry.
     const {request: _request, ...action} = i.command;
-    return digest(JSON.stringify([i.origin, i.actor, Object.entries(action).sort(([a], [b]) => a.localeCompare(b))]));
+    const basis = i.command.operation === 'leave' ? i.command : action;
+    return digest(JSON.stringify([i.origin, i.actor, Object.entries(basis).sort(([a], [b]) => a.localeCompare(b))]));
   }
   private privateInfo(info: fs.Stats, directory = false): void {
     if (!(directory ? info.isDirectory() : info.isFile()) || info.isSymbolicLink() || process.getuid && (info.uid !== process.getuid() || (info.mode & 0o077) !== 0)) throw new Error('Invitation journal must be private and owned.');

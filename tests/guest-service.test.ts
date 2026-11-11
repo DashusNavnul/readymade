@@ -5,7 +5,7 @@ import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
 import {ShipClient, ShipClientError, OutcomeUnknownError} from '../src/ship-client';
 import {GUEST_DESK, GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestDeskReceipt, guestDeskServing, guestDeskStatus,
-  fullDesk, fullFollowActions, guestInstallActions, guestRemoveActions, guestServiceDesk, guestServiceMessage, guestServiceProbe, guestServiceState} from '../src/guest-service';
+  fullDesk, fullFollowActions, guestInstallActions, guestRemoveActions, guestServiceDesk, guestServiceRemoved, guestServiceMessage, guestServiceProbe, guestServiceState} from '../src/guest-service';
 
 const synced = (zest: string, ship = '~dashus-navnul', desk = 'readymade-peer') => ({sync: {ship, desk}, zest, wefts: [], hash: '0v1'});
 
@@ -166,3 +166,11 @@ test('following backend updates is one kiln poke for the full desk; the desk rea
   await client.backendFollow(); await settle(captures, before + 2);
   assert.deepEqual(JSON.parse(captures[before].body), fullFollowActions('~zod'));
 }));
+
+test('removed means no desk, or the dead unsynced desk an uninstall leaves; anything else is still installed', () => {
+  assert.equal(guestServiceRemoved(null), true);
+  assert.equal(guestServiceRemoved({zest: 'dead', source: null}), true);           // measured on a moon after kiln uninstall
+  assert.equal(guestServiceRemoved({zest: 'live', source: {ship: '~dashus-navnul', desk: 'readymade-peer'}}), false);
+  assert.equal(guestServiceRemoved({zest: 'held', source: null}), false);
+  assert.equal(guestServiceRemoved({zest: 'dead', source: {ship: '~dashus-navnul', desk: 'readymade-peer'}}), false);
+});

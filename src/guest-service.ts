@@ -92,6 +92,11 @@ export function guestRemoveActions(our: string): unknown[] {
   if (!remoteShip(our)) throw Error('Invalid ship.');
   return [{id: 1, action: 'poke', ship: our.slice(1), app: 'hood', mark: 'kiln-uninstall', json: GUEST_DESK}];
 }
+/**
+ * Removed, as kiln reports it: no such desk, or (what an uninstall leaves, measured on a moon) the desk kept but
+ * dead and following nothing. Its agent is stopped and nothing updates it; installing again revives it.
+ */
+export function guestServiceRemoved(local: ReturnType<typeof guestServiceDesk>): boolean {return local === null || local.zest === 'dead' && local.source === null;}
 export function guestServiceMessage(state: GuestServiceState): string {
   if (state.status === 'ready') return 'This ship runs the collaboration service.';
   if (state.status === 'starting') return 'The collaboration service is installed and still starting.';

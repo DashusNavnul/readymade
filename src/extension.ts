@@ -386,7 +386,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   }
   private async connectApps(): Promise<boolean> {
     if (this.media.connectedClient) return true;
-    try {await this.media.connectClient(); this.render(); void this.offerInstall(); return true;}
+    try {await this.media.connectClient(); this.render(); void this.offerInstall(); void this.invitations.observeRetained(); return true;}
     catch (error) {if (error instanceof ShipClientError && error.code === 'cancelled') return false; throw error;}
   }
   /** When the app opens: a planet Readymade set up that is not running (after a Mac restart, say) is offered a start. */
@@ -402,7 +402,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const opened = await this.media.reconnectLast();
     if (!opened || this.disposed) return;
     const client = opened.client;
-    this.render(); void this.offerInstall();
+    this.render(); void this.offerInstall(); void this.invitations.observeRetained();
     const ship = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
     if (!ship) return;
     if (!opened.first) {void vscode.window.setStatusBarMessage(`Connected to ${ship}`, 5000); return;}

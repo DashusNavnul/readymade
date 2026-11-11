@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import {randomBytes, randomUUID} from 'node:crypto';
-import {OutcomeUnknownError, type ShipClient} from './ship-client';
-import {GUEST_DESK, GUEST_PROTOCOL, GUEST_SOURCE, guestDeskServing, guestServiceMessage, type GuestServiceState, type GuestSource} from './guest-service';
+import {OutcomeUnknownError, ShipClientError, type ShipClient} from './ship-client';
+import {GUEST_DESK, GUEST_PROTOCOL, GUEST_SOURCE, guestDeskServing, guestServiceMessage, type GuestServiceState, type GuestSource, guestServiceRemoved} from './guest-service';
 import {remoteShip} from './remote-project-view';
 import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type EventRow, type MemberRow, type MembersKind} from './project-invitations';
 import type {SessionSharingSnapshot} from './session-sharing';
@@ -34,6 +34,8 @@ const guestSteps: GuestServiceSteps = {
   pause: ms => new Promise(resolve => setTimeout(resolve, ms)),
   pollMs: 3000, deadlineMs: 10 * 60 * 1000,
 };
+/** A read the ship did not answer because it is busy or briefly unreachable: worth reading again, not an error. */
+function busyShip(error: unknown): boolean {return error instanceof ShipClientError && ['transport', 'unavailable'].includes(error.code);}
 /** The ship-side limit (lib/readymade-project-members member-limit): ships in a project, the owner and open invitations included. */
 export const PROJECT_SHIP_LIMIT = 16;
 /** A member's grants in a few words, from what the owner's ship holds now. */
@@ -49,6 +51,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private scope = '';
   private readonly observed = new Map<string, Outcome>();
   private grants = new Map<string, SessionSharingSnapshot>();
+  private retaining?: Promise<void>;
   constructor(private readonly extension: string, private readonly current: () => ShipClient | undefined,
     private readonly project: () => string | undefined, private readonly connect: (wanted?: string) => Promise<ShipClient | undefined>,
     private readonly journal: InvitationJournal, private readonly changed: () => void,
@@ -75,7 +78,8 @@ export class ProjectInvitationsView implements vscode.Disposable {
       for (const end = Date.now() + this.guest.deadlineMs; Date.now() < end;) {
         await this.guest.pause(this.guest.pollMs);
         if (!this.active(client, actor)) throw new Error('Connection changed while the collaboration service was installing.');
-        state = await client.guestServiceRead();
+        // A ship answers nothing while it builds; an unanswered read is "not yet", never a failure.
+        try {state = await client.guestServiceRead();} catch (error) {if (!busyShip(error)) throw error; continue;}
         if (state.status === 'ready') return;
       }
       throw new Error(`The collaboration service did not start in time (${guestServiceMessage(state)}). Check your ship, then join again.`);
@@ -83,8 +87,48 @@ export class ProjectInvitationsView implements vscode.Disposable {
     await this.ensureProtocol(client, actor, from);
   }
   /** A running service older than this Readymade is updated by its own kiln from the same source, then read again. */
+  /**
+   * After connecting: read the outcome of every retained request of this ship that this window has not read yet
+   * (a project joined yesterday, an invitation sent before a restart), so its row shows what happened and offers
+   * the right actions without a Check Result click. Reads only, one at a time, at most sixteen; failures are left
+   * for Check Result.
+   */
+  async observeRetained(): Promise<void> {
+    const client = this.current();
+    if (!client || this.closed || this.busy) return;
+    let actor: string; try {actor = this.actor(client);} catch {return;}
+    const unread = this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor && !this.observed.has(this.key(row))).slice(0, 16);
+    if (!unread.length) return;
+    this.busy = true; this.changed();
+    this.retaining = (async () => {
+      try {
+        for (const intent of unread) {
+          if (this.closed || this.current() !== client) break;
+          try {this.observed.set(this.key(intent), await this.journal.recover(client, intent));} catch { /* left for Check Result */ }
+        }
+      } finally {this.busy = false; this.retaining = undefined; this.changed();}
+    })();
+    await this.retaining;
+  }
+  /** An action pressed while retained results are still being read waits for that reading; it is not refused. */
+  private async quiet(): Promise<void> {if (this.retaining) await this.retaining.catch(() => undefined);}
+  /**
+   * A command is sent once and the ship settles it a moment later (about a second, measured). Read the result a
+   * few times so the person sees the outcome without pressing Check Result. Reads only; nothing is sent again.
+   * If it has not settled, the retained row and Check Result remain exactly as before.
+   */
+  private async settle(client: ShipClient, intent: InvitationIntent, first: Outcome): Promise<Outcome> {
+    let result = first;
+    for (let n = 0; n < 8 && ['prepared', 'submitted'].includes(String(result.status)); n++) {
+      await this.guest.pause(1000);
+      if (this.closed || this.current() !== client) break;
+      try {result = await this.journal.recover(client, intent);} catch {break;}
+    }
+    return result;
+  }
   /** Install the collaboration service on the connected ship without joining anything; asks first, like a join does. */
   async installGuestService(): Promise<void> {
+    await this.quiet();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
     try {
@@ -150,6 +194,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     return invitationMembers(reply.body, project, actor, kind, offset, catalog);
   }
   async observe(kind: MembersKind = 'members', next = false): Promise<void> {
+    await this.quiet();
     this.sync(); const {client, actor, project} = this.owner();
     if (this.busy || this.closed) throw new Error('An invitation operation is already running.');
     const prior = this.page;
@@ -169,6 +214,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
   }
   /** Copy the join link of one pending invitation from the ship's own list, whoever recorded it and in whichever window. */
   async copyPendingLink(id: string): Promise<void> {
+    await this.quiet();
     const {client, actor, project} = this.owner();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
@@ -184,6 +230,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     } finally {this.busy = false; this.changed();}
   }
   async invite(target?: string, selectedRole?: 'contributor' | 'observer' | 'maintainer'): Promise<void> {
+    await this.quiet();
     const {client, actor, project} = this.owner();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
@@ -205,7 +252,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const nonce = '0x' + (BigInt('0x' + randomBytes(16).toString('hex')) || 1n).toString(16).replace(/\B(?=(?:[0-9a-f]{4})+$)/g, '.');
       const command = invitationCommand({request: randomUUID(), authority: actor, project, operation: 'invite-member', target: recipient, role, expiresAt: page.inviteUntil, nonce});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.journal.submit(client, intent, true);
+      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
       if (!this.active(client, actor, project)) throw new Error('Project changed; check the retained invitation result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
@@ -214,6 +261,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     const supplied = value ?? await vscode.window.showInputBox({title: 'Join Project', prompt: 'Paste the invitation link from the project owner.'});
     if (!supplied) return;
     const link = joinProjectLink(typeof supplied === 'string' ? vscode.Uri.parse(supplied, true) : supplied, this.extension);
+    await this.quiet();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
     try {
@@ -225,16 +273,19 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
       const command = invitationCommand({request: randomUUID(), authority: link.authority, project: link.project, operation: 'join', invitation: link.invitation});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.journal.submit(client, intent, true);
+      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
       if (!this.active(client, actor)) throw new Error('Connection changed; check the retained join result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
+    // Older rows of this ship (earlier joins and leaves) are read too, so the list shows where things stand.
+    void this.observeRetained();
   }
   /**
    * A guest leaves a project it joined. The owner's ship settles it; sent once through the same journal as the
    * join, so an unknown outcome is checked, never resent. The owner's file and session grants end with membership.
    */
   async leave(request: string): Promise<void> {
+    await this.quiet();
     const client = this.current();
     if (!client || this.closed || this.busy) throw new Error('Connect the ship that joined this project.');
     const actor = this.actor(client), joined = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
@@ -248,7 +299,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     try {
       const command = invitationCommand({request: randomUUID(), authority, project, operation: 'leave'});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.journal.submit(client, intent, true);
+      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
       if (!this.active(client, actor)) throw new Error('Connection changed; check the retained leave result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
@@ -258,6 +309,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
    * A ship that runs the agent from a full Readymade backend has no guest desk and is refused here.
    */
   async removeGuestService(): Promise<void> {
+    await this.quiet();
     const client = this.current();
     if (!client || this.closed || this.busy) throw new Error('Connect the ship first.');
     const actor = this.actor(client);
@@ -266,13 +318,18 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const desk = await client.guestServiceDeskRead();
       if (!this.active(client, actor)) throw new Error('Connection changed; nothing was removed.');
       if (!desk) throw new Error('This ship has no separately installed collaboration service. A full Readymade backend is removed from its own setup screen.');
+      if (guestServiceRemoved(desk)) {void vscode.window.showInformationMessage('The collaboration service is already removed from this ship.'); return;}
       if (!await this.guest.confirm(`Remove the collaboration service (%${GUEST_DESK}) from ${actor}? Projects you joined stay joined on their owners' ships, but this ship can no longer open them until the service is installed again.`, 'Remove the collaboration service?', 'Remove')) return;
-      await client.guestServiceRemove();
       await this.guest.progress('Removing the collaboration service from your ship', async () => {
-        for (let n = 0; n < 30; n++) {
+        // Sent once. A ship can take longer to stop the service than a request waits (measured: about 40 s on a
+        // moon), so an unanswered request is followed by reading the ship, never by sending again.
+        try {await client.guestServiceRemove();} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
+        for (const end = Date.now() + this.guest.deadlineMs; Date.now() < end;) {
           await this.guest.pause(this.guest.pollMs);
           if (!this.active(client, actor)) throw new Error('Connection changed while removing; read the ship again.');
-          if (await client.guestServiceDeskRead() === null) return;
+          let now: Awaited<ReturnType<ShipClient['guestServiceDeskRead']>>;
+          try {now = await client.guestServiceDeskRead();} catch (error) {if (!busyShip(error)) throw error; continue;}
+          if (guestServiceRemoved(now)) return;
         }
         throw new Error('The ship has not reported the service removed yet. Check again in a minute; nothing is sent twice.');
       });
@@ -280,6 +337,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     } finally {this.busy = false; this.changed();}
   }
   async check(request: string): Promise<void> {
+    await this.quiet();
     const client = this.current();
     if (!client || this.closed || this.busy) throw new Error('Connect the ship that sent this invitation action.');
     const actor = this.actor(client), intent = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
@@ -302,6 +360,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     throw new Error('Invitation list exceeds this bounded read. No link was copied.');
   }
   async copyLink(request: string): Promise<void> {
+    await this.quiet();
     const {client, actor, project} = this.owner();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     const intent = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
@@ -321,6 +380,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     } finally {this.busy = false; this.changed();}
   }
   async closeInvitation(id: string, expire = false): Promise<void> {
+    await this.quiet();
     const {client, actor, project} = this.owner();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
@@ -329,7 +389,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (!row || expire && !row.expired) throw new Error('Refresh pending invitations before closing this one.');
       const command: InvitationCommand = {request: randomUUID(), authority: actor, project, operation: expire ? 'expire-invitation' : 'revoke-invitation', invitation: id};
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.journal.submit(client, intent, true);
+      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
       if (!this.active(client, actor, project)) throw new Error('Project changed; check the retained invitation result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
@@ -366,13 +426,20 @@ export class ProjectInvitationsView implements vscode.Disposable {
           {label: row.expired ? 'Close Expired Invitation' : 'Revoke Invitation', command: {command: 'readymade.closeProjectInvitation', title: 'Close Invitation', arguments: [row.id, row.expired]}}]});
     }
     if (this.page?.next !== null && this.page) children.push({label: 'Next Page', command: {command: 'readymade.nextProjectMembers', title: 'Next Page', arguments: [this.page.kind]}});
-    if (client && actor) for (const intent of this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor)) {
+    // Leave is offered once for a project, and only while this ship's accepted joins outnumber its accepted leaves.
+    const retained = client && actor ? this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor) : [];
+    const balance = new Map<string, number>(), pair = (row: InvitationIntent) => row.command.authority + '\n' + row.command.project;
+    for (const row of retained) if (this.observed.get(this.key(row))?.status === 'accepted' && (row.command.operation === 'join' || row.command.operation === 'leave'))
+      balance.set(pair(row), (balance.get(pair(row)) ?? 0) + (row.command.operation === 'join' ? 1 : -1));
+    if (client && actor) for (const intent of retained) {
       const outcome = this.observed.get(this.key(intent)), accepted = outcome?.status === 'accepted', command = intent.command;
+      const offerLeave = accepted && command.operation === 'join' && (balance.get(pair(intent)) ?? 0) > 0;
+      if (offerLeave) balance.set(pair(intent), 0);
       children.push({label: command.project, description: `${command.operation} · ${outcome?.status ?? 'retained — check result'}`,
         children: [{label: 'Check Result', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]}},
           ...(accepted && command.operation === 'invite-member' ? [{label: 'Copy Join Link', command: {command: 'readymade.copyProjectJoinLink', title: 'Copy Join Link', arguments: [command.request]}}] : []),
-          ...(accepted && command.operation === 'join' ? [{label: 'Joined — ask owner for shared files'},
-            {label: 'Leave Project…', command: {command: 'readymade.leaveProject', title: 'Leave Project', arguments: [command.request]}}] : [])]});
+          ...(accepted && command.operation === 'join' ? [{label: offerLeave ? 'Joined — ask owner for shared files' : 'Joined earlier'},
+            ...(offerLeave ? [{label: 'Leave Project…', command: {command: 'readymade.leaveProject', title: 'Leave Project', arguments: [command.request]}}] : [])] : [])]});
     }
     return [{id: 'project-invitations', label: 'Project Invitations', icon: 'organization', children}];
   }

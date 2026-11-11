@@ -92,3 +92,22 @@ test('a project history page is strict, newest first, and reads as plain sentenc
     [{...rows[0], sequence: 0}, ...rows.slice(1)], [{...rows[0], role: 'owner'}, ...rows.slice(1)]]) assert.throws(() => invitationMembers({...page, rows: bad}, 'demo', '~wes', 'events'));
   assert.throws(() => invitationMembers(page, 'demo', '~wes', 'members'));
 });
+
+test('leaving a project again after rejoining is retained and sent again; every other identical action is not', async t => {
+  const directory = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'rm-leave-again-')); fs.chmodSync(directory, 0o700);
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const sent: InvitationCommand[] = [];
+  const client = {origin: 'http://localhost:8080', browserCookies: () => [{name: 'urbauth-~nec', value: 'x'}],
+    projectInvitation: async (_operation: string, value: InvitationCommand) => {sent.push(value);
+      return {status: 200, body: {...result, request: value.request, operation: value.operation, outcome: value.operation === 'leave' ? 'project-left' : 'project-joined'}};}};
+  const journal = new InvitationJournal(directory);
+  const intent = (request: string, operation: 'leave' | 'join'): InvitationIntent => ({version: 1, origin: client.origin, actor: '~nec',
+    command: invitationCommand(operation === 'leave' ? {request, authority: '~wes', project: 'demo', operation} : {request, authority: '~wes', project: 'demo', operation, invitation: '0x123'})});
+  const ids = ['01234567-89ab-4cde-8fab-0123456789a1', '01234567-89ab-4cde-8fab-0123456789a2', '01234567-89ab-4cde-8fab-0123456789a3', '01234567-89ab-4cde-8fab-0123456789a4'];
+  assert.equal((await journal.submit(client as never, intent(ids[0], 'leave'), true)).status, 'accepted');
+  assert.equal((await journal.submit(client as never, intent(ids[1], 'leave'), true)).status, 'accepted');   // left, rejoined, leaves again
+  await assert.rejects(journal.submit(client as never, intent(ids[1], 'leave'), true), /will not be sent again/); // the same request never twice
+  assert.equal((await journal.submit(client as never, intent(ids[2], 'join'), true)).status, 'accepted');
+  await assert.rejects(journal.submit(client as never, intent(ids[3], 'join'), true), /will not be sent again/);  // same invitation, new request id
+  assert.deepEqual(sent.map(row => row.operation), ['leave', 'leave', 'join']); assert.equal(journal.entries().length, 3);
+});

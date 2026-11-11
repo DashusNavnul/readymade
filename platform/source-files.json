@@ -272,6 +272,7 @@
   "tests/export-source.test.cjs",
   "tests/fixtures/macos-keychain-smoke.c",
   "tests/install-choice.test.ts",
+  "tests/live-newcomer-host.ts",
   "tests/local-connect-host.ts",
   "tests/macos-local-signing.test.cjs",
   "tests/macos-signing.test.cjs",
