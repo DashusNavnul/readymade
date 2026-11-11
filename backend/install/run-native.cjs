@@ -7,6 +7,7 @@ const path = require('node:path');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const {spawnSync} = require('node:child_process');
+const {cue, tuple, cord: nativeCord, LARGE_FRAME} = require('./inspect-spider.cjs');
 
 const BASE_FILES = ['sys/hoon.hoon', 'sys/zuse.hoon', 'sys/lull.hoon', 'sys/vane/clay.hoon'];
 const MOUNT_BASE = `=/  m  (strand ,vase)
@@ -133,8 +134,24 @@ async function run(config) {
     complete = true;
     json(output, 'received.json', {bytes: size, at: new Date().toISOString(), executionSuccess: 'not-yet-decoded'});
     if (size > 1024 * 1024) {
-      json(output, 'result.json', {status: 'response-retained', executionSuccess: 'unverified', lockRetained: true, reason: 'Decode large response separately; do not repeat the operation'});
-      return 2;
+      // Too large for a text dump. Validate the binary envelope under the bounded decoder instead:
+      // a correlated success or reported thread failure is terminal, exactly as on the small path.
+      // Before this, every whole-ship snapshot (about 46 MB on a fresh ship) kept the lock forever.
+      const raw = fs.readFileSync(path.join(output, 'response.newt'));
+      let outcome = 'unverified', reason = 'Large response is not a correlated strand result; do not repeat the operation';
+      try {
+        const [id, kind, status, mark] = tuple(cue(raw, LARGE_FRAME), 5);
+        if (operation === 'mount-base') reason = 'Unexpected large mount response; do not repeat the operation';
+        else if (id === 0n && kind === nativeCord('avow') && status === 0n && mark === nativeCord('noun')) outcome = true;
+        else if (id === 0n && kind === nativeCord('avow') && status === 1n && mark === nativeCord('thread-fail')) outcome = false;
+      } catch (error) {reason = `Large response failed bounded decoding (${error.message}); do not repeat the operation`;}
+      if (outcome === 'unverified') {
+        json(output, 'result.json', {status: 'response-retained', executionSuccess: 'unverified', lockRetained: true, reason});
+        return 2;
+      }
+      json(output, 'result.json', {status: outcome ? 'native-success' : 'native-failure', executionSuccess: outcome, lockRetained: false, largeResponse: true, decoded: 'binary-envelope', responseSHA256: digest(raw)});
+      releaseLock = true;
+      return outcome ? 0 : 2;
     }
     const responseFD = fs.openSync(path.join(output, 'response.hoon'), 'wx', 0o600);
     let decoded;

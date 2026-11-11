@@ -3,6 +3,9 @@
 // Offline diagnostics only. A saved Spider carrier has no completion journal.
 const {createHash} = require('node:crypto');
 const MAX_BYTES = 32 * 1024 * 1024, MAX_NODES = 1_000_000, MAX_ITEMS = 100_000;
+// Whole-response bound, equal to inspect-response.py. A fresh ship's install snapshot measured
+// 45,842,830 bytes and 4,269,327 nodes (4.9 s, 528 MB); the default bound above refused it.
+const LARGE_FRAME = Object.freeze({bytes: 256 * 1024 * 1024, nodes: 16_000_000});
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 function need(ok, message) {if (!ok) throw new Error(message);}
 function cord(text) {return BigInt('0x' + Buffer.from(text).reverse().toString('hex'));}
@@ -35,8 +38,10 @@ function tree(noun) {
   }
   return out;
 }
-function cue(frame) {
-  need(Buffer.isBuffer(frame) && frame.length >= 6 && frame.length <= MAX_BYTES && frame[0] === 0 &&
+function cue(frame, bounds = {}) {
+  const maxBytes = bounds.bytes ?? MAX_BYTES, maxNodes = bounds.nodes ?? MAX_NODES;
+  need(Number.isSafeInteger(maxBytes) && Number.isSafeInteger(maxNodes) && maxBytes <= LARGE_FRAME.bytes && maxNodes <= LARGE_FRAME.nodes, 'Unsupported decoder bound');
+  need(Buffer.isBuffer(frame) && frame.length >= 6 && frame.length <= maxBytes && frame[0] === 0 &&
     frame.readUInt32LE(1) === frame.length - 5, 'Invalid native frame');
   const data = frame.subarray(5), memo = new Map(), stack = []; let cursor = 0, nodes = 0;
   const bits = count => {
@@ -53,7 +58,7 @@ function cue(frame) {
     return width ? bits(2 ** (width - 1) + Number(bits(width - 1))) : 0n;
   };
   for (;;) {
-    need(++nodes <= MAX_NODES, 'Jam node limit exceeded');
+    need(++nodes <= maxNodes, 'Jam node limit exceeded');
     const position = cursor; let noun;
     if (bits(1) === 0n) {noun = mat(); memo.set(position, noun);}
     else if (bits(1) === 0n) {stack.push([position]); continue;}
@@ -148,4 +153,4 @@ function inspectSpider(frame, expectedShip) {
       incomingSubscriptions: incoming.length, outgoingSubscriptions: outgoing.length, subscriptionNonces: nonces.length},
     threads: {starting: starts, running: runs, mapped: ids}, previousOperationOutcome: 'unknown', replayAuthorized: false, operationLockUntouched: true};
 }
-module.exports = {inspectSpider, cue, tuple, list, text, cord};
+module.exports = {inspectSpider, cue, tuple, list, text, cord, LARGE_FRAME};

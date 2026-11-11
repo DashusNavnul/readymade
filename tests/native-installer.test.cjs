@@ -140,6 +140,30 @@ test('a mount acknowledgement without native filesystem exports never reports re
   });
 });
 
+// One BigInt, least significant bit first: enough for a few cells around one large atom.
+function jamFrame(noun) {
+  let out = 0n, at = 0n; const put = (value, count) => {out |= value << at; at += BigInt(count);};
+  const mat = atom => {
+    if (atom === 0n) {put(1n, 1); return;}
+    const width = atom.toString(2).length, size = width.toString(2).length;
+    put(1n << BigInt(size), size + 1); put(BigInt(width) & ((1n << BigInt(size - 1)) - 1n), size - 1); put(atom, width);
+  };
+  const write = value => {if (Array.isArray(value)) {put(1n, 2); write(value[0]); write(value[1]);} else {put(0n, 1); mat(value);}};
+  write(noun); let hex = out.toString(16); if (hex.length % 2) hex = '0' + hex;
+  const data = Buffer.from(hex, 'hex').reverse(), frame = Buffer.alloc(5 + data.length);
+  frame.writeUInt32LE(data.length, 1); data.copy(frame, 5); return frame;
+}
+const cordOf = text => BigInt('0x' + Buffer.from(text).reverse().toString('hex'));
+const bulk = (1n << 8_500_000n) | 5n; // one atom over 1 MiB
+const largeFrames = {
+  success: () => jamFrame([0n, [cordOf('avow'), [0n, [cordOf('noun'), bulk]]]]),
+  failure: () => jamFrame([0n, [cordOf('avow'), [1n, [cordOf('thread-fail'), bulk]]]]),
+  peek: () => jamFrame([0n, [cordOf('peek'), [0n, [cordOf('noun'), bulk]]]]),
+  wrongId: () => jamFrame([1n, [cordOf('avow'), [0n, [cordOf('noun'), bulk]]]]),
+};
+const succeeds = new Set(['successful operation', 'large verified success']);
+const reportsFailure = new Set(['reported thread failure', 'large reported thread failure']);
+
 for (const [name, decoded, decodeStatus, large, expectedLock] of [
   ['successful operation', '[0 %avow 0 %noun 42]', 0, false, false],
   ['reported thread failure', '[0 %avow 1 %thread-fail ~]', 0, false, false],
@@ -147,10 +171,15 @@ for (const [name, decoded, decodeStatus, large, expectedLock] of [
   ['wrong response identifier', '[1 %avow 0 %noun 42]', 0, false, true],
   ['failed decoder with success-looking output', '[0 %avow 0 %noun 42]', 1, false, true],
   ['large undecoded response', '', 0, true, true],
+  ['large verified success', '', 0, 'success', false],
+  ['large reported thread failure', '', 0, 'failure', false],
+  ['large unrelated response kind', '', 0, 'peek', true],
+  ['large wrong response identifier', '', 0, 'wrongId', true],
 ]) {
   test(`native operation lock tracks decoded outcome: ${name}`, async () => {
-    const response = Buffer.alloc(large ? 1024 * 1024 + 6 : 6);
-    response.writeUInt32LE(response.length - 5, 1); response[5] = 2;
+    const response = typeof large === 'string' ? largeFrames[large]() : Buffer.alloc(large ? 1024 * 1024 + 6 : 6);
+    if (typeof large !== 'string') {response.writeUInt32LE(response.length - 5, 1); response[5] = 2;}
+    if (large) assert.ok(response.length > 1024 * 1024, 'Fixture must exceed the text-decoding limit');
     await serverRun(socket => socket.end(response), async (root, socketPath) => {
       const pier = path.join(root, 'pier');
       fs.mkdirSync(path.join(pier, '.urb'), {recursive: true});
@@ -168,12 +197,14 @@ process.stdin.resume(); process.stdin.on('end', () => {
 `, {mode: 0o700});
       const source = path.join(root, 'fixture.hoon'); fs.writeFileSync(source, '(pure:m !>(42))\n');
       const config = {pier, vere, source, ship: '~sut', timeout: 2, output: path.join(root, 'receipt')};
-      assert.equal(await run(config), name === 'successful operation' ? 0 : 2);
+      assert.equal(await run(config), succeeds.has(name) ? 0 : 2);
       const result = JSON.parse(fs.readFileSync(path.join(config.output, 'result.json')));
       const lock = path.join(pier, '.urb/readymade-operation.lock/owner.json');
       assert.equal(fs.existsSync(lock), expectedLock, 'An unverified frame must not release the operation gate');
       assert.equal(result.lockRetained, expectedLock);
-      assert.equal(result.executionSuccess, name === 'successful operation' ? true : name === 'reported thread failure' ? false : 'unverified');
+      assert.equal(result.executionSuccess, succeeds.has(name) ? true : reportsFailure.has(name) ? false : 'unverified');
+      if (large) assert.equal(fs.existsSync(path.join(config.output, 'response.hoon')), false, 'A large response gets no text dump');
+      if (typeof large === 'string' && !expectedLock) assert.equal(result.responseSHA256, require('node:crypto').createHash('sha256').update(response).digest('hex'));
       assert.deepEqual(fs.readFileSync(path.join(config.output, 'response.newt')), response);
       if (expectedLock) {
         const owner = fs.readFileSync(lock);

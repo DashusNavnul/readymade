@@ -7,7 +7,7 @@ const {spawnSync} = require('node:child_process');
 const {isDeepStrictEqual: equal} = require('node:util');
 const journal = require('./install-state.cjs');
 const {qualify} = require('./verify-compilation.cjs');
-const {cue, tuple, list, text, cord} = require('./inspect-spider.cjs');
+const {cue, tuple, list, text, cord, LARGE_FRAME} = require('./inspect-spider.cjs');
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const need = (ok, message) => {if (!ok) throw Error(message);};
 const ud = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -65,7 +65,7 @@ function prepare(options) {
   need(json(path.join(baseline, 'submitted.json')).requestSHA256 === sha(request), 'Baseline submission differs');
   const frame = read(path.join(baseline, 'response.newt'), true), result = json(path.join(baseline, 'result.json'));
   need(result.status === 'native-success' && result.executionSuccess === true && result.lockRetained === false && result.responseSHA256 === sha(frame), 'Baseline success missing');
-  const [id, kind, outcome, mark, payload] = tuple(cue(frame), 5);
+  const [id, kind, outcome, mark, payload] = tuple(cue(frame, LARGE_FRAME), 5);
   need(id === 0n && kind === cord('avow') && outcome === 0n && mark === cord('noun'), 'Baseline execution failed');
   const [tag, tid, body] = tuple(payload, 3), [inner, now, owner, desk, revision, life, root, apps, domes, bindings] = tuple(body, 10);
   need(tag === cord('readymade-observed-install-snapshot-v1') && text(tid).length > 0 && inner === cord('readymade-private-install-snapshot-v1') && typeof now === 'bigint' && now > 0n && owner === BigInt(qualified.ownerAtom) && desk === cord(plan.desk) && revision === BigInt(qualified.revision) && life === cord('dead') && root === BigInt('0x' + qualified.root), 'Baseline identity/source differs');

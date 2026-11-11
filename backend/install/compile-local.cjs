@@ -8,7 +8,7 @@ const {isDeepStrictEqual: equal} = require('node:util');
 const journal = require('./install-state.cjs');
 const local = require('./install-local.cjs');
 const {reconstruct} = require('./verify-compilation.cjs');
-const {cue, tuple, cord} = require('./inspect-spider.cjs');
+const {cue, tuple, cord, LARGE_FRAME} = require('./inspect-spider.cjs');
 const activation = require('./prepare-activation.cjs');
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const need = (ok, message) => {if (!ok) throw Error(message);};
@@ -54,7 +54,7 @@ function envelope(directory, plan, original) {
   need(equal(tuple(cue(request), 7), [0n, cord('fyrd'), cord('base'), cord('khan-eval'), cord('noun'), cord('ted-eval'), cord(guarded)]) && json(path.join(directory, 'submitted.json')).requestSHA256 === sha(request), 'Submitted request differs');
   const raw = read(path.join(directory, 'response.newt'), true);
   need(result.status === 'native-success' && result.executionSuccess === true && result.lockRetained === false && result.responseSHA256 === sha(raw), 'Native result unresolved or refused');
-  const [id, tag, status, mark, payload] = tuple(cue(raw), 5);
+  const [id, tag, status, mark, payload] = tuple(cue(raw, LARGE_FRAME), 5);
   need(id === 0n && tag === cord('avow') && status === 0n && mark === cord('noun'), 'Native execution failed'); return payload;
 }
 function committed(staged) {
