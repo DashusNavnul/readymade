@@ -72,9 +72,12 @@ chat, or successful login is not that proof.
 
 ## Join a coding project in the development build
 
-Connect your own ship first. Then **Home → Join a workspace** opens the
-project-invitation field; paste the actual link supplied by your host.
-Never use the host's ship address or login code as your own connection.
+Open the link your host sent, or use **Home → Join a workspace** and paste it.
+A ship running on your Mac does not need connecting first: the link names your
+ship, and Readymade connects it and signs in by itself, with no address or
+login code to type. A hosted ship is connected once from **Home → Connect your
+Urbit** with its web address and login code. Never use the host's ship address
+or login code as your own connection.
 
 Current source also offers **Join a workspace** on **Your Urbit** once a
 read-only invitation-service check succeeds for the authenticated identity.

@@ -50,7 +50,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private readonly observed = new Map<string, Outcome>();
   private grants = new Map<string, SessionSharingSnapshot>();
   constructor(private readonly extension: string, private readonly current: () => ShipClient | undefined,
-    private readonly project: () => string | undefined, private readonly connect: () => Promise<ShipClient | undefined>,
+    private readonly project: () => string | undefined, private readonly connect: (wanted?: string) => Promise<ShipClient | undefined>,
     private readonly journal: InvitationJournal, private readonly changed: () => void,
     private readonly guest: GuestServiceSteps = guestSteps) {}
   /**
@@ -217,7 +217,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
     try {
-      const client = await this.connect(); if (!client || this.closed) return;
+      const client = await this.connect(link.target); if (!client || this.closed) return;
       const actor = this.actor(client);
       if (actor !== link.target) throw new Error(`This invitation is for ${link.target}. Connect that ship in another window.`);
       if (!this.active(client, actor)) throw new Error('Connection changed before joining.');

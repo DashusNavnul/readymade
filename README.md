@@ -44,14 +44,18 @@ and choose **Always Allow** for this verified build. Rebuilds from the same
 signing identity retain that approval. This is separate from your Urbit login
 code; neither belongs in chat.
 
-Choose **Home → Connect your Urbit** and sign in to your own ship privately.
-Any real ship works: a ship running on this Mac is found and signed in for you;
-for a hosted ship enter its web address.
+Choose **Home → Connect your Urbit**. A ship running on this Mac is found and
+signed in for you: nothing to type, no login code. When only one is running, or
+a join link names it, it connects without a question; the next time the app
+opens it reconnects by itself. For a hosted ship enter its web address and its
+login code once; the code is kept in the Mac's Keychain and not asked again.
 
 ## Work with someone else
 
 **To join someone's project** you need only your own ship and their invitation
-link. Use **Home → Join a workspace** and paste the link. If your ship does not
+link. Open the link, or use **Home → Join a workspace** and paste it. If your
+ship runs on this Mac you do not need to connect first: the link names your
+ship, and Readymade connects and signs it in by itself. If your ship does not
 have the collaboration service yet, Readymade asks once, then has your ship's
 own package manager install it from the inviting ship (falling back to
 `~dashus-navnul`). That is one small agent; it needs no coding worker, model

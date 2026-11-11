@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as http from 'node:http';
 import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
-import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions, switchTarget, connectionFailureMessage} from '../src/ship-connection';
+import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions, switchTarget, connectionFailureMessage, automaticShip} from '../src/ship-connection';
 import {ShipClient, ShipClientError} from '../src/ship-client';
 
 const hasCode = (code: string) => (error: unknown) => error instanceof ShipClientError && error.code === code;
@@ -195,4 +195,17 @@ test('a session the ship dropped is recovered by signing in again on the same cl
     assert.deepEqual(await client.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 2000}), {ship: '~zod'});
     assert.equal(logins, 2); assert.equal(asked, 2); assert.equal(client.browserCookies(client.origin)[0]!.value, 'session2');
   } finally {client.close(); server.closeAllConnections(); server.close();}
+});
+
+test('a ship on this computer is connected without asking only when the choice is clear', () => {
+  const zod = {ship: '~zod'}, nec = {ship: '~nec'};
+  assert.equal(automaticShip([zod]), zod);                       // the only one running
+  assert.equal(automaticShip([zod, nec]), undefined);            // two and no history: ask
+  assert.equal(automaticShip([zod, nec], undefined, '~nec'), nec); // the one last used
+  assert.equal(automaticShip([zod], undefined, '~nec'), zod);    // last one is not running: the only one
+  assert.equal(automaticShip([], undefined, '~nec'), undefined);
+  // A link names its ship: exactly that ship, never another, even when another is the only one running.
+  assert.equal(automaticShip([zod, nec], '~nec', '~zod'), nec);
+  assert.equal(automaticShip([zod], '~nec'), undefined);
+  assert.equal(automaticShip([nec, {ship: '~nec'}], '~nec'), undefined); // ambiguous: ask
 });

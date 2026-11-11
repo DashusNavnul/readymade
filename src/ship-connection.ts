@@ -50,6 +50,16 @@ export function switchTarget(value: unknown): SwitchTarget {
   return Object.freeze({origin: row.origin, ...(row.ship !== undefined ? {ship: row.ship} : {})});
 }
 
+/**
+ * Which ship running on this computer to connect without asking. A link that names a ship gets exactly that
+ * ship or nothing (never a different one). Otherwise: the ship this app last used, if it is running; else the
+ * only running ship. Undefined means the person must choose.
+ */
+export function automaticShip<T extends {readonly ship: string}>(running: readonly T[], wanted?: string, last?: string): T | undefined {
+  const named = (ship: string) => {const found = running.filter(row => row.ship === ship); return found.length === 1 ? found[0] : undefined;};
+  if (wanted !== undefined) return named(wanted);
+  return (last !== undefined ? named(last) : undefined) ?? (running.length === 1 ? running[0] : undefined);
+}
 export interface ShipAuthenticationOptions {
   expectedShip?: string;
   readCode(origin: string): Promise<string | undefined>;

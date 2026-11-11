@@ -10,13 +10,16 @@ import { NativeMediaBrowser } from './media-browser';
 import { LegacyMedia, type LegacyMediaOwner } from './legacy-media';
 import { CallNotificationFeed, type CallNotice } from './call-notifications';
 import { ComposerJournal, attachComposerJournal } from './composer-journal';
-import {authenticateShip, normalizeShipAddress, switchTarget, type SwitchTarget, connectionFailureMessage} from './ship-connection';
+import {authenticateShip, normalizeShipAddress, switchTarget, type SwitchTarget, connectionFailureMessage, automaticShip} from './ship-connection';
 import {discoverLocalPlanets, recheckLocalPlanet, slowShipNotice, type LocalPlanet} from './planet-discovery';
 import {queryLoginCode} from './planet-discovery-wire';
 
 export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
 interface SelectedOrigin {origin: string; planet?: LocalPlanet}
 const SWITCH_KEY = 'readymade.switchTo';
+const LAST_KEY = 'readymade.lastShip';
+/** The ship this app last connected, remembered across windows so the next launch needs no question. Never a code. */
+interface LastShip {ship: string; origin: string; local: boolean}
 interface PlanetChoice extends vscode.QuickPickItem {planet?: LocalPlanet; operation?: 'manual' | 'refresh'}
 export class MediaWorkbench implements vscode.Disposable {
   readonly bridge: MediaClient;
@@ -229,20 +232,60 @@ export class MediaWorkbench implements vscode.Disposable {
       return planet ? {origin: target.origin, planet: await recheckLocalPlanet(planet)} : {origin: target.origin};
     } catch {return {origin: target.origin};}
   }
-  async connectClient(selected?: string, credentials?: (origin: string) => Promise<string | undefined>, planet?: LocalPlanet): Promise<ShipClient> {
+  /**
+   * A ship on this computer is connected without a question whenever the choice is clear: the ship a link
+   * names, the ship last used here, or the only one running. It signs in with the code the ship itself supplies.
+   */
+  private async automatic(wanted?: string): Promise<SelectedOrigin | undefined> {
+    try {
+      const running = (await discoverLocalPlanets()).planets;
+      const planet = automaticShip(running, wanted, this.context.globalState.get<LastShip>(LAST_KEY)?.ship);
+      return planet ? {origin: planet.origin, planet: await recheckLocalPlanet(planet)} : undefined;
+    } catch {return undefined;}
+  }
+  /**
+   * When the app opens: connect the ship this app last used, without asking anything. A local ship is found again
+   * by name (its port may have changed) and signs in by itself; a hosted one uses the code saved in the Keychain.
+   * If either is not possible right now, nothing happens and nothing is asked.
+   */
+  async reconnectLast(): Promise<ShipClient | undefined> {
+    const last = this.context.globalState.get<LastShip>(LAST_KEY);
+    if (!last || this.connectedClient || this.clientConnecting || this.disposed) return undefined;
+    try {
+      if (last.local) {
+        const found = await this.automatic(last.ship);
+        return found ? await this.connectClient(found.origin, undefined, found.planet, undefined, true) : undefined;
+      }
+      return await this.connectClient(normalizeShipAddress(last.origin), undefined, undefined, undefined, true);
+    } catch {return undefined;}
+  }
+  async connectClient(selected?: string, credentials?: (origin: string) => Promise<string | undefined>, planet?: LocalPlanet, wanted?: string, silent = false): Promise<ShipClient> {
     this.ensureOpen();
     const configured = vscode.workspace.getConfiguration('readymade').inspect<string>('origin');
     const remembered = this.context.workspaceState.get<string>('readymade.origin') ?? configured?.workspaceFolderValue ?? configured?.workspaceValue ?? configured?.globalValue;
     let address = selected ?? this.connectedClient?.origin ?? this.connectingOrigin, expectedShip: string | undefined = planet?.ship, local: LocalPlanet | undefined = planet;
     if (!address) {
-      this.selectingOrigin ??= this.pickOrigin(remembered);
+      // No question when the choice is clear; the list only when it is not.
+      let asked = false;
+      this.selectingOrigin ??= this.automatic(wanted).then(found => found ?? (asked = true, this.pickOrigin(remembered)));
       let choice: SelectedOrigin | undefined;
       try {choice = await this.selectingOrigin;} finally {this.selectingOrigin = undefined;}
       this.ensureOpen();
       if (!choice) throw new ShipClientError('cancelled');
       address = choice.origin; expectedShip = choice.planet?.ship; local = choice.planet;
+      // Say which ship was taken without asking, and how to choose another.
+      if (!asked && choice.planet && !silent) void vscode.window.setStatusBarMessage(`Connecting ${choice.planet.ship}, the ship running on this Mac. “Readymade: Switch Ship…” chooses another.`, 8000);
     }
     const origin = normalizeShipAddress(address);
+    // An address on this computer given as text (a remembered one, a link) is still a local ship: find it, so it
+    // signs in by itself instead of asking for a login code.
+    if (!local && !this.connectedClient && !this.clientConnecting && ['localhost', '127.0.0.1', '[::1]'].includes(new URL(origin).hostname)) {
+      try {
+        const found = (await discoverLocalPlanets()).planets.find(row => row.origin === origin && (!expectedShip || row.ship === expectedShip));
+        if (found) {local = await recheckLocalPlanet(found); expectedShip = local.ship;}
+      } catch { /* falls back to the saved code, then the private prompt */ }
+      this.ensureOpen();
+    }
     const existing = this.connectedClient;
     if (existing || this.clientConnecting) {
       if ((existing?.origin ?? this.connectingOrigin) !== origin) throw new Error('This window is connected to another ship. Use “Readymade: Switch Ship…” to move it, or open another Readymade window; existing apps keep their connection.');
@@ -252,7 +295,7 @@ export class MediaWorkbench implements vscode.Disposable {
       return shared;
     }
     this.connectingOrigin = origin;
-    this.clientConnecting = this.authenticate(origin, credentials, expectedShip, local);
+    this.clientConnecting = this.authenticate(origin, credentials, expectedShip, local, silent);
     try { return await this.clientConnecting; }
     finally { this.clientConnecting = undefined; this.connectingOrigin = undefined; this.authenticatingClient = undefined; }
   }
@@ -286,13 +329,13 @@ export class MediaWorkbench implements vscode.Disposable {
   private async localCode(local: LocalPlanet): Promise<string | undefined> {
     try {return await queryLoginCode(join(local.pier, '.urb/conn.sock'));} catch {return undefined;}
   }
-  private async authenticate(origin: string, credentials?: (origin: string) => Promise<string | undefined>, expectedShip?: string, local?: LocalPlanet): Promise<ShipClient> {
+  private async authenticate(origin: string, credentials?: (origin: string) => Promise<string | undefined>, expectedShip?: string, local?: LocalPlanet, silent = false): Promise<ShipClient> {
     let client: ShipClient | undefined;
     try {
       client = await authenticateShip(origin, {
         expectedShip,
         readCode: credentials ?? (async address => (local && await this.localCode(local)) || (await this.context.secrets.get('code:' + address) ?? await readSavedCode(address))),
-        askCode: async (address, rejected) => vscode.window.showInputBox({title: rejected ? 'Try your Urbit login code again' : 'Sign in to your Urbit',
+        askCode: async (address, rejected) => silent ? undefined : vscode.window.showInputBox({title: rejected ? 'Try your Urbit login code again' : 'Sign in to your Urbit',
           prompt: `${rejected ? 'That code wasn’t accepted. ' : ''}Private login for ${address}`, password: true, ignoreFocusOut: true}),
         saveCode: async (address, code) => this.context.secrets.store('code:' + address, code),
         ensureOpen: () => this.ensureOpen(), onClient: value => {this.authenticatingClient = value;},
@@ -301,6 +344,7 @@ export class MediaWorkbench implements vscode.Disposable {
       await this.context.workspaceState.update('readymade.origin', client.origin);
       const signedIn = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
       if (signedIn) await this.context.workspaceState.update('readymade.ship:' + client.origin, signedIn);
+      if (signedIn) await this.context.globalState.update(LAST_KEY, {ship: signedIn, origin: client.origin, local: !!local} satisfies LastShip);
       this.ensureOpen();
       this.client = client; this.localPlanet = local; this.watchCalls(client); this.changed(); return client;
     } catch (error) {

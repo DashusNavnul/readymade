@@ -193,14 +193,14 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     }));
     this.remoteSource = new RemoteSourceView(context.extension.id, () => this.media.connectedClient, async retainedOrigin => {
       if (this.media.connectedClient) return this.media.connectedClient;
-      if (retainedOrigin) return this.media.connectClient(retainedOrigin);
-      const origin = await vscode.window.showInputBox({title: 'Connect your ship for shared projects', prompt: 'Your exact HTTPS ship origin, or localhost HTTP', value: context.workspaceState.get<string>('readymade.origin')});
-      return origin ? this.media.connectClient(origin) : undefined;
+      // No address to type: a ship on this computer connects by itself, anything else through the Connect list.
+      return this.media.connectClient(retainedOrigin);
     }, () => {if (!this.disposed) this.render();}, this.remoteDrafts, new RemoteSuggestionJournal(join(context.globalStorageUri.fsPath, 'remote-suggestions')));
-    this.invitations = new ProjectInvitationsView(context.extension.id, () => this.media.connectedClient, () => this.selectedProject, async () => {
+    this.invitations = new ProjectInvitationsView(context.extension.id, () => this.media.connectedClient, () => this.selectedProject, async wanted => {
       if (this.media.connectedClient) return this.media.connectedClient;
-      const origin = await vscode.window.showInputBox({title: 'Connect your ship to join a project', prompt: 'Your exact HTTPS ship origin, or localhost HTTP', value: context.workspaceState.get<string>('readymade.origin')});
-      return origin ? this.media.connectClient(origin) : undefined;
+      // A join link names the ship it is for: if that ship runs on this computer it connects and signs in by itself.
+      const client = await this.media.connectClient(undefined, undefined, undefined, wanted);
+      this.render(); return client;
     }, new InvitationJournal(join(context.globalStorageUri.fsPath, 'project-invitations')), () => {if (!this.disposed) this.render();});
     this.workspaceRequests = new WorkspaceRequestView(context, () => this.render(), session => this.refresh(session));
     this.drafts = new DraftStore(join(context.globalStorageUri.fsPath, 'drafts'));
@@ -228,7 +228,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     });
     this.registrations.push(this.backendInstall, this.planetBoot, this.doctor);
     void this.offerStart();
-    void this.resumeSwitch();
+    void this.resumeSwitch().then(() => this.reconnectLast());
     this.home = new WelcomeView(connection, async action => {
       if (action === 'openProject') return vscode.commands.executeCommand('workbench.action.files.openFolder');
       if (action === 'connect') {if (await this.connectApps()) await this.setup.show(this.media.connectedClient); return;}
@@ -396,6 +396,15 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const ship = stopped[0].ship, choice = await vscode.window.showInformationMessage(`${ship} is not running.`, 'Start it');
     if (choice === 'Start it' && !this.disposed) {await this.planetBoot.show(); await this.planetBoot.restart(ship);}
   }
+  /** When the app opens: the ship last used here connects again by itself. Nothing is asked and no page is opened. */
+  private async reconnectLast(): Promise<void> {
+    if (this.disposed || this.media.connectedClient) return;
+    const client = await this.media.reconnectLast();
+    if (!client || this.disposed) return;
+    this.render(); void this.offerInstall();
+    const ship = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
+    if (ship) void vscode.window.setStatusBarMessage(`Connected to ${ship}`, 5000);
+  }
   /** After Switch Ship reloaded this window: connect the chosen ship, as Connect would. */
   private async resumeSwitch(): Promise<void> {
     try {
@@ -540,7 +549,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   }
   async connect(origin?: string, credentials?: (origin: string) => Promise<string | undefined>): Promise<void> {
     if (this.connecting) throw new Error('Connection already in progress');
-    const selected = origin ?? await vscode.window.showInputBox({ title: 'Connect Readymade to Urbit', value: this.media.connectedClient?.origin ?? this.context.workspaceState.get<string>('readymade.origin') ?? vscode.workspace.getConfiguration('readymade').get<string>('origin'), prompt: 'Exact HTTPS ship origin, or localhost HTTP' });
+    // No address to type: use the connected ship, or connect one (a ship on this computer signs in by itself).
+    const selected = origin ?? this.media.connectedClient?.origin ?? (await this.media.connectClient()).origin;
     if (!selected) return;
     this.connecting = true;
     try {
