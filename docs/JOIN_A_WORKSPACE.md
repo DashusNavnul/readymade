@@ -1,13 +1,114 @@
 # Join a Readymade workspace
 
-To work with [DashusNavnul](https://github.com/DashusNavnul), start by setting up
-Readymade on your own computer and connecting your own Urbit. Each participant
-keeps their own ship login private. A collaborator's access code is not an
-invitation and is never needed for joining a group.
+To join someone's project you need your own Urbit ship, the Readymade app, and a
+join link from the host. Tell the host your ship's name first: a link is made
+for one named ship and works only for it. Each participant keeps their own ship
+login private. A collaborator's access code is not an invitation and is never
+needed for joining.
 
-## What you can set up from this repository
+The shortest route is the fast path at the top of [LLM setup](LLM_SETUP.md):
+install the download, connect your ship, paste the link. This page explains
+what each step does.
 
-Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1),
+## Join a project from a link
+
+Choose **Home → Join a workspace** and paste the link your host sent (pasting is
+safer than clicking: a `vscodium://` link can open another editor).
+A ship running on your Mac does not need connecting first: the link names your
+ship, and Readymade connects it and signs in by itself, with no address or
+login code to type. A hosted ship is connected once from **Home → Connect your
+Urbit** with its web address and login code. Never use the host's ship address
+or login code as your own connection.
+
+**Your Urbit** also offers **Join a workspace** once a
+read-only invitation-service check succeeds for the authenticated identity.
+This button can be available while **Your coding workspace** is unavailable:
+accepting an invitation does not require a local coding worker. A missing or
+unverified invitation service leaves the setup-page button disabled; changing
+your access code will not install it; joining from **Home** installs it after
+asking. See the [scoped checks](COMPATIBILITY.md#guest-invitation-readiness-in-current-source).
+
+The owner selects a project and chooses **Invite Collaborator** in **Project
+Invitations**. After **Check Result** confirms acceptance, **Copy Join Link**
+copies the current matching native invitation for that recipient.
+
+The recipient opens that link, or uses **Join Project**, while connected to
+their own ship. **Check Result** reads a retained outcome after a lost response
+or restart; it does not resend the join. Joining needs no local Viki session.
+The owner can then grant file access in **Project Sharing** and copy the separate
+shared-project link described below.
+
+The invitation's deadline limits when it can be accepted. Membership and file
+grants last until revoked. **Pending Invitations** provides explicit revoke and
+expired-invitation cleanup actions. A join link contains project and recipient
+identities, not ship login credentials. Group membership and project membership
+remain separate.
+
+## What joining does on your own ship
+
+Joining a project needs one small agent on your ship, the collaboration
+service. When you paste an invitation link and your ship does not have it:
+
+1. Readymade says so and asks once. Declining leaves your ship unchanged and
+   the project unjoined.
+2. Your ship's own package manager installs the desk `%readymade-peer` from the
+   ship named in the link (the inviter), or from `~dashus-navnul` when the link
+   names none. It holds only the collaboration agent and what it compiles
+   against: no coding worker, no model connection, nothing that runs code.
+3. Readymade waits until the agent answers, checks that it speaks the protocol
+   this app needs (an older one is updated the same way first), then sends the
+   join once. **Check Result** reads the outcome later; it never joins twice.
+
+Your ship keeps that desk synced to its source, so the host's updates arrive by
+themselves. A ship that already runs the full backend installs nothing.
+
+The result shows in the Readymade sidebar under **Project Invitations**: a row
+named after the project that reads **join · accepted**.
+
+To undo: **Leave Project…** on that row, or **Readymade: Leave Project** from the
+command palette, ends your membership after asking (the owner's ship ends your
+file and session grants at the same moment). **Readymade: Remove Collaboration
+Service** uninstalls the desk; it works only on a ship that has no full backend.
+
+Requirements: your ship on Kelvin 408 (an up-to-date ship is; **Readymade: Ship
+Doctor** shows it as "System version"), able to reach the inviting ship. Any
+runtime will do, at its default memory. This flow was run live with the packaged
+app: a planet hosted, and its moon and two unrelated, brand-new comets (one on
+the app's bundled runtime, one on the stock Urbit runtime) joined from a link
+with nothing typed (70 to 90 seconds on a ship that had never had the service,
+about 10 afterwards). All ran on one Mac; two people on separate computers have not run it yet, so say
+what happened if you are the first.
+
+## Hosting a project for other people
+
+A host's ship needs the full backend. Run **Readymade: Install Pataphor on This
+Ship** from the command palette (it is also offered once after you connect).
+It needs a planet or larger running on your Mac that Readymade started on its
+own runtime with `--loom 33`, about 3 GB of free disk and Apple's Command Line
+Tools for Python 3; a planet already running on the stock runtime cannot host
+yet. Readymade first says which install your ship can run and why. See
+[install from the app](INSTALL_FROM_THE_APP.md). Then, under **Project Invitations** for your project:
+
+- **Invite Collaborator…**, then **Copy Join Link**. The link names your ship
+  as the place the guest installs from; your ship publishes that desk itself
+  the first time. A project holds sixteen ships in all.
+- **Members** shows each member's role, whether files are shared and how many
+  sessions are shared. **Offer Another Role…** changes a role when the member
+  accepts the new link; until then nothing changes.
+- **Pending Invitations** lists open invitations with **Copy Join Link**,
+  **Revoke** and, once past their deadline, **Close Expired**.
+- **Project History** reads the project's own record: who invited, joined,
+  declined, left or was removed, and when.
+- **Remove** takes a member out together with their file grant and every
+  session grant. A member who leaves or rejoins starts with no grants.
+
+Session sharing is off unless you turned it on for the project; you then choose
+each session and each member yourself. **Waiting on You** and **Project
+Activity** in the project view collect what needs you and what happened.
+
+## Your own apps in Readymade
+
+Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2),
 drag Readymade Workspace to Applications and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
 Choose **Home → Connect your Urbit**, authenticate privately, then open Groups, Glurff,
@@ -15,8 +116,8 @@ Calls or Landscape if those apps are already installed on your ship. In a new
 Readymade terminal, `groups` opens Tlon Groups and `landscape` opens the app
 launcher. Both reveal retained tabs without reloading them.
 
-Current source supports verified local discovery for real galaxies, stars,
-planets, moons and comets, with another identity check before sign-in. Use
+Readymade lists the real galaxies, stars, planets, moons and comets running on
+this Mac and signs the chosen one in for you, with another identity check first. Use
 **Enter a ship’s web address** for hosted ships. Automated discovery and login
 tests do not qualify live acceptance for every class or a first backend
 installation on your own ship.
@@ -24,9 +125,10 @@ installation on your own ship.
 Tlon's first synchronization in a fresh tab can take several minutes. Wait for
 the actual interface to appear; successful authentication alone is not enough.
 
-## Coordinate with the host
+## Optional: chat in Tlon Groups (not needed to join a project)
 
-Get the intended group/channel invitation from DashusNavnul or your workspace
+A project join link is all a project needs. To also chat in Tlon Groups, get
+the intended group/channel invitation from DashusNavnul or your workspace
 host. This repository does not contain a universal group invitation, public
 coding endpoint or automatic project grant. Do not guess those details from
 examples or development paths.
@@ -69,93 +171,6 @@ participants can observe the intended project/request and that one deliberately
 authorized, bounded coding request produces the correlated result. Distinguish
 request recording, execution, review and deployment. A local fixture, shared
 chat, or successful login is not that proof.
-
-## Join a coding project in the development build
-
-Open the link your host sent, or use **Home → Join a workspace** and paste it.
-A ship running on your Mac does not need connecting first: the link names your
-ship, and Readymade connects it and signs in by itself, with no address or
-login code to type. A hosted ship is connected once from **Home → Connect your
-Urbit** with its web address and login code. Never use the host's ship address
-or login code as your own connection.
-
-Current source also offers **Join a workspace** on **Your Urbit** once a
-read-only invitation-service check succeeds for the authenticated identity.
-This button can be available while **Your coding workspace** is unavailable:
-accepting an invitation does not require a local coding worker. A missing or
-unverified invitation service leaves the setup-page button disabled; changing
-your access code will not install it. This new readiness check is source-level
-work, absent from the linked preview. Exact-package UI and real owner/guest
-acceptance are still required; see the [scoped checks](COMPATIBILITY.md#guest-invitation-readiness-in-current-source).
-
-The owner selects a project and chooses **Invite Collaborator** in **Project
-Invitations**. After **Check Result** confirms acceptance, **Copy Join Link**
-copies the current matching native invitation for that recipient.
-
-The recipient opens that link, or uses **Join Project**, while connected to
-their own ship. **Check Result** reads a retained outcome after a lost response
-or restart; it does not resend the join. Joining needs no local Viki session.
-The owner can then grant file access in **Project Sharing** and copy the separate
-shared-project link described below.
-
-The invitation's deadline limits when it can be accepted. Membership and file
-grants last until revoked. **Pending Invitations** provides explicit revoke and
-expired-invitation cleanup actions. A join link contains project and recipient
-identities, not ship login credentials. Group membership and project membership
-remain separate.
-
-## What joining does on your own ship
-
-Joining a project needs one small agent on your ship, the collaboration
-service. When you paste an invitation link and your ship does not have it:
-
-1. Readymade says so and asks once. Declining leaves your ship unchanged and
-   the project unjoined.
-2. Your ship's own package manager installs the desk `%readymade-peer` from the
-   ship named in the link (the inviter), or from `~dashus-navnul` when the link
-   names none. It holds only the collaboration agent and what it compiles
-   against: no coding worker, no model connection, nothing that runs code.
-3. Readymade waits until the agent answers, checks that it speaks the protocol
-   this app needs (an older one is updated the same way first), then sends the
-   join once. **Check Result** reads the outcome later; it never joins twice.
-
-Your ship keeps that desk synced to its source, so the host's updates arrive by
-themselves. A ship that already runs the full backend installs nothing.
-
-To undo: **Leave Project** on the joined row ends your membership (the owner's
-ship ends your file and session grants at the same moment). **Remove
-Collaboration Service** uninstalls the desk; it is offered only on a ship that
-has no full backend.
-
-Requirements: your ship on Kelvin 408, able to reach the inviting ship. This
-flow was run live with the packaged app: a planet hosted, and both its moon and
-an unrelated, brand-new comet joined from a link with nothing typed (about 90
-seconds on the ship that had never had the service, about 10 afterwards). All
-ran on one Mac; two people on separate computers have not run it yet, so say
-what happened if you are the first.
-
-## Hosting a project for other people
-
-A host's ship needs the full backend: **Home → Install Pataphor** on a planet
-or larger running on your Mac. Readymade first says which install your ship can
-run and why. Then, under **Project Invitations** for your project:
-
-- **Invite Collaborator…**, then **Copy Join Link**. The link names your ship
-  as the place the guest installs from; your ship publishes that desk itself
-  the first time. A project holds sixteen ships in all.
-- **Members** shows each member's role, whether files are shared and how many
-  sessions are shared. **Offer Another Role…** changes a role when the member
-  accepts the new link; until then nothing changes.
-- **Pending Invitations** lists open invitations with **Copy Join Link**,
-  **Revoke** and, once past their deadline, **Close Expired**.
-- **Project History** reads the project's own record: who invited, joined,
-  declined, left or was removed, and when.
-- **Remove** takes a member out together with their file grant and every
-  session grant. A member who leaves or rejoins starts with no grants.
-
-Session sharing is off unless you turned it on for the project; you then choose
-each session and each member yourself. **Waiting on You** and **Project
-Activity** in the project view collect what needs you and what happened.
 
 ## Shared project drafts in the development build
 
@@ -266,12 +281,8 @@ compatibility before relying on this action.
 
 ## Prompt for a coding assistant
 
-> Set up https://github.com/DashusNavnul/readymade so I can collaborate with
-> DashusNavnul. Read README.md, docs/LLM_SETUP.md and docs/JOIN_A_WORKSPACE.md.
-> Build and verify the desktop, connect my own Urbit through private in-app
-> authentication, and open Tlon Groups. Help me use the host's actual invitation;
-> ask only for missing connection or invitation details, never my access code.
-> Do not send messages, start calls or modify my ship as an installation test.
-> Verify shared coding prerequisites and clearly report any missing backend or
-> project grant instead of claiming that installation alone enables multiplayer
-> execution.
+> Follow the fast path in docs/LLM_SETUP.md of https://github.com/DashusNavnul/readymade
+> to install Readymade, connect my own ship and join the project from the link
+> I was sent. Do not build from source. Never ask me for my ship's login code or
+> my Mac password in chat. Do not boot, SSH into or modify my ship, and do not
+> send messages or start calls as a test. Tell me plainly what the app showed.

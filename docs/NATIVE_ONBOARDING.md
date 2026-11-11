@@ -270,7 +270,8 @@ version. The check blocks every page request except GET/HEAD and fails if a page
 write is attempted. It never creates a project, opens a session or starts a model.
 
 Use an owner-only JSON authentication file containing `origin` and `code`, created
-privately with a trusted editor or secret manager. It must be a regular file owned
+privately by the ship's owner with a trusted editor or secret manager. An
+assistant must not create, read or print this file. It must be a regular file owned
 by the current user, mode `0600`. Keep it outside the checkout and never paste its
 contents into chat, arguments, logs or a repository. Substitute the actual app
 path, receiving identity, project ID and prepared working desk below:

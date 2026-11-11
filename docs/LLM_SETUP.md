@@ -7,72 +7,107 @@ Use this guide to install the public desktop alpha and connect it to the receivi
 This is the whole job for a tester who was sent a join link. Do these steps in
 order; stop and report at the first one that does not behave as described.
 
-**1. Check the Mac and the ship.** Apple Silicon Mac, macOS 12 or later. The
-person's own Urbit ship must be on Kelvin 408. Readymade works with a ship
-running on this Mac or one hosted elsewhere.
+**You, the assistant, do step 2 in a shell. Steps 3 to 5 are clicks in the
+Readymade window: you cannot do them or see their result. Tell the person each
+click, one at a time, and ask them to read back what the app shows.**
 
-**2. Download, verify, install, open.** No build tools are needed.
+**1. Check the Mac, and ask one question.** Run `uname -m` (must print `arm64`)
+and `sw_vers -productVersion` (must be 12 or later). Then ask the person: "What
+is your ship's name, and has the host been told it?" A join link is made for
+one named ship and works only for that ship, so the host needs the name before
+sending the link.
+
+The person's own Urbit ship can run on this Mac or be hosted elsewhere, on any
+runtime: joining was run live with a ship on the stock Urbit runtime at its
+default memory. The ship must be on Kelvin 408, which a ship kept up to date
+is. You cannot check that from the shell and must not touch the ship; after
+step 3, **Readymade: Ship Doctor** shows it as "System version".
+
+**2. Download, verify, install, open.** No build tools are needed. Run this as
+ONE script: the lines depend on each other. The download is about 280 MB, so
+allow several minutes before treating it as stuck.
 
 ```sh
+set -e
 mkdir -p ~/Downloads/readymade && cd ~/Downloads/readymade
-base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.1
-curl -fLO $base/Readymade-0.2.0-alpha.20261111.1-macos-arm64.dmg
+base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.2
+curl -fLO $base/Readymade-0.2.0-alpha.20261111.2-macos-arm64.dmg
 curl -fLO $base/SHA256SUMS.txt
-shasum -a 256 -c SHA256SUMS.txt          # must print: OK
-hdiutil attach Readymade-0.2.0-alpha.20261111.1-macos-arm64.dmg -nobrowse
+shasum -a 256 -c SHA256SUMS.txt          # must print: OK. If not, stop here.
+# An older copy must be closed and moved away first, never copied over.
+pkill -TERM -f "Readymade Workspace.app/Contents/Resources/VSCodium.app/Contents/MacOS/[V]SCodium" && sleep 3 || true
+[ ! -e "/Applications/Readymade Workspace.app" ] || mv "/Applications/Readymade Workspace.app" ~/.Trash/"Readymade Workspace replaced $(date +%Y%m%d-%H%M%S).app"
+hdiutil attach Readymade-0.2.0-alpha.20261111.2-macos-arm64.dmg -nobrowse
 cp -R "/Volumes/Readymade Workspace/Readymade Workspace.app" /Applications/
 hdiutil detach "/Volumes/Readymade Workspace"
-open -a "Readymade Workspace"
+open "/Applications/Readymade Workspace.app"
 ```
+
+If the copy into `/Applications` is refused (an account without administrator
+rights), use `~/Applications` in the three places instead (`mkdir -p
+~/Applications` first). Projects, settings and the saved connection live outside
+the app and survive replacing it.
 
 A file fetched with `curl` carries no quarantine mark, so the app opens
 directly. If the person downloaded it in a browser instead, macOS may block the
 first launch: use **System Settings → Privacy & Security → Open Anyway**. The
 app is signed with a local certificate and is not notarized. macOS may ask once
 for **Readymade Workspace Safe Storage**: the person types their Mac password
-into that macOS dialog themselves and chooses **Always Allow**.
+into that macOS dialog themselves and chooses **Always Allow**. Tell the person
+to watch for that dialog; the app waits until it is answered.
 
 **3. Connect the person's own ship.** Nothing is typed for a ship on this Mac.
 
 - *Ship running on this Mac:* if it is the only one running, Readymade connects
-  it by itself when the app opens and says so. Otherwise choose it once under
-  **Home → Connect your Urbit**. It is listed when its runtime file is named
-  `urbit` or starts with `vere` and it answers within a few seconds.
-- *Hosted ship:* **Home → Connect your Urbit → Enter a ship's web address**,
-  then the person types the ship's login code into Readymade's own private box,
-  once. Never ask for that code in chat.
+  it by itself when the app opens and says so. If it does not, or several are
+  running, the person chooses it once under **Home → Connect your Urbit**. A
+  ship is listed when its runtime file is named `urbit`, `vere`, or `vere`
+  followed by `-` or `.` and a version, and it answers within a few seconds.
+- *Ship on this Mac that is not listed:* **Home → Connect your Urbit → Enter a
+  ship's web address**, give `localhost:` and the ship's web port, and the
+  person types the login code into Readymade's own private box, once.
+- *Hosted ship:* the same **Enter a ship's web address**, with the ship's web
+  address. Never ask for the login code in chat.
 
-**4. Join.** The host sends a join link. In Readymade choose **Home → Join a
-workspace** (or run **Readymade: Join Project** from the command palette) and
-paste the whole link. Prefer pasting to clicking the link: its `vscodium://`
-form can open another editor if one is installed. The link names the ship it is
-for; a ship on this Mac that matches is connected without a question.
+**4. Join.** The person chooses **Home → Join a workspace** (or runs
+**Readymade: Join Project** from the command palette) and pastes the whole
+link. Paste it; do not click it: its `vscodium://` form can open another editor
+if one is installed. A ship on this Mac that the link names is connected
+without a question. If the app says the invitation is for another ship, the
+link was made for a different name: ask the host for a link for this ship.
 
 If the ship has no collaboration service yet, Readymade asks once to install
 it. The person confirms; the ship then installs one small agent from the host's
 ship and keeps it updated. Expect about a minute and a half the first time on a
-ship that never had it, a few seconds afterwards. When it finishes the project
-row reads **join · accepted**.
+ship that never had it, a few seconds afterwards. The result appears in the
+Readymade sidebar under **Project Invitations**: a row named after the project
+that reads **join · accepted**.
 
-**5. Report.** Tell the host the row's text. If anything stalls, run
-**Readymade: Ship Doctor** from the command palette and send what it shows.
-**Leave Project** and **Remove Collaboration Service** undo steps 4 and the
-install.
+**5. Report.** Tell the host that row's text. If anything stalls, the person
+runs **Readymade: Ship Doctor** from the command palette and sends what it
+shows. To undo: **Readymade: Leave Project** and **Readymade: Remove
+Collaboration Service**, both from the command palette, both asking first.
 
-**To host instead of join:** the ship needs the full backend. **Home → Install
-Pataphor** on a planet or larger running on this Mac, then **Project
-Invitations → Invite Collaborator…** and **Copy Join Link**.
+**To host instead of join:** the ship needs the full backend, which has real
+requirements: a planet or larger running on this Mac, started by Readymade on
+its own runtime with `--loom 33`, about 3 GB of free disk, and Apple's Command
+Line Tools for Python 3. A planet already running on the stock runtime cannot
+host yet. Run **Readymade: Install Pataphor on This Ship** from the command
+palette (it is also offered once after connecting), then in the sidebar
+**Project Invitations → Invite Collaborator…** and **Copy Join Link**. See
+[install from the app](INSTALL_FROM_THE_APP.md).
 
-Do not start, stop, restart or reconfigure the person's ship, and do not
-install anything on it yourself: the two confirmations above belong to the
-person. Everything below this section is the careful, complete version.
+Three confirmations belong to the person alone: the macOS Keychain dialog,
+installing the collaboration service, and installing Pataphor. Do not start,
+stop, restart or reconfigure the person's ship, and do not install anything on
+it yourself. Everything below this section is the careful, complete version.
 
 ## Establish the minimum facts
 
 Inspect the local environment first. Ask only for facts that remain missing:
 
 1. Is this an Apple Silicon Mac? The prebuilt download needs no development tools.
-   Building from source separately requires Node.js 22, Python 3.9+ and Xcode command-line tools.
+   Building from source separately requires Node.js 22, Python 3.9+, Xcode command-line tools, OpenSSL and zig 0.15.2 exactly.
 2. Let the operator choose their real running ship from Readymade's list, or
    enter a hosted ship's address through **Enter a ship’s web address**.
 3. Use **Your Urbit** to discover installed app pages and coding compatibility;
@@ -84,7 +119,7 @@ Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before select
 
 ## Install the download
 
-Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1)
+Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2)
 for a tester who wants to run the app. Open the `.dmg`, drag Readymade Workspace
 to Applications, open it there and eject the disk image. The download uses a
 persistent local signing certificate and is not notarized; a trusted official download may need macOS
@@ -146,14 +181,14 @@ Fake ships and duplicate identities are excluded. Discovery never reads keyfiles
 boots a ship or changes an app. If the ship is hosted elsewhere or cannot be
 verified locally, choose **Enter a ship’s web address**.
 
-The linked November 10 preview predates discovery of all ship classes and lists
-local planets only. In that preview, use **Enter a ship’s web address** for other
-classes. Automated tests cover discovery and authenticated identity matching
-across all classes; live acceptance for every class remains to be established.
+The current preview lists every real ship running on the Mac. A planet, a moon
+and comets have been connected live; automated tests cover the other classes.
 Ship class does not establish which apps or coding services are installed.
 
-Let the operator enter their access code in the application's private password field. No Settings
-edit is needed. Bare hostnames use HTTPS; loopback addresses such as
+A ship chosen from the local list is signed in without typing: Readymade asks
+that ship for its own login code over the ship's owner-only local socket. For a
+ship reached by web address, let the operator enter their access code in the
+application's private password field. No Settings edit is needed. Bare hostnames use HTTPS; loopback addresses such as
 `localhost:8080` use HTTP. Ordinary ship app/login URLs are reduced to their
 origin; credentials, query strings, fragments and reverse-proxy prefixes are
 refused. Do not put a code in the address field or chat.
@@ -166,7 +201,7 @@ rejected saved code can be replaced privately. Existing connections and explicit
 configured addresses remain supported. Use **Connect another Urbit in a new
 window** for another identity; existing app tabs retain their original ship.
 
-This connection requires no SSH, boot, restart, Clay mount or ship modification. If a separately authorized task actually boots any Urbit instance, mount `%base` through native Clay `%mont` once `conn.sock` is ready, then verify nonempty exported `sys/hoon.hoon`, `sys/zuse.hoon`, `sys/lull.hoon` and `sys/vane/clay.hoon` before claiming readiness. That startup rule is not a reason to boot a ship for this desktop setup.
+This connection requires no SSH, boot, restart, Clay mount or ship modification. Do not boot a ship for this desktop setup. A separately authorized backend installation that does boot one follows the startup checks in the [native installation guide](../backend/install/README.md).
 
 If an app is missing, report which page is unavailable. Do not guess an app publisher, install a desk or modify the ship. The main coding connection requires the backend endpoints described in [compatibility](COMPATIBILITY.md); the included native installation tools require separate owner authorization and verification; full self-service release acceptance remains open.
 
@@ -194,12 +229,12 @@ session setup](NATIVE_ONBOARDING.md) to register existing private source and ope
 a scoped coding session through the shipped native forms. This does not replace
 backend installation, source import or provider pairing.
 
-Follow [Join a workspace](JOIN_A_WORKSPACE.md) after local app access works. Use
-the host's actual group invitation and project details. Never use another
-participant's ship login. Group communication and shared coding execution have
-separate acceptance checks; the included native installation tools do not make end-to-end multiplayer
-onboarding automatic. Complete backend verification, project setup and provider
-pairing before claiming coding readiness.
+To join someone's project, use the fast path at the top: the host's join link
+and the person's own ship are all it needs. [Join a workspace](JOIN_A_WORKSPACE.md)
+explains what joining does on the ship. Never use another participant's ship
+login. Chat in Tlon Groups is separate and optional, with its own invitation.
+Hosting and running shared coding need the full backend, project setup and
+provider pairing; verify those before claiming coding readiness.
 
 ## Verify in layers
 

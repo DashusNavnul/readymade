@@ -21,9 +21,9 @@ a charge or a provider issuance request after an unknown outcome.
 
 ## Build or packaging fails
 
-The package script supports Apple Silicon macOS. Node.js 22, npm and Xcode command-line tools are prerequisites. Run `node --version`, `npm --version` and `xcrun --find clang`; then run `npm ci --ignore-scripts`, `npm run check`, `npm run lint` and `npm test` from the repository root.
+The package script supports Apple Silicon macOS. Node.js 22, npm, Python 3.9+, Xcode command-line tools, OpenSSL and zig 0.15.2 exactly are prerequisites (zig builds the Urbit runtime the first time `./package.sh` runs on a Mac). Run `node --version`, `npm --version`, `xcrun --find clang` and `zig version`; then run `npm ci --ignore-scripts`, `npm run check`, `npm run lint` and `npm test` from the repository root.
 
-An upstream archive digest mismatch is a failed integrity check. Preserve the archive for inspection; do not edit the pinned digest to make it pass. Network access is needed for npm dependencies and the pinned VSCodium download.
+An upstream archive digest mismatch is a failed integrity check. Preserve the archive for inspection; do not edit the pinned digest to make it pass. Network access is needed for npm dependencies, the pinned VSCodium download and, the first time, the Urbit runtime source and boot pill.
 
 “Preview app or receipt already exists” means packaging preserved an earlier build. Choose a new destination rather than deleting working output:
 
@@ -53,9 +53,7 @@ Ordinary app/login links are accepted, but query strings, fragments and URL
 credentials are refused. Enter the access code only in the private password
 field. Never paste it into chat or use it as a command-line argument.
 
-The November 10 preview predates discovery of all ship classes: its list and
-refresh label still say planets. The current preview lists every real ship
-running on the Mac. Automated tests do not prove live compatibility with every
+The current preview lists every real ship running on the Mac. Automated tests do not prove live compatibility with every
 class.
 
 ## My ship runs on this Mac but is not in the list
@@ -110,8 +108,7 @@ In current source, **Your Urbit** checks **Project invitations** separately from
 the local coding backend. **Join a workspace** is enabled there only after the
 read-only invitation catalog matches the authenticated ship and supported
 protocol. A guest does not need a local Viki session or model/provider connection
-to accept the owner's invitation. The November 10 preview lacks this setup-page
-check and uses **Home → Join a workspace** only.
+to accept the owner's invitation.
 
 HTTP 404 means the invitation service is missing. A refused, malformed,
 foreign-owner or unavailable response leaves it unverified. Keep the working

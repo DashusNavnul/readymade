@@ -43,15 +43,28 @@ Preserve this directory securely across build-machine migration. A local
 certificate is separate from Apple's signing and notarization requirements for
 public distribution.
 
-## Local planet discovery
+## Local ship discovery and sign-in
 
 The macOS picker inspects same-user runtime processes, their held pier locks,
 owned native sockets and matching TCP listeners. It sends only fixed read
 queries for identity, liveness, HTTP port and Jael's fake-ship flag, followed by
-an unauthenticated loopback Eyre header check. It never executes a discovered
-binary, reads runtime command arguments or keyfiles, boots a pier, starts a
-thread, mounts a desk or changes a ship lock. Each scan has an eight-second
-deadline, a candidate cap and bounded query frames.
+an unauthenticated loopback Eyre header check. Listing ships never executes a
+discovered binary, reads keyfiles, boots a pier, mounts a desk or changes a ship
+lock. Each scan has an eight-second deadline, a candidate cap and bounded query
+frames.
+
+Three things go beyond listing, each only for the ship you chose:
+
+- **Signing in a ship on this Mac.** Readymade asks that ship for its own login
+  code over the ship's owner-only local socket (one read-only thread), uses it
+  for that sign-in and does not store or show it. Only a process running as
+  your macOS user can open that socket. If the read fails you are asked for the
+  code in the private field instead.
+- **Ship Doctor and the install offer** read the runtime's command line to see
+  its `--loom` memory setting, and Ship Doctor runs one read-only thread for the
+  ship's system version and pending timers. Neither changes the ship.
+- **Installing** the collaboration service or Pataphor changes the ship, and
+  happens only after you confirm it in the app.
 
 Discovered connections use the verified listener's literal IPv4 or IPv6 loopback
 address, rather than resolving `localhost`. A process listening on the other
@@ -59,9 +72,9 @@ address family at the same port cannot receive that connection's login code.
 Saved codes remain bound to their exact origin; changing to a literal address
 may require signing in privately again.
 
-Only unique, live, non-fake planet identities enter the list. The selected row
+Only unique, live, non-fake ship identities enter the list. The selected row
 is verified again before authentication, and the returned login cookie must
-identify that planet before any replacement code is stored. Discovery records
+identify that ship before any replacement code is stored. Discovery records
 are transient observations, not ship authority or proof of ownership. Hosted
 ships remain available through explicit address entry.
 
@@ -126,7 +139,7 @@ identity remain authoritative across participants. Existing per-workspace
 attempt records are retained, not reset or treated as permission to replay.
 
 The integrated local terminal runs with your local account's privileges. The
-generated `landscape`, `groups` and `lattice` commands only ask the packaged editor CLI to open the
+generated `landscape`, `groups`, `lattice`, `glurff` and `noltbook` commands only ask the packaged editor CLI to open the
 registered app URI with the selected local profile. They accept no
 arguments and do not modify global shell configuration. None is a remote
 shell or a ship installer. The package trusts its own bundled URI handler so

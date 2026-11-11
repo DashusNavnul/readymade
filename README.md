@@ -6,38 +6,25 @@ Use **Code · Lattice · Groups · Glurff · Calls · Landscape** to switch with
 
 **Public alpha for Apple Silicon macOS.** Download the current preview below, or build from source. Opening the desktop does not install Urbit applications or modify your ship. The repository also supplies bounded native installation tools; full multiplayer coding parity and self-service backend installation acceptance are not established.
 
-The [backend source recipes](backend/README.md) assemble the complete
-coding backend candidate from included application source and pinned public
-dependencies, with license notices. Use the [native installation guide](backend/install/README.md)
-for owner-authorized receiver checks, staging and preservation. Noltbook has a
-separate [source, activation and post-install recipe](backend/noltbook/README.md).
-These paths require actual native access to the receiving ship and retained
-verification receipts; a web login alone is insufficient. Independent-operator
-acceptance and the release gates remain open.
-
-The current ten-app backend source includes shared-file access, editing activity
-and explicit owner-reviewed replies with complete file/check reports. Its native
-compilation, original proofs and a complete captured-state migration rehearsal
-pass. Live installation and real result delivery remain unfinished; historical
-installation receipts do not qualify this exact candidate. Older installed
-backends may lack the full-report protocol and report new shares unavailable.
-Previous summary-only attempts remain check-only, without resending; see
-[parity](docs/PARITY.md).
-
 ## Set it up with an assistant
 
-Give your coding assistant this repository and say: "Follow the fast path in
-docs/LLM_SETUP.md to install Readymade, connect my own ship and join the project
-from the link I was sent." That section is five steps with the exact commands:
-download and verify the release, install and open it, connect your ship (nothing
-to type for a ship on your Mac), paste the join link, report the result.
+Give your coding assistant this repository and say:
+
+> Follow the fast path in docs/LLM_SETUP.md of https://github.com/DashusNavnul/readymade to install Readymade, connect my own ship and join the project from the link I was sent. Do not build from source. Never ask me for my ship's login code or my Mac password in chat.
+
+That section is five steps: the assistant downloads, verifies, installs and
+opens the release; then it walks you through three clicks in the app: connect
+your ship (nothing to type for a ship on your Mac), paste the join link, read
+back the result. Before you start, tell the host your ship's name: a join link
+is made for one named ship.
 
 ## Download and install
 
-On an **Apple Silicon Mac (M1 or newer)**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1).
-Open it, drag **Readymade Workspace** to **Applications**, then open the app
-from Applications and eject the disk image. Running the download needs no
+On an **Apple Silicon Mac (M1 or newer) running macOS 12 or later**, download the `.dmg` from the
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2).
+Quit any older Readymade first. Open the image, drag **Readymade Workspace** to
+**Applications** (choose Replace if asked), then open the app from Applications
+and eject the disk image. Running the download needs no
 Node.js, npm, Python, Xcode or source build. Intel, Windows and Linux packages
 are not included.
 
@@ -54,9 +41,11 @@ code; neither belongs in chat.
 
 A ship running on this Mac is found and signed in for you: nothing to type, no
 login code. When exactly one is running, Readymade connects it by itself as soon
-as the app opens, the very first time included, and says so. With several
-running it reconnects the one you last used, or you pick from **Home → Connect
-your Urbit**; a join link connects the ship it names. Turn this off with the
+as the app opens, the very first time included, and says so (reconnecting on
+reopen was run live; the very first open is covered by automated tests only, so
+if nothing connects, pick the ship under **Home → Connect your Urbit**). With
+several running it reconnects the one you last used, or you pick from that
+list; a join link connects the ship it names. Turn this off with the
 setting **Readymade: Connect On Start**. For a hosted ship enter its web
 address and its login code once; the code is kept in the Mac's Keychain and not
 asked again, and that ship reconnects by itself too.
@@ -73,30 +62,46 @@ Home has a command line. Type what you want in plain words and press Return:
 
 It is answered by the coding assistant already installed on your computer: Claude Code if it is
 found, otherwise Codex, signed in with your own account. Readymade sends it only the line you typed,
-the list of Readymade commands, and whether a ship is connected and a project is chosen. The
-assistant gets no tools and can only name commands from that list; a ship name, role, link or
-address is used only if you typed it yourself. Each command then opens its usual screen, with its
-usual questions and confirmations. To pick the assistant yourself, set `readymade.assistantPath`
-to the full path of a `claude` or `codex` program.
+the list of Readymade commands, and whether a ship is connected and a project is chosen. Its
+answer can only name commands from that list, and a ship name, role, link or address is used only
+if you typed that exact word yourself. Claude Code is given no tools for this. Codex runs in its
+own read-only sandbox; it returned no answer in testing (the test account was out of quota), so
+treat Codex as untested.
+
+Each command opens its usual screen and asks there for anything you did not type. What you did
+type is acted on: an invitation with the ship and role typed is sent straight away. Removing,
+revoking and leaving always ask first. To pick the assistant yourself, set
+`readymade.assistantPath` to the full path of a `claude` or `codex` program.
 
 ## Work with someone else
 
 **To join someone's project** you need only your own ship and their invitation
-link. Open the link, or use **Home → Join a workspace** and paste it. If your
+link. Tell the host your ship's name first; the link works only for the ship it
+was made for. Choose **Home → Join a workspace** and paste the link (pasting is
+safer than clicking: a `vscodium://` link can open another editor). Your ship
+can be on any runtime; a ship on the stock Urbit runtime joined live. If your
 ship runs on this Mac you do not need to connect first: the link names your
 ship, and Readymade connects and signs it in by itself. If your ship does not
 have the collaboration service yet, Readymade asks once, then has your ship's
-own package manager install it from the inviting ship (falling back to
-`~dashus-navnul`). That is one small agent; it needs no coding worker, model
+own package manager install it from the ship the link names as its source,
+normally the inviting ship (`~dashus-navnul` when an older link names none).
+That is one small agent; it needs no coding worker, model
 or provider on your ship, and your ship keeps it updated by itself. Nothing is
-installed without that one confirmation. **Leave Project** and **Remove
-Collaboration Service** undo both steps.
+installed without that one confirmation. The result shows in the Readymade
+sidebar under **Project Invitations** as a row reading **join · accepted**.
+**Readymade: Leave Project** and **Readymade: Remove Collaboration Service**,
+from the command palette, undo both steps.
 
-**To host a project for others** your ship needs the full backend. On a planet
-(or larger) running on this Mac, **Home → Install Pataphor** installs it from
-inside the app after showing what it will do; the collaboration service alone is
-offered instead when the ship is a moon or comet or was started with too little
-memory. Then open **Project Invitations**: invite a ship, copy its join link,
+**To host a project for others** your ship needs the full backend, and that has
+real requirements: a planet (or larger) running on this Mac, started by
+Readymade on its own runtime with `--loom 33`, about 3 GB of free disk, and
+Apple's Command Line Tools for Python 3. A planet already running on the stock
+runtime cannot host yet; it can still join. Run **Readymade: Install Pataphor
+on This Ship** from the command palette (it is also offered once after you
+connect); it shows what it will do first, and offers the collaboration service
+alone when the ship is a moon or comet or was started with too little memory.
+See [install from the app](docs/INSTALL_FROM_THE_APP.md). Then open **Project
+Invitations**: invite a ship, copy its join link,
 see each member's role and what is shared with them, offer another role, read
 the project's history, and remove a member together with every grant.
 
@@ -107,20 +112,21 @@ and the Mac and says what it found, and changes nothing.
 
 What is and is not verified: the whole first-timer path was run live with the
 packaged app, the guest typing nothing. A planet hosted; the guests were its own
-moon and then a brand-new comet with no tie to the host, started with the app's
-bundled runtime. Each opened the host's join link in a fresh window with nothing
+moon and then two brand-new comets with no tie to the host, one started with the
+app's bundled runtime and one on the stock Urbit runtime at its default memory.
+Each opened the host's join link in a fresh window with nothing
 connected: the app connected the ship by itself, the ship installed the
 collaboration service from the host over the network, and joined (about 10
 seconds where the service had been installed before, about 90 on the ship that
 never had it). After reopening, the guest left in 2 seconds and rejoined in 4.
-All three ships ran on one Mac: two people on separate computers have not yet
+All the ships ran on one Mac: two people on separate computers have not yet
 run this release, so treat a first session with a new collaborator as that test
 and report what happens. Ships must be on Kelvin 408. A successful login alone
 does not establish shared coding readiness.
 
 ## Build and open from source
 
-You need Node.js 22 with npm, Python 3.9+, Git, Xcode command-line tools and an Apple Silicon Mac. Python is used by the backend preparation and offline verification tests. See [compatibility](docs/COMPATIBILITY.md) for platform and backend requirements.
+You need Node.js 22 with npm, Python 3.9+, Git, Xcode command-line tools, OpenSSL, zig 0.15.2 exactly, and an Apple Silicon Mac. The first `./package.sh` on a Mac builds the Urbit runtime from source with zig and downloads a boot pill; later runs reuse it. Most people should use the download instead. Python is used by the backend preparation and offline verification tests. See [compatibility](docs/COMPATIBILITY.md) for platform and backend requirements.
 
 ```sh
 git clone https://github.com/DashusNavnul/readymade.git
@@ -137,9 +143,9 @@ An empty window opens **Readymade Home**. Choose **Open a project** for a local
 folder, **Connect your Urbit** for your apps, or **Join a workspace** for an
 invitation. Use **Home** in the sidebar or bottom bar to return at any time.
 
-Choose **Connect your Urbit**, select a verified running planet on this computer
-and sign in through the private login field if needed. Hosted ships can still
-be added by web address. **Your Urbit** shows the connected identity, available
+Choose **Connect your Urbit** and select your running ship; a ship on this
+computer is signed in for you. Hosted ships are added by web address, with the
+login code typed once into the private login field. **Your Urbit** shows the connected identity, available
 app pages and a separate coding status. No Settings edit is required.
 
 **Need a planet? Get an Urbit** opens the new-planet page. The proposed service offers a free identity at signup, paid monthly
@@ -199,7 +205,7 @@ Live local-ship verification passed for the `lattice` terminal command, rendered
 
 ## Collaborate with DashusNavnul
 
-Start with [Join a workspace](docs/JOIN_A_WORKSPACE.md): build Readymade, connect your own ship, and use the host's actual group invitation. The guide includes a copyable LLM prompt and the separate requirements for shared coding execution. Group membership does not automatically grant project access. The included [native installation tools](backend/install/README.md) require separate owner authorization, actual native access and verification; they do not provide automatic multiplayer onboarding.
+Send your ship's name to the host, get a join link back, and follow the fast path in [LLM setup](docs/LLM_SETUP.md): install the download, connect your own ship, paste the link. [Join a workspace](docs/JOIN_A_WORKSPACE.md) explains what joining does on your ship. Chat in Tlon Groups is separate and optional and has its own invitation; group membership does not grant project access. Hosting needs the full backend (see **Work with someone else** above); the lower-level [native installation tools](backend/install/README.md) require separate owner authorization, actual native access and verification.
 
 ## What is implemented
 
@@ -207,6 +213,26 @@ Start with [Join a workspace](docs/JOIN_A_WORKSPACE.md): build Readymade, connec
 - Retained Urbit app tabs, exact-origin authentication and native media permission handling.
 - With a compatible backend: project/session selection, retained shared request inspection, explicit permission review, submit-once handling and native outcome recovery.
 - Project file browsing, paginated and complete-file reads, immutable ship snapshots, private drafts, source diffs, native checks, code review and answer acceptance, plus ship terminal observation/control.
+
+### Backend source and installation tools (for operators)
+
+The [backend source recipes](backend/README.md) assemble the complete
+coding backend candidate from included application source and pinned public
+dependencies, with license notices. Use the [native installation guide](backend/install/README.md)
+for owner-authorized receiver checks, staging and preservation. Noltbook has a
+separate [source, activation and post-install recipe](backend/noltbook/README.md).
+These paths require actual native access to the receiving ship and retained
+verification receipts; a web login alone is insufficient. Independent-operator
+acceptance and the release gates remain open.
+
+The current ten-app backend source includes shared-file access, editing activity
+and explicit owner-reviewed replies with complete file/check reports. Its native
+compilation, original proofs and a complete captured-state migration rehearsal
+pass. Live installation and real result delivery remain unfinished; historical
+installation receipts do not qualify this exact candidate. Older installed
+backends may lack the full-report protocol and report new shares unavailable.
+Previous summary-only attempts remain check-only, without resending; see
+[parity](docs/PARITY.md).
 
 Urbit owns canonical project state, permissions and execution. The desktop holds presentation state and local drafts; saving a draft does not change the ship. A recorded instruction or prepared candidate does not prove completed work or deployment.
 
@@ -224,6 +250,8 @@ Local fixtures do not establish compatibility with your ship.
 
 Copy this prompt into your coding assistant:
 
-> Help me build Readymade from https://github.com/DashusNavnul/readymade and connect it to my own Urbit. Read README.md, docs/LLM_SETUP.md and docs/JOIN_A_WORKSPACE.md first. Check my platform and prerequisites, build and verify the desktop, then guide me through private in-app authentication. Never ask me to paste my access code into chat. Do not boot, SSH into or modify my ship to connect the UI. Clearly distinguish desktop checks, installed app availability and the separate shared coding backend requirements.
+> Follow the fast path in docs/LLM_SETUP.md of https://github.com/DashusNavnul/readymade to install Readymade, connect my own ship and join the project from the link I was sent. Do not build from source. Never ask me for my ship's login code or my Mac password in chat. Do not boot, SSH into or modify my ship.
+
+To build from source instead, say so explicitly and have the assistant follow **Build and open from source** above.
 
 Follow [LLM setup](docs/LLM_SETUP.md), [troubleshooting](docs/TROUBLESHOOTING.md) and [security](docs/SECURITY.md). Readymade source is [MIT licensed](LICENSE); bundled upstream components retain their own licenses and notices.

@@ -70,13 +70,14 @@ are refused. The low-level transport still requires an exact origin. HTTP is
 accepted only for `localhost`, `127.0.0.1`, or `[::1]`. Another ship uses another
 window. The `landscape` command in new integrated local terminals opens the same
 retained Landscape tab. `groups` opens Tlon Groups; `lattice` opens Lattice's
-document workspace. Each command accepts no arguments.
+document workspace; `glurff` and `noltbook` open those apps. Each command
+accepts no arguments.
 
-The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1) discovers every
-real ship class running on the Mac; the November 10 preview listed local planets
-only. The all-class change has automated discovery
-and authentication coverage; it does not yet establish live acceptance for every
-class, a newly qualified downloadable package or installed app availability.
+The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2) discovers every
+real ship class running on the Mac. A planet, a moon and comets have been
+connected live with the packaged app; the other classes have automated discovery
+and authentication coverage only. Ship class does not establish installed app
+availability.
 
 Lattice, Groups, Glurff, Noltbook and Landscape links can hand off between their managed tabs.
 Arbitrary apps launched from Landscape are not part of this route allowlist.
@@ -183,8 +184,8 @@ operations governed by the ship.
 ### Backend distribution gates
 
 The [complete source assembly](../backend/README.md) reconstructs the current
-1,474-file backend from included application source and pinned public inputs:
-927 application files, 543 inherited or derived Urbit files, four browser assets,
+1,490-file backend from included application source and pinned public inputs:
+943 application files, 543 inherited or derived Urbit files, four browser assets,
 and six accompanying notice files. The ten-app installation bill is distinct
 from historical development/staging bills. Use the shipped receiver tools and
 the receiving ship's actual inventory; never copy a development bill.
