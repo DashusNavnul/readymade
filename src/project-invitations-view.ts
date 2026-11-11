@@ -124,7 +124,24 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (this.closed || this.current() !== client) break;
       try {result = await this.journal.recover(client, intent);} catch {break;}
     }
+    if (['prepared', 'submitted'].includes(String(result.status)) && !this.closed && this.current() === client) this.follow(client, intent);
     return result;
+  }
+  /**
+   * A busy or distant ship can settle after settle() stops waiting (measured: a join that took longer than its
+   * eight reads). Keep reading for two more minutes so the row changes by itself. Reads only; nothing is sent again.
+   */
+  private follow(client: ShipClient, intent: InvitationIntent): void {
+    void (async () => {
+      for (let n = 0; n < 24; n++) {
+        await this.guest.pause(5000);
+        if (this.closed || this.current() !== client) return;
+        let result: Outcome; try {result = await this.journal.recover(client, intent);} catch {continue;}
+        if (this.closed || this.current() !== client) return;
+        this.observed.set(this.key(intent), result); this.changed();
+        if (!['prepared', 'submitted'].includes(String(result.status))) return;
+      }
+    })();
   }
   /** Install the collaboration service on the connected ship without joining anything; asks first, like a join does. */
   async installGuestService(): Promise<void> {

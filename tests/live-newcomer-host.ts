@@ -59,7 +59,9 @@ async function phase(): Promise<void> {
       assert.equal(client.browserCookies(client.origin)[0]?.name, 'urbauth-' + ship); record.connectedByTheLink = ship;
       record.serviceAfter = (await client.guestServiceRead()).status; record.protocolAfter = (await client.guestDeskRead()).protocol;
       // Joined now: a row of this project is accepted and offers Leave (the app offers it only while joined).
-      const until = Date.now() + 15000; let joined = rows().find(row => row.label === link.project && row.request);
+      // A busy owner ship can settle the join after the app's first reads; the row then changes by itself, with no click.
+      const until = Date.now() + 90000; let joined = rows().find(row => row.label === link.project && row.request);
+      record.rowRightAfterJoin = rows().find(row => row.label === link.project)?.description;
       while (!joined && Date.now() < until) {await new Promise(resolve => setTimeout(resolve, 200)); joined = rows().find(row => row.label === link.project && row.request);}
       record.joinRow = joined; record.rowsAfterJoin = rows().map(row => `${row.label}: ${row.description}`).slice(2, 10);
       assert.equal(joined?.description, 'join · accepted');

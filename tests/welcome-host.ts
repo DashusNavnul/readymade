@@ -105,6 +105,22 @@ export async function run(): Promise<void> {
         assert.equal(asked.length, 2, 'a current service is not asked about'); assert.equal(installs.length, 1);
       } finally {view.guest = steps; delete ship.guestDeskRead; delete ship.guestServiceInstall;}
     }
+    // A result that settles after the first reads is still shown: the app keeps reading by itself and sends nothing again.
+    {
+      const view = api.invitations as unknown as {guest: GuestServiceSteps; journal: {recover(client: unknown, intent: unknown): Promise<{status: string}>}; observed: Map<string, {status: string}>;
+        key(intent: unknown): string; settle(client: unknown, intent: unknown, first: {status: string}): Promise<{status: string}>};
+      const steps = view.guest, recover = view.journal.recover, intent = {version: 1, origin: client.origin, actor: '~zod', command: {request: '01234567-89ab-4cde-8fab-0123456789ab', authority: '~nec', project: 'demo', operation: 'leave'}};
+      let reads = 0;
+      view.journal.recover = async () => ({status: ++reads < 11 ? 'submitted' : 'accepted'});
+      view.guest = {...steps, pause: async () => undefined};
+      try {
+        const first = await view.settle(client, intent, {status: 'submitted'});
+        assert.equal(first.status, 'submitted', 'the first eight reads did not settle it'); assert.ok(reads >= 8);
+        await until(() => view.observed.get(view.key(intent))?.status === 'accepted');
+        assert.equal(reads, 11, 'reading stops once the result is settled');
+        await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(reads, 11);
+      } finally {view.guest = steps; view.journal.recover = recover; view.observed.delete(view.key(intent));}
+    }
     invitationService = true;
     await api.setup.show(client); await until(() => !api.setup.state.checking && !!api.setup.state.report);
     assert.equal(api.setup.state.report!.checks.find(row => row.name === 'Project invitations')!.status, 'observed');
