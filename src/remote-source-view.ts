@@ -7,6 +7,7 @@ import type {RemoteDraftStore, RemoteDraftRecord} from './remote-draft-store';
 import type {ActivityReply} from './editing-activity';
 import type {MediaTreeRow} from './media-workbench';
 import {remoteShip, remoteProjectViewTarget, type RemoteProjectViewTarget, type RemoteProjectViewSelector, type RemoteProjectViewReply, type RemoteSourceObservation} from './remote-project-view';
+import {remoteProjectSessionsObserve, remoteProjectSessionRows, type RemoteProjectSessionsReply} from './remote-project-sessions';
 
 export interface SharedProjectLink extends RemoteProjectViewTarget {readonly peer: string; readonly file?: string}
 export function sharedProjectLink(uri: vscode.Uri, authority: string): SharedProjectLink {
@@ -22,6 +23,7 @@ export function sharedProjectLink(uri: vscode.Uri, authority: string): SharedPro
 }
 const scheme = 'readymade-remote-source';
 interface RetainedRead {client: ShipClient; link: SharedProjectLink; selector?: RemoteProjectViewSelector; observation?: RemoteSourceObservation; state: string; settled: boolean}
+interface SessionList {client: ShipClient; reply?: RemoteProjectSessionsReply; note?: string; busy: boolean}
 /** Presentation only: remote observations never become local coding sessions or source authority. */
 export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentContentProvider {
   private readonly registration = vscode.workspace.registerTextDocumentContentProvider(scheme, this);
@@ -40,6 +42,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
   private activityBusy = false;
   private activity?: {client: ShipClient; link: SharedProjectLink; source: RemoteSourceObservation; rows: Extract<ActivityReply, {status: 'ready'}>['rows']; expires: number};
   private activityExpiry?: ReturnType<typeof setTimeout>;
+  private readonly sessionLists = new Map<string, SessionList>();
   constructor(private readonly authority: string, private readonly current: () => ShipClient | undefined,
     private readonly connect: (origin?: string) => Promise<ShipClient | undefined>, private readonly changed: () => void, private readonly drafts?: RemoteDraftStore, private readonly suggestions?: RemoteSuggestionJournal) {}
   private peer(client: ShipClient): string {
@@ -310,6 +313,54 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (!this.currentActivity(fresh)) throw new Error('Shared project changed before opening the file.');
     await vscode.window.showTextDocument(document, {preview: false});
   }
+  private sessionLinks(client: ShipClient | undefined, peer: string | undefined): SharedProjectLink[] {
+    const links = new Map<string, SharedProjectLink>();
+    for (const link of [...(this.link && this.client === client ? [this.link] : []), ...this.reads.filter(row => row.client === client).map(row => row.link)]) {
+      const key = JSON.stringify([link.owner, link.project]);
+      if (client && link.peer === peer && !links.has(key)) links.set(key, link);
+    }
+    return [...links.values()];
+  }
+  /** One explicit request per call, held in memory only. A request still pending is read again, never resubmitted. */
+  async refreshSessions(owner?: unknown, project?: unknown): Promise<void> {
+    const client = this.current();
+    if (this.closed || !client) throw new Error('Connect your ship before listing shared sessions.');
+    const links = this.sessionLinks(client, this.peer(client));
+    let link = links.find(row => row.owner === owner && row.project === project);
+    if (!link && owner === undefined && project === undefined) {
+      link = links.find(row => this.client === client && row.owner === this.link?.owner && row.project === this.link.project) ?? (links.length === 1 ? links[0] : undefined);
+      if (!link && links.length) {
+        const picked = await vscode.window.showQuickPick(links.map(row => ({label: row.project, description: row.owner, row})), {title: 'Refresh Shared Sessions'});
+        if (!picked) return; link = picked.row;
+      }
+    }
+    if (!link) throw new Error('Open the shared project before listing its sessions.');
+    if (this.closed || this.current() !== client) throw new Error('Shared project connection changed.');
+    const key = JSON.stringify([link.peer, link.owner, link.project]), prior = this.sessionLists.get(key), held = prior?.client === client ? prior : undefined;
+    if (held?.busy) throw new Error('This shared session list is already being read.');
+    for (const [id, row] of this.sessionLists) if (row.client !== client) this.sessionLists.delete(id);
+    const entry: SessionList = {client, reply: held?.reply, busy: true}; this.sessionLists.set(key, entry); this.changed();
+    try {
+      await remoteProjectSessionsObserve(client, link, held?.reply?.status === 'pending' ? held.reply.request : undefined, reply => {
+        if (this.closed || this.current() !== client || this.sessionLists.get(key) !== entry) throw new Error('Shared project connection changed.');
+        entry.reply = reply; this.changed();
+      });
+    } catch (error) {
+      const code = error instanceof ShipClientError ? error.code : '';
+      entry.note = code === 'outcomeUnknown' ? 'Outcome unknown; nothing was retried' : code === 'refused' ? 'Your ship refused this request; nothing was sent to the owner' :
+        code === 'commandBusy' ? 'Not sent: an earlier request is unresolved or your ship is busy' : 'List unavailable; nothing was retried';
+      throw error;
+    } finally {entry.busy = false; this.changed();}
+  }
+  private sessionRow(link: SharedProjectLink): MediaTreeRow {
+    const held = this.sessionLists.get(JSON.stringify([link.peer, link.owner, link.project])), list = held?.client === this.current() ? held : undefined;
+    const rows: MediaTreeRow[] = list?.busy ? [] : [{label: 'Refresh shared sessions', tooltip: 'Asks the owner once, or reads a request that is still waiting. Nothing is retried automatically.',
+      command: {command: 'readymade.refreshSharedSessions', title: 'Refresh Shared Sessions', arguments: [link.owner, link.project]}}];
+    if (list?.note) rows.push({label: list.note});
+    if (list?.reply) rows.push(...remoteProjectSessionRows(list.reply));
+    return {label: 'Sessions · ' + link.owner + ' / ' + link.project,
+      description: list?.busy ? 'Asking the owner' : list?.reply?.status === 'ready' ? 'Past observation' : 'Read-only', children: rows};
+  }
   rows(): MediaTreeRow[] {
     const children: MediaTreeRow[] = [{label: 'Open Shared Project…', command: {command: 'readymade.openSharedProject', title: 'Open Shared Project'}}];
     if (this.link) {
@@ -342,6 +393,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
         command: {command: 'readymade.openSharedProject', title: 'Open retained project', arguments: [uri.toString()]}});
     }
     let peer: string | undefined; try {if (client) peer = this.peer(client);} catch { /* No current authenticated presentation scope. */ }
+    for (const link of this.sessionLinks(client, peer)) children.push(this.sessionRow(link));
     const allSaved = this.drafts?.list().filter(row => !client || row.observation.origin === client.origin && row.observation.peer === peer) ?? [];
     const resumable = new Map<string, RemoteDraftRecord>();
     for (const draft of allSaved) {
@@ -375,5 +427,5 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     }
     return [{id: 'shared-project', label: 'Shared Project', icon: 'organization', children}];
   }
-  dispose(): void {this.closed = true; clearTimeout(this.activityExpiry); this.registration.dispose(); this.documents.clear(); this.histories.clear(); this.reads.length = 0;}
+  dispose(): void {this.closed = true; clearTimeout(this.activityExpiry); this.registration.dispose(); this.documents.clear(); this.histories.clear(); this.reads.length = 0; this.sessionLists.clear();}
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type {Stats} from 'node:fs';
 import * as http from 'node:http';
 import type {AddressInfo} from 'node:net';
-import {localPlanetDiscovery, parsePlanetProcesses, parsePlanetLocks, planetListenerOrigin, validPlanetFiles, eyreHeaderFailure, eyreNetworkFailure, type DiscoveryResult, type DiscoveryStage} from '../src/planet-discovery';
+import {DISCOVERY_BUDGET_MS, localPlanetDiscovery, parsePlanetProcesses, parsePlanetLocks, planetListenerOrigin, validPlanetFiles, eyreHeaderFailure, eyreNetworkFailure, eyreTimeoutFailure, slowShipNotice, type DiscoveryResult, type DiscoveryStage} from '../src/planet-discovery';
 import {NativeObservationFailure} from '../src/planet-discovery-wire';
 const basic = ({planets, unavailable}: DiscoveryResult) => ({planets, unavailable});
 
@@ -24,7 +24,7 @@ test('path admission refuses wrong owners, symlinks, missing sockets and nonregu
   assert.equal(validPlanetFiles(good.slice(1), 501), false);
 });
 function fixture() {
-  const state = {rows: [{pier: '/owned/not-the-ship-name', workerPid: 12}], fake: false, atom: 123456n, live: 0n, port: 8080n, inode: '2', stale: false, calls: [] as string[], bindCalls: 0, changedIdentity: false, fail: '', eyreError: undefined as Error | undefined};
+  const state = {rows: [{pier: '/owned/not-the-ship-name', workerPid: 12}], ship: '~sampel-palnet', fake: false, atom: 123456n, live: 0n, port: 8080n, inode: '2', stale: false, calls: [] as string[], bindCalls: 0, changedIdentity: false, fail: '', eyreError: undefined as Error | undefined};
   let nativeError: Error | undefined;
   const fail = (stage: string) => {if (state.fail === stage) throw nativeError ?? Error('PRIVATE path/socket/error sentinel');};
   const api = localPlanetDiscovery({
@@ -33,12 +33,12 @@ function fixture() {
     native: async (_socket, kind) => {
       state.calls.push(kind);
       fail(kind === 'http' ? 'port' : kind);
-      if (kind === 'real') return {ship: '~sampel-palnet', fake: state.fake};
+      if (kind === 'real') return {ship: state.ship, fake: state.fake};
       if (kind === 'identity') return state.changedIdentity && state.calls.filter(c => c === kind).length > 1 ? state.atom + 1n : state.atom;
       return kind === 'live' ? state.live : state.port;
     },
     listener: async (_candidate, port) => {fail('listener'); assert.equal(port, Number(state.port)); state.calls.push('listener'); return 'http://127.0.0.1:' + port;},
-    eyre: async (origin, ship) => {fail('eyre'); if (state.eyreError) throw state.eyreError; assert.equal(origin, 'http://127.0.0.1:' + state.port); assert.equal(ship, '~sampel-palnet'); state.calls.push('eyre');},
+    eyre: async (origin, ship) => {fail('eyre'); if (state.eyreError) throw state.eyreError; assert.equal(origin, 'http://127.0.0.1:' + state.port); assert.equal(ship, state.ship); state.calls.push('eyre');},
   });
   return {state, api, setNativeError: (error: Error) => {nativeError = error;}};
 }
@@ -51,13 +51,71 @@ test('real native planet is admitted by observations, never the pier name; selec
   assert.equal((await api.recheck(result.planets[0])).workerPid, 12);
   state.inode = 'replacement'; await assert.rejects(api.recheck(result.planets[0]), /changed or is unavailable/);
 });
-test('fake, wrong rank, nonlive, stale socket, changed identity and invalid port never produce rows', async () => {
-  for (const changes of [{fake: true}, {atom: 65535n}, {atom: 4294967296n}, {live: 1n}, {stale: true}, {changedIdentity: true}, {port: 0n}, {port: 65536n}]) {
+test('fake, out-of-range identity, nonlive, stale socket, changed identity and invalid port never produce rows', async () => {
+  for (const changes of [{fake: true}, {atom: -1n}, {atom: 1n << 128n}, {live: 1n}, {stale: true}, {changedIdentity: true}, {port: 0n}, {port: 65536n}]) {
     const {state, api} = fixture(); Object.assign(state, changes);
     const result = await api.discover(); assert.deepEqual(basic(result), {planets: [], unavailable: 1});
-    const stage = 'fake' in changes ? 'fake' : 'atom' in changes ? 'nonplanet' : 'live' in changes ? 'live' : 'port' in changes ? 'port' : 'stability';
+    const stage = 'fake' in changes ? 'fake' : 'atom' in changes ? 'identity-range' : 'live' in changes ? 'live' : 'port' in changes ? 'port' : 'stability';
     assert.deepEqual(result.diagnostics.failureCounts, {[stage]: 1});
     if ('fake' in changes || 'atom' in changes || 'live' in changes) assert.equal(state.calls.includes('eyre'), false);
+  }
+});
+const shipRanks = [
+  {atom: 0n, ship: '~zod'}, {atom: 255n, ship: '~fes'},
+  {atom: 256n, ship: '~marzod'}, {atom: 65535n, ship: '~fipfes'},
+  {atom: 65536n, ship: '~sampel-palnet'}, {atom: (1n << 32n) - 1n, ship: '~sampel-palnet'},
+  {atom: 1n << 32n, ship: '~doznec-sampel-palnet'},
+  {atom: (1n << 48n) - 1n, ship: '~doznec-sampel-palnet'},
+  {atom: 1n << 48n, ship: '~bondyl-libpen-dashus-navnul'},
+  {atom: (1n << 64n) - 1n, ship: '~bondyl-libpen-dashus-navnul'},
+  ...[64n, 80n, 96n, 112n].flatMap(bits => {
+    const ship = '~' + Array(Number((bits - 64n) / 16n) + 1).fill('doznec').join('-') + '--bondyl-libpen-dashus-navnul';
+    return [{atom: 1n << bits, ship}, {atom: (1n << (bits + 16n)) - 1n, ship}];
+  }),
+];
+test('all native ship ranks and name lengths retain verified discovery and selection binding', async () => {
+  // These fixtures check rank/name shape; canonical spelling and atom encoding remain Jael's responsibility.
+  for (const {atom, ship} of shipRanks) {
+    const {state, api} = fixture(); Object.assign(state, {atom, ship});
+    const result = await api.discover();
+    assert.equal(result.unavailable, 0, ship); assert.equal(result.planets.length, 1, ship);
+    assert.equal(result.planets[0].ship, ship); assert.equal(result.diagnostics.verified, 1);
+    assert.deepEqual(state.calls, ['identity', 'live', 'real', 'http', 'listener', 'eyre', 'identity']);
+    assert.equal((await api.recheck(result.planets[0])).ship, ship);
+    state.inode = 'replacement'; await assert.rejects(api.recheck(result.planets[0]), /changed or is unavailable/);
+  }
+});
+test('every rank rejects fake ships, identity drift and duplicate identities', async () => {
+  for (const {atom, ship} of shipRanks) {
+    for (const changes of [{fake: true}, {changedIdentity: true}]) {
+      const {state, api} = fixture(); Object.assign(state, {atom, ship}, changes);
+      const result = await api.discover(); assert.deepEqual(basic(result), {planets: [], unavailable: 1});
+      assert.deepEqual(result.diagnostics.failureCounts, {['fake' in changes ? 'fake' : 'stability']: 1});
+    }
+    const {state, api} = fixture(); Object.assign(state, {atom, ship}); state.rows.push({pier: '/second', workerPid: 13});
+    const result = await api.discover(); assert.deepEqual(basic(result), {planets: [], unavailable: 2}); assert.equal(result.diagnostics.duplicates, 2);
+  }
+});
+test('native names must match their rank and fake must be an explicit false', async () => {
+  const ranks = [shipRanks[0], shipRanks[2], shipRanks[4], shipRanks[6], shipRanks[10]];
+  for (const owner of ranks) for (const other of ranks) {
+    if (owner === other) continue;
+    const {state, api} = fixture(); Object.assign(state, {atom: owner.atom, ship: other.ship});
+    const result = await api.discover(); assert.deepEqual(result.diagnostics.failureCounts, {real: 1});
+    assert.equal(result.planets.length, 0); assert.equal(state.calls.includes('http'), false);
+  }
+  for (const {atom, ship} of shipRanks) for (const changes of [
+    {ship: ship + '\n'}, {ship: ship + '\r'}, {ship: ship + '\u2028'}, {ship: ship + ' '},
+    {ship: ship.toUpperCase()}, {ship: ship.slice(1)}, {ship: ship + '--doznec'},
+    {fake: undefined}, {fake: null}, {fake: 0}, {fake: 'false'},
+  ]) {
+    const {state, api} = fixture(); Object.assign(state, {atom, ship}, changes);
+    const result = await api.discover(); assert.deepEqual(result.diagnostics.failureCounts, {real: 1});
+    assert.equal(result.planets.length, 0); assert.equal(state.calls.includes('http'), false);
+  }
+  for (const ship of ['~doznec-bondyl-libpen-dashus-navnul', '~doznec--bondyl-libpen-dashus', '~doznec-bondyl--libpen-dashus-navnul', '~doznec--bondyl-libpen-dashus-navnul--doznec']) {
+    const {state, api} = fixture(); Object.assign(state, {atom: 1n << 64n, ship});
+    const result = await api.discover(); assert.deepEqual(result.diagnostics.failureCounts, {real: 1}); assert.equal(result.planets.length, 0);
   }
 });
 test('duplicate real identities are excluded together and capacity never invents rows', async () => {
@@ -67,6 +125,16 @@ test('duplicate real identities are excluded together and capacity never invents
   state.rows = Array.from({length: 25}, (_, i) => ({pier: '/pier-' + i, workerPid: i + 1}));
   assert.deepEqual(basic(await api.discover()), {planets: [], unavailable: 25});
   assert.equal(state.calls.filter(c => c === 'eyre').length, 26);
+});
+test('picker names slow ships and stays silent about deliberate exclusions', () => {
+  const report = (failureCounts: Partial<Record<DiscoveryStage, number>>, deadline = false) =>
+    slowShipNotice({candidates: 3, verified: 1, duplicates: 0, deadline, failureCounts});
+  assert.equal(report({}), undefined);
+  assert.equal(report({fake: 2, 'identity-range': 1, 'eyre-server': 1, 'real-connection': 1}), undefined);
+  assert.match(report({'real-timeout': 1})!, /^A running ship did not answer in time\./);
+  assert.match(report({'real-timeout': 1, 'eyre-timeout': 1, fake: 1})!, /^2 running ships did not answer in time\./);
+  assert.match(report({'real-timeout': 1}, true)!, /^A running ship did not answer/);
+  assert.match(report({binding: 1}, true)!, /^Checking for running ships took too long\./);
 });
 test('unavailable enumeration yields no synthetic fallback planet', async () => {
   const api = localPlanetDiscovery({candidates: async () => {throw Error('unsupported');}, binding: async () => {throw Error();}, native: async () => {throw Error();}, listener: async () => {throw Error();}, eyre: async () => {throw Error();}});
@@ -128,6 +196,43 @@ test('native query failure classes propagate controlled stage reasons without ra
   }
 });
 
+test('a ship that is briefly quiet is found: the two reads its event loop answers are each retried once, on a timeout only', async () => {
+  const quiet = (count: number, kind: 'identity' | 'live' | 'real' | 'http' | 'eyre', reason: 'timeout' | 'connection' = 'timeout') => {
+    let left = count; const calls: string[] = [];
+    const fail = (query: string) => {calls.push(query); if (query === kind && left > 0) {left--; return true;} return false;};
+    const api = localPlanetDiscovery({
+      candidates: async () => [{pier: '/owned/pier', workerPid: 12}],
+      binding: async () => ({device: '1', inode: '2', stamp: 'owner-process-lock'}),
+      native: async (_socket, query) => {
+        if (fail(query)) throw new NativeObservationFailure(reason);
+        if (query === 'real') return {ship: '~sampel-palnet', fake: false};
+        return query === 'identity' ? 123456n : query === 'live' ? 0n : 8080n;
+      },
+      listener: async () => 'http://127.0.0.1:8080',
+      eyre: async () => {if (fail('eyre')) throw reason === 'timeout' ? eyreTimeoutFailure() : eyreNetworkFailure('ECONNREFUSED');},
+    });
+    return {api, calls};
+  };
+  const count = (calls: string[], kind: string) => calls.filter(c => c === kind).length;
+  for (const kind of ['real', 'eyre'] as const) {
+    const once = quiet(1, kind), found = await once.api.discover();
+    assert.equal(found.planets.length, 1); assert.equal(found.unavailable, 0); assert.deepEqual(found.diagnostics.failureCounts, {});
+    assert.equal(count(once.calls, kind), 2);
+    const twice = quiet(2, kind), lost = await twice.api.discover();
+    assert.equal(lost.planets.length, 0); assert.deepEqual(lost.diagnostics.failureCounts, {[`${kind}-timeout`]: 1});
+    assert.equal(count(twice.calls, kind), 2);
+    assert.match(slowShipNotice(lost.diagnostics)!, /^A running ship did not answer in time\./);
+    const refused = quiet(1, kind, 'connection'), down = await refused.api.discover();
+    assert.equal(down.planets.length, 0); assert.equal(count(refused.calls, kind), 1);
+  }
+  // The runtime answers these itself, so a timeout there is not a busy ship and is not retried.
+  for (const kind of ['identity', 'live', 'http'] as const) {
+    const stuck = quiet(1, kind), result = await stuck.api.discover();
+    assert.equal(result.planets.length, 0); assert.equal(count(stuck.calls, kind), 1);
+  }
+  assert.equal(DISCOVERY_BUDGET_MS, 16000);
+  assert.throws(() => localPlanetDiscovery({} as never, DISCOVERY_BUDGET_MS + 1), /Invalid discovery budget/);
+});
 test('listener origin binds the owned address family and literal loopback endpoint', () => {
   for (const [family, address, origin] of [
     ['IPv4', '127.0.0.1', 'http://127.0.0.1:8080'], ['IPv4', '*', 'http://127.0.0.1:8080'],

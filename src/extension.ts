@@ -243,6 +243,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('refreshSharedProject', () => this.remoteSource.refresh());
     command('checkSharedProject', () => this.remoteSource.check());
     command('refreshSharedActivity', () => this.remoteSource.refreshActivity());
+    command('refreshSharedSessions', (owner, project) => this.remoteSource.refreshSessions(owner, project));
     command('openSharedActivityFile', ship => this.remoteSource.openActivityFile(String(ship)));
     command('openSharedSource', uri => this.remoteSource.openFile(uri));
     command('editSharedDraft', path => this.remoteSource.editDraft(typeof path === 'string' ? path : undefined));
@@ -333,6 +334,9 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('revokeProjectAccess', () => this.projectSharing.change(true));
     command('recoverProjectAccess', request => this.projectSharing.recover(String(request)));
     command('reviewAnswer', session => this.answerReview.observe(typeof session === 'string' ? session : undefined));
+    command('shareSession', session => this.projectSharing.sessionSharing('share', typeof session === 'string' ? session : undefined));
+    command('unshareSession', session => this.projectSharing.sessionSharing('unshare', typeof session === 'string' ? session : undefined));
+    command('removeCollaborator', () => this.projectSharing.removeCollaborator());
     command('acceptAnswer', () => this.answerReview.accept());
     command('recoverAnswer', proposal => this.answerReview.recover(String(proposal)));
     command('readNextPage', key => this.readNextPage(typeof key === 'string' ? key : undefined));

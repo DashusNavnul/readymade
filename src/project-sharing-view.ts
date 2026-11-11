@@ -5,10 +5,19 @@ import type { MediaTreeRow } from './media-workbench';
 import { SharingJournal } from './project-sharing-journal';
 import {sharedProjectLink} from './remote-source-view';
 import { sharingView, type SharingView } from './project-sharing';
+import {remoteSessionShortId} from './remote-project-sessions';
+import {sessionSharingSettle, sessionSharingHolds, sessionSharingMessage, type SessionSharingCommand, type SessionSharingOutcome, type SessionSharingSnapshot} from './session-sharing';
 
+/** One collaborator's agent-session standing, in memory only. `check` is a command whose result a later read may still show. */
+interface SessionStanding {
+  client: ShipClient; context: string; peer: string; snapshot?: SessionSharingSnapshot; note?: string;
+  check?: SessionSharingCommand; last?: {command: SessionSharingCommand; outcome: SessionSharingOutcome};
+}
 export class ProjectSharingView implements vscode.Disposable {
   private client?: ShipClient;
   private held?: SharingView;
+  private sessions?: SessionStanding;
+  private settling = false;
   private context = '';
   private busy = false;
   private text = '# Project sharing\n\nChoose a project and a collaborator.';
@@ -17,7 +26,9 @@ export class ProjectSharingView implements vscode.Disposable {
   private readonly registration: vscode.Disposable;
   constructor(private readonly project: () => string | undefined, private readonly changed: () => void,
     private readonly journal: SharingJournal, private readonly confirm: (detail: string) => Thenable<boolean> = async detail =>
-      (await vscode.window.showWarningMessage('Change shared access?', {modal: true, detail}, 'Confirm')) === 'Confirm') {
+      (await vscode.window.showWarningMessage('Change shared access?', {modal: true, detail}, 'Confirm')) === 'Confirm',
+    private readonly confirmRemoval: (detail: string) => Thenable<boolean> = async detail =>
+      (await vscode.window.showWarningMessage('Remove collaborator?', {modal: true, detail}, 'Remove')) === 'Remove') {
     this.registration = vscode.workspace.registerTextDocumentContentProvider('readymade-sharing', {
       onDidChange: this.event.event, provideTextDocumentContent: uri => {
         if (uri.toString() !== this.uri.toString()) throw vscode.FileSystemError.FileNotFound(uri);
@@ -43,6 +54,7 @@ export class ProjectSharingView implements vscode.Disposable {
       if (h.grant?.view && !h.grant.revoked) children.push({label: 'Copy Shared Project Link', command: {command: 'readymade.copySharedProjectLink', title: 'Copy Shared Project Link'}});
       if (h.grant?.view && !h.grant.revoked) children.push({label: 'Copy Shared File Link…', command: {command: 'readymade.copySharedFileLink', title: 'Copy Shared File Link'}});
       if (h.grant && !h.grant.revoked) children.push({label: 'Revoke access…', command: {command: 'readymade.revokeProjectAccess', title: 'Revoke access'}});
+      children.push(...this.sessionRows());
     }
     try {
       for (const i of this.entries()) children.push({label: `Check ${i.command.operation === 'grant' ? 'sharing' : 'revocation'} request`, description: i.command.peer,
@@ -67,6 +79,7 @@ export class ProjectSharingView implements vscode.Disposable {
       await this.show(`# Project sharing\n\nProject: ${view.project}\n\nCollaborator: ${view.peer}\n\n${!view.member ? 'Not a current project member.' : 'Current project member.'}\n\n` +
         (grant ? `${grant.revoked ? 'Revoked' : 'Retained'} grant · ${grant.desk}\n\nPermissions: ${[grant.view ? 'Read files' : '', grant.suggest ? 'Suggest changes' : ''].filter(Boolean).join(', ')}\n\nFiles:\n\n${grant.paths.map(p => '- ' + p).join('\n')}\n\n` : 'No retained source-access grant.\n\n') +
         'Membership alone does not grant file access. The ship checks current permissions for each request.');
+      await this.readSessions(client, context, project, peer);
     } finally {this.busy = false; this.changed();}
   }
   async copyLink(authority: string, chooseFile = false): Promise<void> {
@@ -142,6 +155,98 @@ export class ProjectSharingView implements vscode.Disposable {
       await this.show(`# Sharing result\n\nCollaborator: ${retained.command.peer}\n\nAction: ${retained.command.operation}\n\nStatus: ${result.status}\n\nThis result was read from the ship. No request was resent.`);
     } finally {this.busy = false; this.changed();}
   }
+  private standing(): SessionStanding | undefined {
+    const s = this.sessions;
+    return s && this.held && s.client === this.client && s.context === this.context && s.peer === this.held.peer ? s : undefined;
+  }
+  /** A read only, and never fatal to the file-sharing screen: an older ship has no session sharing. */
+  private async readSessions(client: ShipClient, context: string, project: string, peer: string): Promise<void> {
+    const prior = this.standing(), next: SessionStanding = {client, context, peer, check: prior?.check, last: prior?.last};
+    try {
+      const snapshot = await client.sessionSharingRead(project, peer);
+      this.sync(); if (client !== this.client || context !== this.context || this.held?.peer !== peer || snapshot.owner !== client.snapshot?.owner) return;
+      next.snapshot = snapshot;
+      if (next.check) {
+        const holds = sessionSharingHolds(next.check, snapshot);
+        next.note = holds ? 'Confirmed: your ship now shows the change.' : 'Not confirmed yet. Check again reads your ship; nothing is resent.';
+        if (holds) next.check = undefined;
+      }
+    } catch (error) {
+      const reason = (error as {reason?: unknown} | null)?.reason;
+      next.note = `Agent session sharing could not be read from your ship${typeof reason === 'string' ? ` (${reason})` : ''}.`;
+    }
+    this.sessions = next;
+  }
+  private sessionRows(): MediaTreeRow[] {
+    const s = this.standing();
+    if (!s) return [];
+    if (this.settling) return [{label: 'Waiting for your ship to show the change…'}];
+    const rows: MediaTreeRow[] = s.note ? [{label: s.note}] : [], v = s.snapshot;
+    if (!v || s.check) rows.push({label: 'Check again', tooltip: 'Reads your ship again. Nothing is sent or resent.',
+      command: {command: 'readymade.projectSharing', title: 'Check again', arguments: [s.peer]}});
+    if (!v) return rows;
+    if (!v.inspectable) rows.push(v.member ? {label: `Sessions cannot be shared with ${v.peer} as ${v.role}`, tooltip: 'That role, or this project’s policy, does not allow looking at agent sessions.'} :
+      {label: `Sessions cannot be shared: ${v.peer} is not a member of this project`, tooltip: 'Invite this ship and let it join first.'});
+    else if (!v.sessions.length) rows.push({label: 'This project has no agent sessions to share'});
+    // Stopping must stay reachable, so a session still shared is listed even when new sharing is not allowed.
+    for (const row of v.inspectable ? v.sessions : v.sessions.filter(row => row.shared)) rows.push({label: remoteSessionShortId(row.id),
+      description: `${row.phase} · ${row.shared ? 'shared' : 'not shared'}`, tooltip: `${row.desk} @ ${row.revision}\nSession ${row.id}\nObserved ${v.observedAt}`,
+      children: [row.shared ? {label: 'Stop sharing this session', command: {command: 'readymade.unshareSession', title: 'Stop sharing this session', arguments: [row.id]}} :
+        {label: 'Share this session', command: {command: 'readymade.shareSession', title: 'Share this session', arguments: [row.id]}}]});
+    if (v.truncated) rows.push({label: 'Showing the first 128 sessions'});
+    if (v.member || v.viewGrant === 'live' || v.sessions.some(row => row.shared)) rows.push({label: `Remove ${v.peer} from this project…`,
+      command: {command: 'readymade.removeCollaborator', title: 'Remove collaborator'}});
+    return rows;
+  }
+  /** Sends one command once, then only reads. The ship keeps no journal for it: the outcome is what a read shows. */
+  private async settle(client: ShipClient, context: string, s: SessionStanding, command: SessionSharingCommand, label: string): Promise<SessionSharingOutcome> {
+    this.sync(); if (client !== this.client || context !== this.context || this.standing() !== s) throw new Error('Project changed; choose the collaborator again.');
+    this.settling = true; s.note = undefined; s.check = undefined; this.changed();
+    try {
+      const outcome = await sessionSharingSettle(client, command, snapshot => {
+        this.sync(); if (client !== this.client || context !== this.context) throw new Error('Project changed. Choose the collaborator again to see the result; nothing was resent.');
+        s.snapshot = snapshot;
+      });
+      s.last = {command, outcome}; s.note = sessionSharingMessage(command, outcome, label);
+      s.check = outcome.status === 'not-confirmed' || outcome.status === 'unknown' ? command : undefined;
+      if (outcome.status === 'confirmed' || outcome.status === 'unchanged') void vscode.window.showInformationMessage(s.note);
+      else void vscode.window.showWarningMessage(s.note);
+      return outcome;
+    } finally {this.settling = false;}
+  }
+  async sessionSharing(operation: 'share' | 'unshare', id?: string): Promise<void> {
+    this.sync(); const client = this.client, context = this.context, s = this.standing(), v = s?.snapshot;
+    if (!client || !s || !v || this.busy) throw new Error('Choose a collaborator and read their agent sessions first.');
+    this.busy = true;
+    try {
+      const stop = operation === 'unshare';
+      const session = id ?? (await vscode.window.showQuickPick(v.sessions.filter(row => row.shared === stop).map(row => ({label: remoteSessionShortId(row.id),
+        description: row.phase, detail: `${row.desk} @ ${row.revision}`, id: row.id})), {title: stop ? `Stop sharing a session with ${v.peer}` : `Share a session with ${v.peer}`}))?.id;
+      if (!session) return;
+      if (!v.sessions.some(row => row.id === session)) throw new Error('This session is not in the list. Check again first.');
+      if (!stop && !v.inspectable) throw new Error(`Sessions cannot be shared with ${v.peer} right now.`);
+      await this.settle(client, context, s, {owner: v.owner, project: v.project, peer: v.peer, operation, session}, remoteSessionShortId(session));
+    } finally {this.busy = false; this.changed();}
+  }
+  async removeCollaborator(): Promise<void> {
+    this.sync(); const client = this.client, h = this.held, context = this.context, s = this.standing(), v = s?.snapshot;
+    if (!client || !h || !s || !v || this.busy) throw new Error('Choose a collaborator and read their agent sessions first.');
+    this.busy = true;
+    try {
+      const command: SessionSharingCommand = {owner: v.owner, project: v.project, peer: v.peer, operation: 'remove', session: '0x0'};
+      if (!await this.confirmRemoval(`Remove ${v.peer} from ${v.project}?\n\nThis does three things in one step:\n• removes ${v.peer} from the project’s members\n` +
+        `• revokes its access to the files you shared\n• stops sharing every agent session with it\n\nThis screen cannot undo it. You can invite ${v.peer} again later.`)) return;
+      this.sync(); if (client !== this.client || context !== this.context || this.held !== h) throw new Error('Project changed; inspect access again.');
+      const outcome = await this.settle(client, context, s, command, '');
+      // Membership and the file grant changed with it: read the file-sharing rows again, or drop them.
+      let fresh: SharingView | undefined;
+      try {const reply = await client.projectSharing('read', {project: v.project, peer: v.peer}); if (reply.status === 200) fresh = sharingView(reply.body);} catch { /* Dropped below. */ }
+      this.sync();
+      this.held = fresh && client === this.client && context === this.context && fresh.owner === v.owner && fresh.project === v.project && fresh.peer === v.peer ? fresh : undefined;
+      await this.show(`# Collaborator removal\n\nProject: ${v.project}\n\nCollaborator: ${v.peer}\n\n${sessionSharingMessage(command, outcome)}\n\n` +
+        'Removal ends membership, shared file access and every shared agent session together. Invite the ship again to restore membership.');
+    } finally {this.busy = false; this.changed();}
+  }
   private async show(text: string): Promise<void> {this.text = text; this.event.fire(this.uri); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(this.uri), {preview: true});}
-  dispose(): void {this.client = undefined; this.held = undefined; this.context = ''; this.registration.dispose(); this.event.dispose();}
+  dispose(): void {this.client = undefined; this.held = undefined; this.sessions = undefined; this.context = ''; this.registration.dispose(); this.event.dispose();}
 }

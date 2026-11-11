@@ -12,6 +12,10 @@ import {projectInbox as decodeProjectInbox} from './project-inbox';
 import {remoteShip, remoteProjectViewTarget, remoteProjectViewSelector, remoteProjectViewHeaders, remoteProjectViewJSON,
   remoteProjectViewRefused, remoteProjectViewReply, REMOTE_PROJECT_VIEW_LIMIT,
   type RemoteProjectViewTarget, type RemoteProjectViewSelector, type RemoteProjectViewReply} from './remote-project-view';
+import {remoteProjectSessionsTarget, remoteProjectSessionsSelector, remoteProjectSessionsHeaders, remoteProjectSessionsRefused, remoteProjectSessionsReply,
+  type RemoteProjectSessionsReply} from './remote-project-sessions';
+import {sessionSharingTarget, sessionSharingCommand, sessionSharingHeaders, sessionSharingRefusal, sessionSharingSnapshot, sessionSharingReceipt,
+  type SessionSharingCommand, type SessionSharingSnapshot, type SessionSharingReceipt} from './session-sharing';
 import {remoteSuggestionIntent, remoteSuggestionBody, remoteSuggestionHeaders, remoteSuggestionReply, remoteSuggestionRefused, remoteSuggestionRecoveryBody, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
 import { activityBody, activityCommand, activityHeaders, activityReply, activitySelector, type ActivityCommand, type ActivityReply, type ActivitySelector } from './editing-activity';
@@ -29,6 +33,10 @@ export class ShipClientError extends Error {
 }
 export class OutcomeUnknownError extends ShipClientError {
   constructor() { super('outcomeUnknown'); this.name = 'OutcomeUnknownError'; }
+}
+/** The owner's ship answered and changed nothing. `reason` is one of its fixed refusal names. */
+export class SessionSharingRefusedError extends ShipClientError {
+  constructor(status: number, readonly reason: string) { super('refused', status); this.name = 'SessionSharingRefusedError'; }
 }
 export interface RequestOptions {
   method?: 'GET' | 'POST'; body?: JsonObject; terminalNonce?: string; timeoutMs?: number; signal?: AbortSignal;
@@ -99,6 +107,7 @@ export class ShipClient {
   private readonly completionSubmitted = new Set<string>();
   private readonly activityWrites = new Map<string, {command: ActivityCommand; request?: string}>();
   private readonly projectViews = new Map<string, {request?: string}>();
+  private readonly projectSessionLists = new Map<string, {request?: string}>();
   private readonly projectSuggestions = new Set<string>();
   private readonly requests = new Set<http.ClientRequest>();
   private current?: CodingSnapshot;
@@ -476,6 +485,76 @@ export class ShipClient {
     const result = remoteProjectViewReply(reply.status, this.projectViewJSON(reply), selected, peer, this.origin);
     if (held?.request === selected.request && this.projectViews.get(key) === held && ['ready', 'refused', 'missing', 'expired'].includes(result.status)) this.projectViews.delete(key);
     return result;
+  }
+  /** Asks one owner, once, which sessions it shares with this ship. An unknown submission is never resent. */
+  async projectSessionsSubmit(owner: string, project: string): Promise<RemoteProjectSessionsReply> {
+    if (this.closed) failure('closed');
+    const target = remoteProjectSessionsTarget({owner, project}), peer = this.projectViewPeer();
+    if (target.owner === peer) failure('contextChanged');
+    const key = JSON.stringify([peer, target.owner, target.project]);
+    if (this.busy || this.projectSessionLists.has(key) || this.projectSessionLists.size >= 32) failure('commandBusy');
+    const body = this.encode({schema: 'readymade-project-sessions-v1', ...target});
+    if (body.length > 4096) failure('tooLarge');
+    this.busy = true; const epoch = this.generation; this.projectSessionLists.set(key, {});
+    try {
+      const reply = await this.wire('/apps/readymade-collab/project-sessions', 'POST', body,
+        {'Content-Type': 'application/json', 'x-readymade-project-sessions': 'v1'}, {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) throw new OutcomeUnknownError();
+      const json = this.projectViewJSON(reply);
+      if (remoteProjectSessionsRefused(reply.status, json)) {this.projectSessionLists.delete(key); failure('refused', reply.status);}
+      const result = remoteProjectSessionsReply(reply.status, json, target, peer);
+      this.projectSessionLists.set(key, {request: result.request}); return result;
+    } catch (error) {
+      if (error instanceof ShipClientError && error.code === 'refused') throw error;
+      throw new OutcomeUnknownError();
+    } finally {this.busy = false;}
+  }
+  /** Reads one exact request. Any settled answer, including no answer, permits a new explicit request, never a replay. */
+  async projectSessionsResult(owner: string, project: string, request: string): Promise<RemoteProjectSessionsReply> {
+    if (this.closed) failure('closed');
+    const selected = remoteProjectSessionsSelector({owner, project, request}), peer = this.projectViewPeer(), epoch = this.generation;
+    if (selected.owner === peer) failure('contextChanged');
+    const key = JSON.stringify([peer, selected.owner, selected.project]), held = this.projectSessionLists.get(key);
+    const reply = await this.wire('/apps/readymade-collab/project-sessions-result', 'GET', undefined,
+      remoteProjectSessionsHeaders(selected), {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) failure('contextChanged');
+    const result = remoteProjectSessionsReply(reply.status, this.projectViewJSON(reply), selected, peer);
+    if (held?.request === selected.request && this.projectSessionLists.get(key) === held && result.status !== 'pending') this.projectSessionLists.delete(key);
+    return result;
+  }
+  /** One collaborator's standing in one of this ship's own projects. A read: it shares and changes nothing. */
+  async sessionSharingRead(project: string, peer: string): Promise<SessionSharingSnapshot> {
+    if (this.closed) failure('closed');
+    const owner = this.projectViewPeer(), epoch = this.generation, target = sessionSharingTarget({owner, project, peer});
+    const reply = await this.wire('/apps/readymade-collab/session-sharing', 'GET', undefined, sessionSharingHeaders(target), {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== owner) failure('contextChanged');
+    if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+    const json = this.projectViewJSON(reply), reason = sessionSharingRefusal(reply.status, json, false);
+    if (reason) throw new SessionSharingRefusedError(reply.status, reason);
+    if (reply.status !== 200) failure('unavailable', reply.status);
+    try {return sessionSharingSnapshot(json, target);} catch {return failure('malformed');}
+  }
+  /** One explicit command, sent once and never held or replayed here. Its receipt confirms nothing: read the standing again. */
+  async sessionSharingSubmit(value: SessionSharingCommand): Promise<SessionSharingReceipt> {
+    if (this.closed) failure('closed');
+    const command = sessionSharingCommand(value), owner = this.projectViewPeer();
+    if (command.owner !== owner) failure('contextChanged');
+    if (this.busy) failure('commandBusy');
+    const body = this.encode({schema: 'readymade-session-sharing-command-v1', ...command});
+    if (body.length > 4096) failure('tooLarge');
+    this.busy = true; const epoch = this.generation;
+    try {
+      const reply = await this.wire('/apps/readymade-collab/session-sharing', 'POST', body,
+        {'Content-Type': 'application/json', 'x-readymade-session-sharing': 'v1'}, {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== owner) throw new OutcomeUnknownError();
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      const json = this.projectViewJSON(reply), reason = sessionSharingRefusal(reply.status, json, true);
+      if (reason) throw new SessionSharingRefusedError(reply.status, reason);
+      return sessionSharingReceipt(reply.status, json, command);
+    } catch (error) {
+      if (error instanceof ShipClientError && ['refused', 'authenticationRequired'].includes(error.code)) throw error;
+      throw new OutcomeUnknownError();
+    } finally {this.busy = false;}
   }
   /** Caller must persist the exact intent before this explicit one-shot submission. */
   async projectSuggestionSubmit(value: RemoteSuggestionIntent, consent: boolean): Promise<RemoteSuggestionReply> {

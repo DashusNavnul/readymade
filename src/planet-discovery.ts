@@ -8,8 +8,9 @@ export interface LocalPlanet {ship: string; origin: string; pier: string; worker
 const networkCodes = ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ABORT_ERR'] as const;
 type EyreReason = 'timeout' | 'server' | 'status' | 'cookie' | 'network-other' | `network-${typeof networkCodes[number]}`;
 type NativeStage = 'identity' | 'live' | 'real' | 'port' | 'stability';
-export type DiscoveryStage = 'enumeration' | 'binding' | 'identity' | 'nonplanet' | 'live' | 'real' | 'fake' | 'port' | 'listener' | 'eyre' | 'stability' | `eyre-${EyreReason}` | `${NativeStage}-${NativeObservationReason}`;
+export type DiscoveryStage = 'enumeration' | 'binding' | 'identity' | 'identity-range' | 'live' | 'real' | 'fake' | 'port' | 'listener' | 'eyre' | 'stability' | `eyre-${EyreReason}` | `${NativeStage}-${NativeObservationReason}`;
 class EyreFailure extends Error {constructor(readonly reason: EyreReason) {super('Local Eyre observation unavailable.');}}
+export const eyreTimeoutFailure = (): Error => new EyreFailure('timeout');
 export function eyreNetworkFailure(code: unknown): Error {
   return new EyreFailure(typeof code === 'string' && networkCodes.some(value => value === code) ? `network-${code as typeof networkCodes[number]}` : 'network-other');
 }
@@ -21,6 +22,14 @@ export function eyreHeaderFailure(server: unknown, status: number | undefined, c
 }
 export interface DiscoveryDiagnostics {readonly candidates: number; readonly verified: number; readonly duplicates: number; readonly deadline: boolean; readonly failureCounts: Readonly<Partial<Record<DiscoveryStage, number>>>}
 export interface DiscoveryResult {planets: LocalPlanet[]; unavailable: number; diagnostics: DiscoveryDiagnostics}
+/** Picker text for running ships that were too slow to verify. Fakes, duplicates and malformed candidates stay silent. */
+export function slowShipNotice(diagnostics: DiscoveryDiagnostics): string | undefined {
+  let slow = 0;
+  for (const [stage, count] of Object.entries(diagnostics.failureCounts)) if (stage.endsWith('-timeout')) slow += count ?? 0;
+  if (slow === 1) return 'A running ship did not answer in time. It may be busy; refresh to try again.';
+  if (slow > 1) return `${slow} running ships did not answer in time. They may be busy; refresh to try again.`;
+  return diagnostics.deadline ? 'Checking for running ships took too long. Refresh to try again.' : undefined;
+}
 interface Process {pid: number; parent: number; uid: number; command: string}
 interface Candidate {pier: string; workerPid: number}
 interface Binding {device: string; inode: string; stamp: string}
@@ -61,23 +70,42 @@ interface Probes {
   listener(candidate: Candidate, port: number, signal: AbortSignal): Promise<string>;
   eyre(origin: string, ship: string, signal: AbortSignal): Promise<void>;
 }
+/** Jael supplies the canonical name; this checks its shape against the observed native rank. */
+function nativeShipNameMatchesRank(identity: bigint, ship: unknown): ship is string {
+  if (typeof ship !== 'string') return false;
+  if (identity < 256n) return /^~[a-z]{3}(?![\s\S])/.test(ship);
+  if (identity < 65536n) return /^~[a-z]{6}(?![\s\S])/.test(ship);
+  if (identity < 4294967296n) return /^~[a-z]{6}-[a-z]{6}(?![\s\S])/.test(ship);
+  if (identity < 18446744073709551616n) return /^~[a-z]{6}(?:-[a-z]{6}){2,3}(?![\s\S])/.test(ship);
+  return /^~[a-z]{6}(?:-[a-z]{6}){0,3}--[a-z]{6}(?:-[a-z]{6}){3}(?![\s\S])/.test(ship);
+}
 /** Injectable finite probe boundary; fixture dependencies never replace production discovery. */
-export function localPlanetDiscovery(probes: Probes, budgetMs = 8000) {
-  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 8000) throw Error('Invalid discovery budget.');
+// A healthy ship can go quiet for several seconds inside one long event (measured 2026-11-10: 9 to 10 s
+// every two minutes on a large planet). The runtime itself keeps answering identity, liveness and port; the
+// two reads the ship's own event loop answers (the Jael read and the sign-in page) time out. Each of those
+// is tried once more on a timeout, and only on a timeout. The budget covers two timeouts on one of them,
+// one on the other, and a second of slack.
+export const DISCOVERY_BUDGET_MS = 16000;
+export function localPlanetDiscovery(probes: Probes, budgetMs = DISCOVERY_BUDGET_MS) {
+  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > DISCOVERY_BUDGET_MS) throw Error('Invalid discovery budget.');
   async function inspect(candidate: Candidate, signal: AbortSignal, stage: (value: DiscoveryStage) => void): Promise<LocalPlanet> {
     const read = async <T>(op: () => Promise<T>): Promise<T> => {signal.throwIfAborted(); const value = await op(); signal.throwIfAborted(); return value;};
+    const patient = <T>(op: () => Promise<T>): Promise<T> => read(op).catch(error => {
+      if (!((error instanceof NativeObservationFailure || error instanceof EyreFailure) && error.reason === 'timeout')) throw error;
+      return read(op);
+    });
     const before = await read(() => probes.binding(candidate, signal)), socket = path.join(candidate.pier, '.urb/conn.sock');
     stage('identity'); const identity = await read(() => probes.native(socket, 'identity', signal));
-    if (typeof identity !== 'bigint' || identity < 65536n || identity >= 4294967296n) {stage('nonplanet'); throw Error('Not a planet.');}
+    if (typeof identity !== 'bigint' || identity < 0n || identity >= (1n << 128n)) {stage('identity-range'); throw Error('Invalid ship identity.');}
     stage('live');
     if (await read(() => probes.native(socket, 'live', signal)) !== 0n) throw Error('Ship is not live.');
-    stage('real'); const real = await read(() => probes.native(socket, 'real', signal));
-    if (typeof real === 'object' && real.fake) {stage('fake'); throw Error('Not a real planet.');}
-    if (typeof real !== 'object' || real.fake || !/^~[a-z]{6}-[a-z]{6}$/.test(real.ship)) throw Error('Not a real planet.');
+    stage('real'); const real = await patient(() => probes.native(socket, 'real', signal));
+    if (typeof real === 'object' && real !== null && real.fake === true) {stage('fake'); throw Error('Not a real ship.');}
+    if (typeof real !== 'object' || real === null || real.fake !== false || !nativeShipNameMatchesRank(identity, real.ship)) throw Error('Invalid real ship observation.');
     stage('port'); const port = await read(() => probes.native(socket, 'http', signal));
     if (typeof port !== 'bigint' || port < 1n || port > 65535n) throw Error('HTTP unavailable.');
     stage('listener'); const origin = await read(() => probes.listener(candidate, Number(port), signal));
-    stage('eyre'); await read(() => probes.eyre(origin, real.ship, signal));
+    stage('eyre'); await patient(() => probes.eyre(origin, real.ship, signal));
     stage('stability');
     if (await read(() => probes.native(socket, 'identity', signal)) !== identity) throw Error('Local identity changed.');
     const after = await read(() => probes.binding(candidate, signal));
@@ -125,7 +153,7 @@ export function localPlanetDiscovery(probes: Probes, budgetMs = 8000) {
   return {discover, async recheck(candidate: LocalPlanet): Promise<LocalPlanet> {
     const result = await discover();
     const fresh = result.planets.find(p => p.ship === candidate.ship && p.pier === candidate.pier && p.workerPid === candidate.workerPid && p.origin === candidate.origin && p.socketDevice === candidate.socketDevice && p.socketInode === candidate.socketInode);
-    if (!fresh) throw Error('This local planet changed or is unavailable. Refresh the list or use its address.');
+    if (!fresh) throw Error('This local ship changed or is unavailable. Refresh the list or use its address.');
     return fresh;
   }};
 }
@@ -187,7 +215,7 @@ async function eyre(origin: string, ship: string, signal: AbortSignal): Promise<
       const failure = eyreHeaderFailure(response.headers.server, response.statusCode, names, ship);
       response.destroy(); request.destroy(); if (failure) reject(failure); else resolve();
     });
-    request.on('timeout', () => {reject(new EyreFailure('timeout')); request.destroy();});
+    request.on('timeout', () => {reject(eyreTimeoutFailure()); request.destroy();});
     request.on('error', error => reject(eyreNetworkFailure((error as NodeJS.ErrnoException).code)));
   });
 }

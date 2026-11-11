@@ -58,6 +58,7 @@
       {"command": "readymade.refreshSharedProject", "title": "Readymade: Refresh Shared Project"},
       {"command": "readymade.checkSharedProject", "title": "Readymade: Check Shared Project"},
       {"command": "readymade.refreshSharedActivity", "title": "Readymade: Refresh Shared Project Activity"},
+      {"command": "readymade.refreshSharedSessions", "title": "Readymade: Refresh Shared Sessions"},
       {"command": "readymade.openSharedActivityFile", "title": "Readymade: Open Shared Collaborator File"},
       {"command": "readymade.openSharedSource", "title": "Readymade: Open Shared File"},
       {
@@ -143,6 +144,9 @@
       { "command": "readymade.grantProjectAccess", "title": "Readymade: Share Project Files" },
       { "command": "readymade.revokeProjectAccess", "title": "Readymade: Revoke Project Access" },
       { "command": "readymade.recoverProjectAccess", "title": "Readymade: Check Sharing Request" },
+      { "command": "readymade.shareSession", "title": "Readymade: Share Agent Session" },
+      { "command": "readymade.unshareSession", "title": "Readymade: Stop Sharing Agent Session" },
+      { "command": "readymade.removeCollaborator", "title": "Readymade: Remove Collaborator from Project" },
       { "command": "readymade.configureReviewer", "title": "Readymade: Choose Project Reviewer" },
       { "command": "readymade.disableReviewer", "title": "Readymade: Disable Project Review" },
       { "command": "readymade.recoverReviewer", "title": "Readymade: Observe Retained Review Policy" },

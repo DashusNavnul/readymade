@@ -11,7 +11,7 @@ import { LegacyMedia, type LegacyMediaOwner } from './legacy-media';
 import { CallNotificationFeed, type CallNotice } from './call-notifications';
 import { ComposerJournal, attachComposerJournal } from './composer-journal';
 import {authenticateShip, normalizeShipAddress} from './ship-connection';
-import {discoverLocalPlanets, recheckLocalPlanet, type LocalPlanet} from './planet-discovery';
+import {discoverLocalPlanets, recheckLocalPlanet, slowShipNotice, type LocalPlanet} from './planet-discovery';
 import {queryLoginCode} from './planet-discovery-wire';
 
 export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
@@ -191,7 +191,7 @@ export class MediaWorkbench implements vscode.Disposable {
       if ((existing?.origin ?? this.connectingOrigin) !== origin) throw new Error('Open another Readymade window for a different ship; existing apps keep their connection.');
       const shared = existing ?? await this.clientConnecting!;
       this.ensureOpen();
-      if (expectedShip && shared.browserCookies(origin)[0]?.name !== 'urbauth-' + expectedShip) throw Error('The selected planet changed. Refresh the running-planet list.');
+      if (expectedShip && shared.browserCookies(origin)[0]?.name !== 'urbauth-' + expectedShip) throw Error('The selected ship changed. Refresh the running-ship list.');
       return shared;
     }
     this.connectingOrigin = origin;
@@ -206,11 +206,11 @@ export class MediaWorkbench implements vscode.Disposable {
         this.ensureOpen(); this.discovered = result.planets; this.scanReport = result;
         return [...result.planets.map(planet => ({label: planet.ship, description: new URL(planet.origin).host,
           detail: 'Running on this computer. Signs in for you.', planet})),
-        {label: 'Enter a ship’s web address', description: 'For hosted planets or another computer', operation: 'manual'},
-        {label: 'Refresh running planets', operation: 'refresh'}] as PlanetChoice[];
+        {label: 'Enter a ship’s web address', description: 'For hosted ships or another computer', operation: 'manual'},
+        {label: 'Refresh running ships', detail: slowShipNotice(result.diagnostics), operation: 'refresh'}] as PlanetChoice[];
       }).finally(() => {this.scanning = false;});
       const choice = await vscode.window.showQuickPick<PlanetChoice>(choices, {title: 'Connect your Urbit',
-        placeHolder: 'Choose a running planet, or connect by web address', ignoreFocusOut: true, matchOnDescription: true});
+        placeHolder: 'Choose a running ship, or connect by web address', ignoreFocusOut: true, matchOnDescription: true});
       this.ensureOpen();
       if (!choice) return undefined;
       if (choice.operation === 'refresh') continue;
