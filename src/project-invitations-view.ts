@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import {randomBytes, randomUUID} from 'node:crypto';
-import type {ShipClient} from './ship-client';
+import {OutcomeUnknownError, type ShipClient} from './ship-client';
+import {GUEST_SOURCE, guestServiceMessage, type GuestServiceState} from './guest-service';
 import {remoteShip} from './remote-project-view';
 import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow} from './project-invitations';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
@@ -16,6 +17,19 @@ export function joinProjectLink(uri: vscode.Uri, extension: string): JoinProject
   if (!remoteShip(authority) || !remoteShip(target) || authority === target || !invitationProject(project) || !invitationHash(invitation)) throw new Error('Invalid project invitation recipient or identity.');
   return Object.freeze({authority, project, invitation, target});
 }
+/** How the join flow asks before installing, waits, and gives up. Replaceable in tests; defaults are the product's. */
+export interface GuestServiceSteps {
+  confirm(detail: string): Thenable<boolean>;
+  progress<T>(title: string, work: () => Promise<T>): Thenable<T>;
+  pause(ms: number): Promise<void>;
+  readonly pollMs: number; readonly deadlineMs: number;
+}
+const guestSteps: GuestServiceSteps = {
+  confirm: async detail => (await vscode.window.showWarningMessage('Install the collaboration service?', {modal: true, detail}, 'Install')) === 'Install',
+  progress: (title, work) => vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title}, work),
+  pause: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  pollMs: 3000, deadlineMs: 10 * 60 * 1000,
+};
 export class ProjectInvitationsView implements vscode.Disposable {
   private busy = false;
   private closed = false;
@@ -24,7 +38,36 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private readonly observed = new Map<string, Outcome>();
   constructor(private readonly extension: string, private readonly current: () => ShipClient | undefined,
     private readonly project: () => string | undefined, private readonly connect: () => Promise<ShipClient | undefined>,
-    private readonly journal: InvitationJournal, private readonly changed: () => void) {}
+    private readonly journal: InvitationJournal, private readonly changed: () => void,
+    private readonly guest: GuestServiceSteps = guestSteps) {}
+  /**
+   * A guest's own ship must run the collaboration agent before it can join. When it does not, ask once,
+   * have the ship's kiln install it from the published source, and wait until the agent answers.
+   * Nothing is joined or granted here; declining leaves the ship unchanged.
+   */
+  private async ensureGuestService(client: ShipClient, actor: string): Promise<void> {
+    let state: GuestServiceState = await client.guestServiceRead();
+    if (state.status === 'ready') return;
+    if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
+    const elsewhere = state.source && (state.source.ship !== GUEST_SOURCE.ship || state.source.desk !== GUEST_SOURCE.desk);
+    const detail = [guestServiceMessage(state), 'Joining a shared project needs it.',
+      `Your ship will install it from ${GUEST_SOURCE.ship} (desk %${GUEST_SOURCE.desk}, about 400 files) and keep it updated from there.`,
+      ...(elsewhere ? [`It currently follows ${state.source!.ship} (desk %${state.source!.desk}); installing switches it to ${GUEST_SOURCE.ship}.`] : []),
+      'Nothing is joined until it is running.'].join(' ');
+    if (state.status !== 'starting' && !await this.guest.confirm(detail)) throw new Error('Not joined: your ship needs the collaboration service to join.');
+    await this.guest.progress('Installing the collaboration service on your ship', async () => {
+      if (state.status !== 'starting') {
+        try {await client.guestServiceInstall(undefined, state.status === 'suspended');} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
+      }
+      for (const end = Date.now() + this.guest.deadlineMs; Date.now() < end;) {
+        await this.guest.pause(this.guest.pollMs);
+        if (!this.active(client, actor)) throw new Error('Connection changed while the collaboration service was installing.');
+        state = await client.guestServiceRead();
+        if (state.status === 'ready') return;
+      }
+      throw new Error(`The collaboration service did not start in time (${guestServiceMessage(state)}). Check your ship, then join again.`);
+    });
+  }
   private actor(client: ShipClient): string {
     const cookies = client.browserCookies(client.origin);
     if (cookies.length !== 1 || !cookies[0].name.startsWith('urbauth-') || !remoteShip(cookies[0].name.slice(8))) throw new Error('One authenticated ship identity is required.');
@@ -88,6 +131,8 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const client = await this.connect(); if (!client || this.closed) return;
       const actor = this.actor(client);
       if (actor !== link.target) throw new Error(`This invitation is for ${link.target}. Connect that ship in another window.`);
+      if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
+      await this.ensureGuestService(client, actor);
       if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
       const command = invitationCommand({request: randomUUID(), authority: link.authority, project: link.project, operation: 'join', invitation: link.invitation});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};

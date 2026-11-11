@@ -3,6 +3,7 @@ import * as https from 'node:https';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { completionId, type CompletionContext } from './completion-store';
@@ -18,6 +19,8 @@ import {sessionSharingTarget, sessionSharingCommand, sessionSharingHeaders, sess
   type SessionSharingCommand, type SessionSharingSnapshot, type SessionSharingReceipt} from './session-sharing';
 import {remoteSuggestionIntent, remoteSuggestionBody, remoteSuggestionHeaders, remoteSuggestionReply, remoteSuggestionRefused, remoteSuggestionRecoveryBody, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
+import {GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestInstallActions, guestServiceDesk, guestServiceProbe, guestServiceState,
+  type GuestServiceState, type GuestSource} from './guest-service';
 import { activityBody, activityCommand, activityHeaders, activityReply, activitySelector, type ActivityCommand, type ActivityReply, type ActivitySelector } from './editing-activity';
 import { asRecord, codingSnapshot, isInteger, isUv, isUx, validJSON, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
 
@@ -555,6 +558,50 @@ export class ShipClient {
       if (error instanceof ShipClientError && ['refused', 'authenticationRequired'].includes(error.code)) throw error;
       throw new OutcomeUnknownError();
     } finally {this.busy = false;}
+  }
+  /** Whether this ship can take part in a shared project: a read of its own routes and kiln desks; changes nothing. */
+  async guestServiceRead(): Promise<GuestServiceState> {
+    if (this.closed) failure('closed');
+    const actor = this.projectViewPeer(), epoch = this.generation;
+    const probe = await this.wire(GUEST_PROBE_PATH, 'GET', undefined, {}, {timeoutMs: 15000}, 65536);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) failure('contextChanged');
+    if ([401, 403].includes(probe.status)) failure('authenticationRequired', probe.status);
+    let json: unknown; try {json = probe.data.length ? JSON.parse(probe.data.toString('utf8')) : undefined;} catch {json = undefined;}
+    const seen = guestServiceProbe(probe.status, json);
+    if (seen === 'unknown') failure('unavailable', probe.status);
+    if (seen === 'present') return guestServiceState('present', null);
+    const desks = await this.wire(GUEST_PIKES_PATH, 'GET', undefined, {}, {timeoutMs: 15000}, 2 * 1024 * 1024);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) failure('contextChanged');
+    if ([401, 403].includes(desks.status)) failure('authenticationRequired', desks.status);
+    if (desks.status !== 200) failure('unavailable', desks.status);
+    let local: ReturnType<typeof guestServiceDesk>;
+    try {local = guestServiceDesk(JSON.parse(desks.data.toString('utf8')));} catch {return failure('malformed');}
+    return guestServiceState(seen, local);
+  }
+  /**
+   * Asks this ship's own kiln, once, to install or revive the collaboration service from `source`.
+   * Accepted means sent: read the state again to learn what happened. A lost reply is never resent here;
+   * kiln treats a repeated install of the same desk as the same install, so the caller may ask again after reading.
+   */
+  async guestServiceInstall(source: GuestSource = GUEST_SOURCE, revive = false): Promise<void> {
+    if (this.closed) failure('closed');
+    const actor = this.projectViewPeer();
+    if (this.busy) failure('commandBusy');
+    const actions = guestInstallActions(actor, source, revive), body = Buffer.from(JSON.stringify(actions));
+    const channel = '/~/channel/readymade-guest-' + randomUUID();
+    this.busy = true; const epoch = this.generation;
+    try {
+      const reply = await this.wire(channel, 'PUT', body, {'Content-Type': 'application/json'}, {timeoutMs: 15000}, 65536);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) throw new OutcomeUnknownError();
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      if (![200, 204].includes(reply.status)) failure('refused', reply.status);
+    } catch (error) {
+      if (error instanceof ShipClientError && ['refused', 'authenticationRequired'].includes(error.code)) throw error;
+      throw new OutcomeUnknownError();
+    } finally {
+      this.busy = false;
+      void this.wire(channel, 'PUT', Buffer.from(JSON.stringify([{id: actions.length + 1, action: 'delete'}])), {'Content-Type': 'application/json'}, {timeoutMs: 10000}, 65536).catch(() => undefined);
+    }
   }
   /** Caller must persist the exact intent before this explicit one-shot submission. */
   async projectSuggestionSubmit(value: RemoteSuggestionIntent, consent: boolean): Promise<RemoteSuggestionReply> {

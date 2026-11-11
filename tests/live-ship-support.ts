@@ -147,7 +147,8 @@ export function invitationOutcome(api: ReadymadeWorkspace, operation: 'invite-me
 /** One submission through the product screen, then read-only "Check Result" observations until the ship settles it. */
 export async function invitationAction(context: LiveContext, operation: 'invite-member' | 'join', submit: () => Promise<void>): Promise<{status: string; request: string; actions: string[]}> {
   let failed: unknown;
-  try {await context.timed(operation + '-submit', submit, 60000);} catch (error) {failed = error;}
+  // A join may first install the collaboration service on the guest's own ship (download and compile: minutes).
+  try {await context.timed(operation + '-submit', submit, operation === 'join' ? 600000 : 60000);} catch (error) {failed = error;}
   let row = invitationOutcome(context.api, operation);
   if (failed) {
     // A retained intent means the request may have left this computer. It is never sent again.

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
-import {joinProjectLink} from '../src/project-invitations-view';
+import {joinProjectLink, type GuestServiceSteps} from '../src/project-invitations-view';
+import {GUEST_SOURCE} from '../src/guest-service';
 import {sharedProjectLink} from '../src/remote-source-view';
 import type {RemoteSourceObservation} from '../src/remote-project-view';
 import type {RemoteProjectSessionsReply} from '../src/remote-project-sessions';
@@ -16,7 +17,22 @@ async function join(c: LiveContext): Promise<void> {
   const link = joinProjectLink(vscode.Uri.parse(joinLink, true), c.extension.id);
   assert.deepEqual({authority: link.authority, project: link.project, target: link.target}, {authority: owner, project, target: c.ship});
   c.record.owner = owner; c.record.invitation = link.invitation;
-  await invitationAction(c, 'join', () => c.api.invitations.join(joinLink));
+  // The guest's own ship may not run the collaboration service yet; joining installs it after one modal
+  // confirmation. The test runner refuses modal dialogs, so a scripted stand-in answers Install only to text
+  // that names the service, its source ship and desk. Every other step (kiln poke, waiting) is product code.
+  c.record.guestBefore = await c.client.guestServiceRead();
+  const views = c.api.invitations as unknown as {guest: GuestServiceSteps}, real = views.guest;
+  let confirmations = 0, polls = 0; const started = Date.now();
+  views.guest = {...real, pause: async ms => {polls++; await real.pause(ms);},
+    confirm: async detail => {
+      confirmations++;
+      const ok = confirmations === 1 && /collaboration service/.test(detail) && detail.includes(GUEST_SOURCE.ship) && detail.includes('%' + GUEST_SOURCE.desk);
+      Object.assign(c.record, {scriptedConfirmation: true, confirmations, confirmationOffered: detail.slice(0, 600), confirmationTextVerified: ok});
+      return ok;
+    }};
+  try {await invitationAction(c, 'join', () => c.api.invitations.join(joinLink));} finally {views.guest = real;}
+  c.record.guestAfter = await c.client.guestServiceRead();
+  Object.assign(c.record, {guestPolls: polls, guestConfirmations: confirmations, joinSeconds: Math.round((Date.now() - started) / 1000)});
   assert.equal(c.client.snapshot, undefined); c.record.joinedWithoutCodingConnection = true;
 }
 
