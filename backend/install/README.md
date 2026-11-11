@@ -159,7 +159,7 @@ python3 backend/install/inspect-response.py \
 ```
 
 This command uses the bounded native frame decoder already used by the
-preservation tools: at most 256 MiB and sixteen million decoded nodes. It
+preservation tools: at most 256 MiB and 64 million decoded nodes. It
 validates the entire frame and matching result envelope, retains its digest,
 and writes a new mode-0600 summary without printing the saved payload. It
 refuses malformed frames, unexpected identifiers/marks, input symlinks and
@@ -544,7 +544,7 @@ result, requires matching owner/target/revision and nondecreasing snapshot time,
 then compares all existing app carriers, recognized saved-state containers,
 desk maps and HTTP bindings. It records both input hashes and refuses an existing
 output; the report is created mode 0600. Keep it and the raw snapshots private.
-Inputs are bounded to 256 MiB each, sixteen million decoded nodes, and 100,000
+Inputs are bounded to 256 MiB each, 64 million decoded nodes, and 100,000
 entries per collection. Malformed frames, invalid references and unsupported
 snapshot shapes fail rather than producing a passing comparison.
 

@@ -51,7 +51,9 @@ def equal(left, right):
     return True
 
 
-def cue_frame(frame, max_nodes=16000000):
+# 64 million: a fresh ship measured 4.27M nodes before activation and 16.29M after the ten apps
+# started (67 MB). The earlier 16M bound refused that real after-snapshot by 1.8%.
+def cue_frame(frame, max_nodes=64000000):
     require(len(frame) >= 6 and frame[0] == 0 and
             int.from_bytes(frame[1:5], 'little') == len(frame) - 5, 'Invalid native frame')
     data, cursor, memo, stack = frame[5:], 0, {}, []

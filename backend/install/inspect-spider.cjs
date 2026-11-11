@@ -3,9 +3,11 @@
 // Offline diagnostics only. A saved Spider carrier has no completion journal.
 const {createHash} = require('node:crypto');
 const MAX_BYTES = 32 * 1024 * 1024, MAX_NODES = 1_000_000, MAX_ITEMS = 100_000;
-// Whole-response bound, equal to inspect-response.py. A fresh ship's install snapshot measured
-// 45,842,830 bytes and 4,269,327 nodes (4.9 s, 528 MB); the default bound above refused it.
-const LARGE_FRAME = Object.freeze({bytes: 256 * 1024 * 1024, nodes: 16_000_000});
+// Whole-response bound, equal to inspect-response.py and compare-snapshots.py. Measured on a fresh
+// ship: 45,842,830 bytes / 4,269,327 nodes before activation (4.9 s, 528 MB) and 67,133,750 bytes /
+// 16,288,145 nodes after the ten apps started (33 s, 672 MB). The default bound above refused the
+// first; a 16M-node bound refused the second.
+const LARGE_FRAME = Object.freeze({bytes: 256 * 1024 * 1024, nodes: 64_000_000});
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 function need(ok, message) {if (!ok) throw new Error(message);}
 function cord(text) {return BigInt('0x' + Buffer.from(text).reverse().toString('hex'));}

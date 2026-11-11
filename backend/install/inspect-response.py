@@ -13,7 +13,7 @@ spec.loader.exec_module(native)
 MAX_BYTES = 256 * 1024 * 1024
 
 
-def inspect(frame, max_nodes=16000000):
+def inspect(frame, max_nodes=64000000):
     native.require(6 <= len(frame) <= MAX_BYTES, 'Native frame exceeds byte limit')
     request, kind, payload = native.unpack(native.cue_frame(frame, max_nodes), 3)
     native.require(request == 0, 'Unexpected response identifier')
