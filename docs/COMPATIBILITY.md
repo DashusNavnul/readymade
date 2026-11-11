@@ -72,7 +72,7 @@ window. The `landscape` command in new integrated local terminals opens the same
 retained Landscape tab. `groups` opens Tlon Groups; `lattice` opens Lattice's
 document workspace. Each command accepts no arguments.
 
-The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111) discovers every
+The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1) discovers every
 real ship class running on the Mac; the November 10 preview listed local planets
 only. The all-class change has automated discovery
 and authentication coverage; it does not yet establish live acceptance for every

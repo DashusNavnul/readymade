@@ -7,7 +7,7 @@ invitation and is never needed for joining a group.
 
 ## What you can set up from this repository
 
-Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111),
+Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1),
 drag Readymade Workspace to Applications and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
 Choose **Home → Connect your Urbit**, authenticate privately, then open Groups, Glurff,

@@ -35,7 +35,7 @@ to type for a ship on your Mac), paste the join link, report the result.
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer)**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1).
 Open it, drag **Readymade Workspace** to **Applications**, then open the app
 from Applications and eject the disk image. Running the download needs no
 Node.js, npm, Python, Xcode or source build. Intel, Windows and Linux packages

@@ -15,11 +15,11 @@ running on this Mac or one hosted elsewhere.
 
 ```sh
 mkdir -p ~/Downloads/readymade && cd ~/Downloads/readymade
-base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111
-curl -fLO $base/Readymade-0.2.0-alpha.20261111-macos-arm64.dmg
+base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.1
+curl -fLO $base/Readymade-0.2.0-alpha.20261111.1-macos-arm64.dmg
 curl -fLO $base/SHA256SUMS.txt
 shasum -a 256 -c SHA256SUMS.txt          # must print: OK
-hdiutil attach Readymade-0.2.0-alpha.20261111-macos-arm64.dmg -nobrowse
+hdiutil attach Readymade-0.2.0-alpha.20261111.1-macos-arm64.dmg -nobrowse
 cp -R "/Volumes/Readymade Workspace/Readymade Workspace.app" /Applications/
 hdiutil detach "/Volumes/Readymade Workspace"
 open -a "Readymade Workspace"
@@ -84,7 +84,7 @@ Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before select
 
 ## Install the download
 
-Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111)
+Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.1)
 for a tester who wants to run the app. Open the `.dmg`, drag Readymade Workspace
 to Applications, open it there and eject the disk image. The download uses a
 persistent local signing certificate and is not notarized; a trusted official download may need macOS
