@@ -46,6 +46,8 @@ cleanup() {
 trap cleanup EXIT
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail 'This package is for Apple Silicon macOS.'
 for tool in node npm python3 git xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+# A Mac that never packaged before has no prepared Urbit runtime and needs zig to build it: say so now, not after the tests.
+[[ -d "$HOME/.cache/readymade/runtime" ]] || command -v zig >/dev/null || fail 'Missing tool: zig 0.15.2 (needed once to build the Urbit runtime).'
 [[ ! -e "$app_path" && ! -L "$app_path" && ! -e "$receipt_path" && ! -L "$receipt_path" ]] || fail 'The preview app or receipt already exists; it will not be replaced.'
 for cache_parent in "$HOME/.cache" "$HOME/.cache/readymade" "$cache_dir"; do
   [[ ! -L "$cache_parent" ]] || fail 'A package-cache parent is a symlink.'

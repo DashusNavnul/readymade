@@ -293,10 +293,30 @@ export class ProjectInvitationsView implements vscode.Disposable {
    * A guest leaves a project it joined. The owner's ship settles it; sent once through the same journal as the
    * join, so an unknown outcome is checked, never resent. The owner's file and session grants end with membership.
    */
-  async leave(request: string): Promise<void> {
+  /** The joins this ship can still leave, by request: one per project, and only while its accepted joins outnumber its accepted leaves. */
+  private leavable(client: ShipClient, actor: string): Set<string> {
+    const retained = this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor), found = new Set<string>();
+    const balance = new Map<string, number>(), pair = (row: InvitationIntent) => row.command.authority + '\n' + row.command.project;
+    const accepted = (row: InvitationIntent) => this.observed.get(this.key(row))?.status === 'accepted';
+    for (const row of retained) if (accepted(row) && (row.command.operation === 'join' || row.command.operation === 'leave'))
+      balance.set(pair(row), (balance.get(pair(row)) ?? 0) + (row.command.operation === 'join' ? 1 : -1));
+    for (const row of retained) if (accepted(row) && row.command.operation === 'join' && (balance.get(pair(row)) ?? 0) > 0) {found.add(row.command.request); balance.set(pair(row), 0);}
+    return found;
+  }
+  /** With no request named (the command palette, the Home command line): the one project this ship can leave, or a choice among several. */
+  async leave(request?: string): Promise<void> {
     await this.quiet();
     const client = this.current();
     if (!client || this.closed || this.busy) throw new Error('Connect the ship that joined this project.');
+    if (request === undefined) {
+      await this.observeRetained(); await this.quiet();
+      const who = this.actor(client), can = this.leavable(client, who);
+      const open = this.journal.entries().filter(row => row.origin === client.origin && row.actor === who && can.has(row.command.request));
+      if (!open.length) throw new Error('This ship has not joined a project it can leave.');
+      const picked = open.length === 1 ? open[0] : (await vscode.window.showQuickPick(open.map(row => ({label: row.command.project, description: row.command.authority, row})), {title: 'Leave which project?'}))?.row;
+      if (!picked) return;
+      request = picked.command.request;
+    }
     const actor = this.actor(client), joined = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
     if (!joined || joined.command.operation !== 'join' || this.observed.get(this.key(joined))?.status !== 'accepted') throw new Error('Check the join result before leaving this project.');
     const {authority, project} = joined.command;
@@ -437,13 +457,10 @@ export class ProjectInvitationsView implements vscode.Disposable {
     if (this.page?.next !== null && this.page) children.push({label: 'Next Page', command: {command: 'readymade.nextProjectMembers', title: 'Next Page', arguments: [this.page.kind]}});
     // Leave is offered once for a project, and only while this ship's accepted joins outnumber its accepted leaves.
     const retained = client && actor ? this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor) : [];
-    const balance = new Map<string, number>(), pair = (row: InvitationIntent) => row.command.authority + '\n' + row.command.project;
-    for (const row of retained) if (this.observed.get(this.key(row))?.status === 'accepted' && (row.command.operation === 'join' || row.command.operation === 'leave'))
-      balance.set(pair(row), (balance.get(pair(row)) ?? 0) + (row.command.operation === 'join' ? 1 : -1));
+    const leave = client && actor ? this.leavable(client, actor) : new Set<string>();
     if (client && actor) for (const intent of retained) {
       const outcome = this.observed.get(this.key(intent)), accepted = outcome?.status === 'accepted', command = intent.command;
-      const offerLeave = accepted && command.operation === 'join' && (balance.get(pair(intent)) ?? 0) > 0;
-      if (offerLeave) balance.set(pair(intent), 0);
+      const offerLeave = leave.has(command.request);
       children.push({label: command.project, description: `${command.operation} · ${outcome?.status ?? 'retained — check result'}`,
         children: [{label: 'Check Result', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]}},
           ...(accepted && command.operation === 'invite-member' ? [{label: 'Copy Join Link', command: {command: 'readymade.copyProjectJoinLink', title: 'Copy Join Link', arguments: [command.request]}}] : []),
