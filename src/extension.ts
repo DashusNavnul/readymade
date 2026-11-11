@@ -214,6 +214,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.backendInstall = new BackendInstallView(context.extensionPath, join(context.globalStorageUri.fsPath, 'backend-install'), () => this.media.connectedLocalPlanet, () => this.connectApps());
     this.planetBoot = new PlanetBootView(context.extensionPath, () => this.connectApps());
     this.registrations.push(this.backendInstall, this.planetBoot);
+    void this.offerStart();
     this.home = new WelcomeView(connection, async action => {
       if (action === 'openProject') return vscode.commands.executeCommand('workbench.action.files.openFolder');
       if (action === 'connect') {if (await this.connectApps()) await this.setup.show(this.media.connectedClient); return;}
@@ -358,6 +359,13 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     if (this.media.connectedClient) return true;
     try {await this.media.connectClient(); this.render(); void this.offerInstall(); return true;}
     catch (error) {if (error instanceof ShipClientError && error.code === 'cancelled') return false; throw error;}
+  }
+  /** When the app opens: a planet Readymade set up that is not running (after a Mac restart, say) is offered a start. */
+  private async offerStart(): Promise<void> {
+    const stopped = await this.planetBoot.stopped();
+    if (this.disposed || stopped.length !== 1) return; // several: the Start a planet page lists them
+    const ship = stopped[0].ship, choice = await vscode.window.showInformationMessage(`${ship} is not running.`, 'Start it');
+    if (choice === 'Start it' && !this.disposed) {await this.planetBoot.show(); await this.planetBoot.restart(ship);}
   }
   private readonly installOffered = new Set<string>();
   /** Once per ship per window: a local ship without Pataphor is offered the install instead of a dead end. */

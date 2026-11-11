@@ -32,6 +32,15 @@ from a Keyfile**.
 Readymade never starts a second copy. If a start stops partway, the screen names
 the step; do not start the planet from another app.
 
+### After your Mac restarts
+
+A planet does not start by itself when the Mac restarts. When Readymade opens
+and a planet it set up is not running, it offers **Start it**. The same list is
+on the **Start a planet** page under *Your planets on this Mac*. The planet
+comes back in the same folder, on the same address, with the same memory
+setting, and Readymade checks it is the same planet before saying it is running.
+If something else is already running it, nothing is started.
+
 ## Installing Pataphor on a planet
 
 After connecting a local planet that does not have Pataphor, Readymade offers
@@ -69,6 +78,8 @@ packaged app's own code, bundled tools, bundled backend and built-in runtime:
 install, switch-on, existing apps verified unchanged, and Pataphor's workspace
 and coding state served to the signed-in owner while anonymous requests were
 refused. Automatic sign-in was also checked against a real running planet.
+Stopping a switched-on test ship and starting it again through the restart path
+brought it back in seconds with Pataphor answering as before.
 
 Not yet proven:
 

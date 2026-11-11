@@ -10,9 +10,12 @@ import {parseRowsReport, runTool, type RowsReport, type ToolRunner} from './back
 export type BootPhase = 'not-started' | 'running' | 'needs-attention' | 'booted';
 export type BootReport = RowsReport<BootPhase>;
 export interface BootPlan {ship: string; digest: string; pier: string; output: string; httpPort: number}
+export interface KnownShip {ship: string; httpPort: number; running: boolean}
 export class PlanetBootError extends Error {constructor(message: string) {super(message); this.name = 'PlanetBootError';}}
 const bootPhases = new Set<BootPhase>(['not-started', 'running', 'needs-attention', 'booted']);
 const planet = /^~[a-z]{6}-[a-z]{6}(?![\s\S])/;
+// Records are written only by the bundled tool; any well-formed ship name it recorded is accepted for restart.
+const planetOrTest = /^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6})?)(?![\s\S])/;
 
 /** A planet name from a keyfile's name, such as sampel-palnet-1.key. The key's content is checked against it by the tools. */
 export function planetFromKeyfile(file: string): string | undefined {
@@ -49,6 +52,26 @@ export class PlanetBoot {
         throw new PlanetBootError(`This keyfile could not be used for ${ship}. Check that it is the keyfile for this planet, and that the planet was not already set up on this Mac.`);
       return {ship, digest: value.digest, pier: value.pier, output: value.output, httpPort: value.httpPort as number};
     } finally {await unlink(copy).catch(() => undefined);}
+  }
+
+  /** Planets this app set up on this Mac, and whether each is running now. */
+  async ships(): Promise<KnownShip[]> {
+    let value: unknown;
+    try {value = JSON.parse((await this.tool(path.join(this.tools, 'boot-run.cjs'), ['ships', '--root', this.root])).stdout.trim().split('\n').at(-1) ?? '');} catch {return [];}
+    if (!Array.isArray(value) || value.length > 64) return [];
+    return value.filter((row): row is KnownShip => !!row && typeof row === 'object' && planetOrTest.test(String((row as KnownShip).ship)) &&
+      Number.isInteger((row as KnownShip).httpPort) && typeof (row as KnownShip).running === 'boolean').map(({ship, httpPort, running}) => ({ship, httpPort, running}));
+  }
+
+  /** Start again a planet this app set up before. The tool refuses while any process holds it, so at most one copy runs. */
+  async restart(ship: string, onReport: (report: BootReport) => void): Promise<BootReport> {
+    if (!planetOrTest.test(ship)) throw new PlanetBootError('That planet is not one Readymade set up on this Mac.');
+    let last: BootReport | undefined;
+    await this.tool(path.join(this.tools, 'boot-run.cjs'), ['restart', '--ship', ship, '--root', this.root], line => {
+      const report = parseBootReport(line); if (report) {last = report; onReport(report);}
+    });
+    if (!last) throw new PlanetBootError('Your planet could not be started. It was not started a second time.');
+    return last;
   }
 
   /** Start the prepared planet once. Reports every change; resolves with the last report. Never starts a second copy. */

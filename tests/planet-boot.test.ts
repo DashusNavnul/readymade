@@ -67,3 +67,22 @@ test('launching reports valid lines and falls back to the retained record, never
   assert.equal((await new PlanetBoot('/t', '/r', silent).launch(plan, () => undefined)).stoppedAt, 'Preparing it');
   assert.deepEqual(calls.slice(1), ['launch', 'status'], 'One launch, then a read of the record');
 });
+
+test('known planets are listed only from well-formed rows, and a restart reports the tool’s lines', async () => {
+  const calls: (readonly string[])[] = [];
+  const tool: ToolRunner = async (_script, args, onLine) => {
+    calls.push(args);
+    if (args[0] === 'ships') return {code: 0, stdout: JSON.stringify([{ship: '~sampel-palnet', httpPort: 8081, running: false, pier: '/secret/path'}, {ship: 'bad', httpPort: 1, running: true}, {ship: '~other-planet', httpPort: '8082', running: false}, null])};
+    for (const line of [report('running'), report('booted', {url: 'http://127.0.0.1:8081'})]) onLine?.(line);
+    return {code: 0, stdout: ''};
+  };
+  const boot = new PlanetBoot('/t', '/r', tool);
+  assert.deepEqual(await boot.ships(), [{ship: '~sampel-palnet', httpPort: 8081, running: false}], 'Only validated fields of valid rows');
+  const seen: string[] = [];
+  assert.equal((await boot.restart('~sampel-palnet', now => seen.push(now.phase))).url, 'http://127.0.0.1:8081');
+  assert.deepEqual(seen, ['running', 'booted']); assert.deepEqual(calls.at(-1), ['restart', '--ship', '~sampel-palnet', '--root', '/r']);
+  await assert.rejects(boot.restart('not a ship', () => undefined), /not one Readymade set up/);
+  const silent: ToolRunner = async () => ({code: 2, stdout: ''});
+  await assert.rejects(new PlanetBoot('/t', '/r', silent).restart('~sampel-palnet', () => undefined), /not started a second time/);
+  assert.deepEqual(await new PlanetBoot('/t', '/r', async () => ({code: 0, stdout: 'not json'})).ships(), []);
+});

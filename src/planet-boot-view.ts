@@ -2,11 +2,11 @@ import * as vscode from 'vscode';
 import {randomBytes} from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {PlanetBoot, PlanetBootError, planetFromKeyfile, type BootPlan, type BootReport} from './planet-boot';
+import {PlanetBoot, PlanetBootError, planetFromKeyfile, type BootPlan, type BootReport, type KnownShip} from './planet-boot';
 
 const viewType = 'readymade.planetBoot';
 type Step = 'checking' | 'unavailable' | 'choose' | 'confirm' | 'working' | 'report';
-interface Presentation {step: Step; ship?: string; busy: boolean; message?: string; report?: BootReport}
+interface Presentation {step: Step; ship?: string; busy: boolean; message?: string; report?: BootReport; ships?: KnownShip[]}
 
 /**
  * "Start a planet from its keyfile": choose the file, confirm it is not running anywhere else, then the
@@ -40,7 +40,7 @@ export class PlanetBootView implements vscode.Disposable {
       panel.webview.html = this.html();
     }
     if (this.state.busy || this.state.step === 'report' || this.state.step === 'confirm') return;
-    this.set(await this.boot.available() ? {step: 'choose', busy: false} :
+    this.set(await this.boot.available() ? {step: 'choose', busy: false, ships: await this.boot.ships()} :
       {step: 'unavailable', busy: false, message: 'This build of Readymade does not include the Urbit runtime, so it cannot start a planet.'});
   }
 
@@ -54,6 +54,24 @@ export class PlanetBootView implements vscode.Disposable {
     if (this.closed || !ship) return;
     this.keyfile = file; this.plan = undefined;
     this.set({step: 'confirm', ship: ship.trim(), busy: false});
+  }
+
+  /** Planets Readymade set up that are not running now; for the offer made when the app opens. */
+  async stopped(): Promise<KnownShip[]> {
+    try {return await this.boot.available() ? (await this.boot.ships()).filter(ship => !ship.running) : [];} catch {return [];}
+  }
+  /** Start again a planet this app set up before. One click, one start. */
+  async restart(ship: string): Promise<void> {
+    if (this.closed || this.state.busy) return;
+    this.plan = undefined;
+    this.set({step: 'working', ship, busy: true, message: 'Starting…'});
+    try {
+      const final = await this.boot.restart(ship, report => {if (!this.closed) this.set({step: 'working', ship, busy: true, report});});
+      this.set({step: 'report', ship, busy: false, report: final});
+    } catch (error) {
+      this.set({step: 'report', ship, busy: false, report: this.state.report,
+        message: error instanceof PlanetBootError ? error.message : 'Your planet could not be started. It was not started a second time.'});
+    }
   }
 
   private async start(): Promise<void> {
@@ -74,12 +92,21 @@ export class PlanetBootView implements vscode.Disposable {
   private async receive(panel: vscode.WebviewPanel, message: unknown): Promise<void> {
     if (this.closed || panel !== this.panel || !message || typeof message !== 'object' || Array.isArray(message)) return;
     const row = message as Record<string, unknown>;
+    if (await this.receiveRestart(row)) return;
     if (Object.keys(row).length !== 1 || typeof row.action !== 'string') return;
     if (row.action === 'ready') {this.last = ''; this.post(); return;}
     if (this.state.busy) return;
     if (row.action === 'choose') await this.choose();
     else if (row.action === 'start') await this.start();
     else if (row.action === 'connect') await this.connect();
+    else if (row.action === 'back') this.set({step: 'choose', busy: false, ships: await this.boot.ships()});
+    return;
+  }
+  private async receiveRestart(row: Record<string, unknown>): Promise<boolean> {
+    if (Object.keys(row).length !== 2 || row.action !== 'restart' || typeof row.ship !== 'string') return false;
+    const known = (this.state.ships ?? []).find(entry => entry.ship === row.ship && !entry.running);
+    if (known && !this.state.busy && this.state.step === 'choose') await this.restart(known.ship);
+    return true;
   }
   private set(next: Presentation): void {this.state = next; this.post();}
   private post(): void {
@@ -115,7 +142,13 @@ function render(s){
   if(s.step==='choose'){
     body.append(el('p','If you have a planet’s keyfile, Readymade can start that planet on this Mac.'),
       el('p','A keyfile is a small file ending in “.key”. When you claim a planet in Bridge it is inside the passport download.','muted'),
-      button('Choose your keyfile','choose'));return}
+      button('Choose your keyfile','choose'));
+    if(Array.isArray(s.ships)&&s.ships.length){
+      body.append(el('h2','Your planets on this Mac'));const ul=el('ul');
+      for(const ship of s.ships){const li=el('li');li.append(el('span',ship.running?'✓':'·','mark'),el('span',ship.ship+(ship.running?' — running':' — not running')));
+        if(!ship.running){const b=el('button','Start it','secondary');b.addEventListener('click',()=>api.postMessage({action:'restart',ship:ship.ship}));li.append(b)}ul.append(li)}
+      body.append(ul)}
+    return}
   if(s.message)body.append(el('p',s.message,s.step==='working'?'muted':'notice problem'));
   if(s.step==='confirm'){
     body.append(el('p','A planet must only ever run in one place. If '+(s.ship||'this planet')+' is running on another computer or a hosting service, stop it there first. Running it in two places can break it permanently.'),
@@ -127,6 +160,7 @@ function render(s){
     else if(s.step==='report')body.append(el('p','Stopped at “'+(r.stoppedAt||'a step')+'”. '+(r.reason||'')+' Do not start it again from another app; ask for help with this screen open.','notice problem'));
     body.append(rows(r));
     if(s.step==='report'&&r.phase==='booted')body.append(button('Connect to it','connect'));
+    if(s.step==='report')body.append(button('Back','back','secondary'));
   }
 }
 window.addEventListener('message',e=>render(e.data));

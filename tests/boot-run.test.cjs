@@ -81,3 +81,45 @@ test('a port held on every address, or only on loopback, is not offered to a new
   }
   t.diagnostic('wildcard and loopback listeners both refused');
 });
+
+test('only planets with a finished first-boot record in this folder are listed', t => {
+  const {ships} = require('../backend/install/boot-run.cjs');
+  const root = workspace(t);
+  assert.deepEqual(ships(path.join(root, 'absent')), []);
+  const record = (name, plan, result, pier = true) => {
+    fs.mkdirSync(path.join(root, name + '-boot'), {recursive: true}); if (pier) fs.mkdirSync(path.join(root, name), {recursive: true});
+    fs.writeFileSync(path.join(root, name + '-boot/plan.json'), JSON.stringify({plan})); if (result) fs.writeFileSync(path.join(root, name + '-boot/result.json'), JSON.stringify(result));
+  };
+  const plan = name => ({ship: '~' + name, pier: path.join(root, name), httpPort: 8081, amesPort: 31401, shipAtom: '65536'});
+  const done = name => ({phase: 'ship-booted-not-installed', ship: '~' + name});
+  record('sampel-palnet', plan('sampel-palnet'), done('sampel-palnet'));
+  record('halfway-booted', plan('halfway-booted'), undefined);                                  // first boot never finished
+  record('wrong-folder', {...plan('wrong-folder'), pier: '/elsewhere/wrong-folder'}, done('wrong-folder'));
+  record('other-name', plan('other-name'), done('sampel-palnet'));                              // record disagrees with its plan
+  record('gone-pier', plan('gone-pier'), done('gone-pier'), false);                             // pier folder removed
+  const listed = ships(root);
+  assert.deepEqual(listed.map(entry => entry.ship), ['~sampel-palnet']);
+  assert.equal(listed[0].running, false); assert.equal(listed[0].httpPort, 8081);
+});
+
+test('restart rows follow retained evidence and a stop carries its recorded reason', t => {
+  const {restartStatus} = require('../backend/install/boot-run.cjs');
+  const root = workspace(t), write = (name, value) => {fs.mkdirSync(path.dirname(path.join(root, name)), {recursive: true}); fs.writeFileSync(path.join(root, name), JSON.stringify(value));};
+  assert.equal(restartStatus(root).phase, 'not-started');
+  write('intent.json', {}); write('started.json', {pid: 7});
+  assert.deepEqual(statuses(restartStatus(root)), ['done', 'running', 'waiting', 'waiting']);
+  write('stopped.json', {reason: 'The planet did not come up. It was not started a second time.'});
+  let report = restartStatus(root);
+  assert.equal(report.phase, 'needs-attention'); assert.equal(report.stoppedAt, 'Waiting for it to come up'); assert.match(report.reason, /did not come up/);
+  fs.rmSync(path.join(root, 'stopped.json'));
+  write('base/result.json', {baseExportsVerified: true}); write('result.json', {identityVerified: true, url: 'http://127.0.0.1:8081'});
+  report = restartStatus(root);
+  assert.equal(report.phase, 'booted'); assert.equal(report.url, 'http://127.0.0.1:8081');
+});
+
+test('restart refuses a planet that was not set up in this folder, before starting anything', async t => {
+  const {restart} = require('../backend/install/boot-run.cjs');
+  const root = workspace(t);
+  await assert.rejects(restart({ship: '~sampel-palnet', root}, () => {}, {vere: '/none', pill: '/none'}), /not set up by Readymade/);
+  assert.deepEqual(fs.readdirSync(root), []);
+});
