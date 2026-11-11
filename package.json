@@ -37,6 +37,7 @@
       {"command": "readymade.home", "title": "Readymade: Home", "icon": "$(home)"},
       {"command": "readymade.getUrbit", "title": "Readymade: Get an Urbit"},
       {"command": "readymade.installBackend", "title": "Readymade: Install Pataphor on This Ship"},
+      {"command": "readymade.startPlanet", "title": "Readymade: Start a Planet from a Keyfile"},
       {"command": "readymade.inspectWorkspaceResult", "title": "Readymade: Inspect Files and Checks"},
       {"command": "readymade.inviteCollaborator", "title": "Readymade: Invite Collaborator"},
       {"command": "readymade.joinProject", "title": "Readymade: Join Project"},

@@ -50,6 +50,7 @@ import { SetupView } from './setup-view';
 import { WelcomeView } from './welcome-view';
 import { PlanetSetupView } from './planet-setup-view';
 import { BackendInstallView } from './backend-install-view';
+import { PlanetBootView } from './planet-boot-view';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -73,6 +74,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   readonly home: WelcomeView;
   readonly planetSetup: PlanetSetupView;
   readonly backendInstall: BackendInstallView;
+  readonly planetBoot: PlanetBootView;
   readonly setup: SetupView;
   readonly workspaceRequests: WorkspaceRequestView;
   readonly files: DirectoryView;
@@ -210,7 +212,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     };
     this.planetSetup = new PlanetSetupView(connection, () => this.connectApps());
     this.backendInstall = new BackendInstallView(context.extensionPath, join(context.globalStorageUri.fsPath, 'backend-install'), () => this.media.connectedLocalPlanet, () => this.connectApps());
-    this.registrations.push(this.backendInstall);
+    this.planetBoot = new PlanetBootView(context.extensionPath, () => this.connectApps());
+    this.registrations.push(this.backendInstall, this.planetBoot);
     this.home = new WelcomeView(connection, async action => {
       if (action === 'openProject') return vscode.commands.executeCommand('workbench.action.files.openFolder');
       if (action === 'connect') {if (await this.connectApps()) await this.setup.show(this.media.connectedClient); return;}
@@ -232,6 +235,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('home', () => this.home.show());
     command('getUrbit', () => this.planetSetup.show());
     command('installBackend', () => this.backendInstall.show());
+    command('startPlanet', () => this.planetBoot.show());
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
     command('openSharedProject', link => this.remoteSource.open(typeof link === 'string' ? link : undefined));
     command('resumeSharedProject', id => this.remoteSource.resume(typeof id === 'string' ? id : undefined));
@@ -352,8 +356,22 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   }
   private async connectApps(): Promise<boolean> {
     if (this.media.connectedClient) return true;
-    try {await this.media.connectClient(); this.render(); return true;}
+    try {await this.media.connectClient(); this.render(); void this.offerInstall(); return true;}
     catch (error) {if (error instanceof ShipClientError && error.code === 'cancelled') return false; throw error;}
+  }
+  private readonly installOffered = new Set<string>();
+  /** Once per ship per window: a local ship without Pataphor is offered the install instead of a dead end. */
+  private async offerInstall(): Promise<void> {
+    const local = this.media.connectedLocalPlanet, client = this.media.connectedClient;
+    if (!local || !client || this.installOffered.has(local.ship)) return;
+    this.installOffered.add(local.ship);
+    try {await client.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 8000});}
+    catch (error) {
+      // Only a definite "not there" is an offer; a busy or unreachable ship is left alone.
+      if (!(error instanceof ShipClientError) || error.status !== 404 || this.disposed) return;
+      const choice = await vscode.window.showInformationMessage(`Pataphor is not on ${local.ship} yet.`, 'Install Pataphor');
+      if (choice === 'Install Pataphor' && !this.disposed) await this.backendInstall.show();
+    }
   }
   async connect(origin?: string, credentials?: (origin: string) => Promise<string | undefined>): Promise<void> {
     if (this.connecting) throw new Error('Connection already in progress');

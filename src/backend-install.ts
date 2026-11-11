@@ -23,14 +23,21 @@ const MIN_LOOM = 33;
 const shipName = /^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6}){0,3})(?![\s\S])/;
 const plain = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 
-/** One printed report, or undefined. Tool output is untrusted presentation input: bounded and shape-checked. */
+export interface RowsReport<Phase extends string> {phase: Phase; items: InstallRow[]; stoppedAt?: string; reason?: string; url?: string}
+/** One printed install report, or undefined. */
 export function parseReport(line: string): InstallReport | undefined {
+  const report = parseRowsReport(line, phases);
+  if (!report) return undefined;
+  const {url: _url, ...rest} = report; void _url; return rest;
+}
+/** One printed report with rows, or undefined. Tool output is untrusted presentation input: bounded and shape-checked. */
+export function parseRowsReport<Phase extends string>(line: string, allowed: ReadonlySet<Phase>): RowsReport<Phase> | undefined {
   if (typeof line !== 'string' || line.length > 65536) return undefined;
   let value: unknown;
   try {value = JSON.parse(line);} catch {return undefined;}
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const row = value as Record<string, unknown>;
-  if (!phases.has(row.phase as InstallPhase) || !Array.isArray(row.items) || row.items.length > 64) return undefined;
+  if (!allowed.has(row.phase as Phase) || !Array.isArray(row.items) || row.items.length > 64) return undefined;
   const items: InstallRow[] = [];
   for (const entry of row.items) {
     if (!entry || typeof entry !== 'object') return undefined;
@@ -40,8 +47,10 @@ export function parseReport(line: string): InstallReport | undefined {
     items.push({id: item.id, label: item.label, status: item.status as InstallRowStatus, ...(item.reason !== undefined ? {reason: item.reason} : {})});
   }
   if (row.stoppedAt !== undefined && !plain(row.stoppedAt, 160) || row.reason !== undefined && !plain(row.reason, 240)) return undefined;
-  return {phase: row.phase as InstallPhase, items,
-    ...(row.stoppedAt !== undefined ? {stoppedAt: row.stoppedAt as string} : {}), ...(row.reason !== undefined ? {reason: row.reason as string} : {})};
+  if (row.url !== undefined && !(typeof row.url === 'string' && /^http:\/\/127\.0\.0\.1:[0-9]{2,5}(?![\s\S])/.test(row.url))) return undefined;
+  return {phase: row.phase as Phase, items,
+    ...(row.stoppedAt !== undefined ? {stoppedAt: row.stoppedAt as string} : {}), ...(row.reason !== undefined ? {reason: row.reason as string} : {}),
+    ...(row.url !== undefined ? {url: row.url as string} : {})};
 }
 
 async function directory(file: string): Promise<boolean> {try {return (await stat(file)).isDirectory();} catch {return false;}}
