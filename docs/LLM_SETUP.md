@@ -8,7 +8,7 @@ Inspect the local environment first. Ask only for facts that remain missing:
 
 1. Is this an Apple Silicon Mac? The prebuilt download needs no development tools.
    Building from source separately requires Node.js 22, Python 3.9+ and Xcode command-line tools.
-2. Let the operator choose their real running planet from Readymade's list, or
+2. Let the operator choose their real running ship from Readymade's list, or
    enter a hosted ship's address through **Enter a ship’s web address**.
 3. Use **Your Urbit** to discover installed app pages and coding compatibility;
    do not make the operator inventory apps or backend endpoints first.
@@ -73,12 +73,19 @@ open "dist/Readymade Workspace.app"
 
 For an alternate output directory, adjust that path. Launch the outer app; its native launcher selects the private Readymade profile and enables the required browser API. Do not substitute the nested VSCodium launcher.
 
-Choose **Home → Connect your Urbit**. The local list contains only live,
-verified real planets; select the intended identity. The selected process,
-socket and listener are checked again, and sign-in must identify that same
-planet before a replacement code can be saved. Discovery never reads keyfiles,
+Choose **Home → Connect your Urbit**. Current source builds admit live, verified
+real galaxies, stars, planets, moons and comets to the local list; select the
+intended identity. The selected process, socket and listener are checked again,
+and sign-in must identify that same ship before a replacement code can be saved.
+Fake ships and duplicate identities are excluded. Discovery never reads keyfiles,
 boots a ship or changes an app. If the ship is hosted elsewhere or cannot be
 verified locally, choose **Enter a ship’s web address**.
+
+The linked November 10 preview predates discovery of all ship classes and lists
+local planets only. In that preview, use **Enter a ship’s web address** for other
+classes. Automated tests cover discovery and authenticated identity matching
+across all classes; live acceptance for every class remains to be established.
+Ship class does not establish which apps or coding services are installed.
 
 Let the operator enter their access code in the application's private password field. No Settings
 edit is needed. Bare hostnames use HTTPS; loopback addresses such as

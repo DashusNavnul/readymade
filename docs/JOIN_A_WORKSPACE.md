@@ -7,13 +7,19 @@ invitation and is never needed for joining a group.
 
 ## What you can set up from this repository
 
-Download the `.dmg` from the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110),
+Download the `.dmg` from the [Apple Silicon meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1),
 drag Readymade Workspace to Applications and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
 Choose **Home → Connect your Urbit**, authenticate privately, then open Groups, Glurff,
 Calls or Landscape if those apps are already installed on your ship. In a new
 Readymade terminal, `groups` opens Tlon Groups and `landscape` opens the app
 launcher. Both reveal retained tabs without reloading them.
+
+Current source supports verified local discovery for real galaxies, stars,
+planets, moons and comets, with another identity check before sign-in. The linked
+preview lists local planets only; use **Enter a ship’s web address** for other
+classes or hosted ships. Automated discovery and login tests do not qualify live
+acceptance for every class or a first backend installation on your own ship.
 
 Tlon's first synchronization in a fresh tab can take several minutes. Wait for
 the actual interface to appear; successful authentication alone is not enough.
@@ -46,9 +52,12 @@ release and independent two-person coding acceptance remain open; this joining
 guide alone does not establish them.
 
 For shared coding execution, the host establishes the actual project, coding
-session, permitted actions, and compatible backend connection. The receiving ship must expose the protocols in
-[compatibility](COMPATIBILITY.md), with the necessary grants and model/provider
-connection. Do not substitute the host's owner login or forward its credentials.
+session, permitted actions, compatible backend and model/provider connection.
+A guest needs the collaboration protocols and grants for joining or viewing
+shared files, but does not need their own Viki session or provider merely to
+join. Running coding work on the guest's own ship requires that ship's separate
+execution setup. See [compatibility](COMPATIBILITY.md). Do not substitute the
+host's owner login or forward its credentials.
 
 Inspect the project/session and shared request catalog before submitting work.
 If the required backend is absent, stop that part of setup and report the missing
@@ -66,6 +75,15 @@ chat, or successful login is not that proof.
 Connect your own ship first. Then **Home → Join a workspace** opens the
 project-invitation field; paste the actual link supplied by your host.
 Never use the host's ship address or login code as your own connection.
+
+Current source also offers **Join a workspace** on **Your Urbit** once a
+read-only invitation-service check succeeds for the authenticated identity.
+This button can be available while **Your coding workspace** is unavailable:
+accepting an invitation does not require a local coding worker. A missing or
+unverified invitation service leaves the setup-page button disabled; changing
+your access code will not install it. This new readiness check is source-level
+work, absent from the linked preview. Exact-package UI and real owner/guest
+acceptance are still required; see the [scoped checks](COMPATIBILITY.md#guest-invitation-readiness-in-current-source).
 
 The owner selects a project and chooses **Invite Collaborator** in **Project
 Invitations**. After **Check Result** confirms acceptance, **Copy Join Link**

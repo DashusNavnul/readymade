@@ -4,9 +4,10 @@ The local adapters cover three separate steps: prepare and boot a new planet,
 stage the pinned backend source, and compile the apps and prepare activation.
 Each result keeps `ready: false`; none claims a working Pataphor session merely
 because a process started or a desk was created. The staging controller has
-passed its complete native sequence on a fresh owned fake ship, including all
-1,463 source files. A purchased real planet and the complete first-task path
-remain release gates.
+passed its complete native sequence on a fresh owned fake ship using the earlier
+1,463-file bundle. Fresh installation of the current 1,474-file bundle remains
+unqualified. Purchased-planet installation work remains paused; real-planet boot
+and the complete first-task path remain release gates.
 
 ## Purchase and private delivery
 
@@ -25,12 +26,14 @@ Never put a claim link, master ticket, private key, keyfile or login code in cha
 source control, command-line URLs or public logs. Source staging does not read
 keys; the separate boot adapter accepts only a private local keyfile path.
 
-Orraah's [direct checkout](https://www.orraah.com/store/checkout/planet-identity)
-is another provider flow. Its public [welcome page](https://www.orraah.com/welcome?product=planet-identity)
-describes follow-up provisioning details; reaching that page is not payment or
-delivery proof. No authenticated claim/download API is integrated here.
-Automatic purchase-to-delivery requires a provider agreement and a verified
-transaction-to-planet-to-recipient handoff, not an invented endpoint. The
+Orraah checkout through Readymade is paused until actual payment-to-key delivery
+is verified. Do not make a second purchase to retry missing delivery. For an
+existing paid order, use **Get an Urbit → Recover my purchase** or
+[Orraah support](https://www.orraah.com/support), supply the Paddle transaction
+ID, and request the assigned planet name and private master ticket/keyfile.
+Neither a payment confirmation nor a welcome page proves identity delivery.
+No authenticated claim/download API is integrated here. Automatic delivery needs
+a verified transaction-to-planet-to-recipient handoff. The
 [proposed star-services plan](STAR_SERVICES.md) is separate from direct purchase.
 
 ## Prerequisites

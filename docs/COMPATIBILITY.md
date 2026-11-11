@@ -17,14 +17,18 @@ verified. Compute, arbitration and QPC/corpus workspace guidance are proposed
 service scopes, not a claim of live hosted functionality. See
 [STAR_SERVICES.md](STAR_SERVICES.md) for the required contract and acceptance gates.
 
-The separate direct-purchase section uses the public
-`https://updates.orraah.com/api/planets` catalog on explicit opening or refresh.
-Requests omit credentials, refuse redirects, and have an eight-second timeout
-and a 128 KiB response limit. Restoring the tab does not repeat a request.
-Fixed Orraah checkout and download links open externally on explicit action.
-Listings are not reservations; generic checkout neither selects a listed planet
-nor purchases the proposed USD 10 ownership transfer. No Orraah free-identity or
-subscription agreement is asserted.
+Planet checkout through Readymade is disabled until payment-to-key delivery is
+verified. Stale `checkout` messages are refused too. **Recover my purchase** opens
+[Orraah support](https://www.orraah.com/support); it does not send a message or
+retrieve a key. The provider must trace paid orders using their Paddle transaction
+IDs and privately deliver the assigned identity and necessary credentials.
+
+The public `https://updates.orraah.com/api/planets` catalog remains available on
+explicit opening or refresh. Requests omit credentials, refuse redirects, and
+have an eight-second timeout and a 128 KiB response limit. Restoring the tab does
+not repeat a request. The fixed support and download links open externally only
+on explicit action. Listings are not reservations or evidence of paid-order
+fulfillment. No Orraah free-identity or subscription agreement is asserted.
 
 Never enter a master ticket in Readymade or chat. Use the provider’s own secure
 identity flow and return with the running ship’s web address. App authentication
@@ -51,12 +55,14 @@ The controls open these existing pages and retain their tabs. They do not instal
 the apps. A missing route remains a missing app; successful authentication does
 not establish that the app is present.
 
-**Home → Connect your Urbit** lists verified real planets running on this
-computer. Choose one; its native identity and web listener are checked again
-before sign-in. Stopped piers, fake ships, non-planets and duplicate identities
-are excluded. This macOS discovery reads owned process/socket metadata and four
-fixed native queries; it does not boot ships or install anything. Choose
-**Enter a ship’s web address** for hosted planets or another computer. No
+In current source, **Home → Connect your Urbit** lists verified real galaxies,
+stars, planets, moons and comets running on this computer. The selected process,
+native identity, socket and web listener are checked again before sign-in. The
+authenticated identity must match that selection before a new code is saved.
+Stopped piers, fake ships and duplicate identities are excluded. This bounded
+macOS discovery reads owned process/socket metadata and native identity; it does
+not boot ships or install anything. Choose **Enter a ship’s web address** for
+hosted ships or a local runtime that discovery cannot verify. No
 Settings edit is required. Bare remote hostnames use HTTPS, and bare loopback
 addresses use HTTP. A normal `/apps/...` or `/~/login` link is reduced to its
 origin. Query strings, fragments, credentials and path-prefixed reverse proxies
@@ -65,6 +71,12 @@ accepted only for `localhost`, `127.0.0.1`, or `[::1]`. Another ship uses anothe
 window. The `landscape` command in new integrated local terminals opens the same
 retained Landscape tab. `groups` opens Tlon Groups; `lattice` opens Lattice's
 document workspace. Each command accepts no arguments.
+
+The linked [November 10 meeting preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261110.1)
+predates discovery of all ship classes and lists local planets only. Use its web
+address option for other classes. The all-class change has automated discovery
+and authentication coverage; it does not yet establish live acceptance for every
+class, a newly qualified downloadable package or installed app availability.
 
 Lattice, Groups, Glurff, Noltbook and Landscape links can hand off between their managed tabs.
 Arbitrary apps launched from Landscape are not part of this route allowlist.
@@ -80,13 +92,38 @@ the local-ship editor, terminal command and retention across Code/app switches h
 licensed under PolyForm Noncommercial. No Lattice source is bundled in this MIT
 Readymade repository.
 
+## Guest invitation readiness in current source
+
+**Your Urbit → Join a workspace** becomes available when a bounded, read-only
+`GET /apps/readymade-collab/project-invitation-requests` returns the supported
+catalog for the authenticated ship. HTTP 404 is reported as missing; refused,
+malformed, foreign-owner or unavailable responses remain unverified. The probe
+does not accept an invitation or grant membership, source access or execution.
+
+A guest needs this collaboration service and the owner's actual invitation,
+but does not need a local Viki coding session or model/provider connection to
+join. The host's coding setup and subsequent project grants are separate. The
+existing **Home → Join a workspace** flow still checks the invitation's exact
+recipient and current authenticated connection before submitting.
+
+| Current-source change | Verified scope | Still required |
+| --- | --- | --- |
+| Local discovery and selected-identity login for every real ship class | Automated identity/rank, stale-selection and authentication checks | Exact-package and live receiving-ship acceptance for every class |
+| Guest invitation readiness without a local coding backend | Read-only HTTP fixtures, schema and authenticated-owner checks | Exact-package UI acceptance and real owner/guest invitation, join and revocation checks |
+
+These additions are not included in the linked meeting preview. They do not
+qualify a first installation on the receiving operator's ship or a twelve-person
+workspace. Follow the separate [native installation guide](../backend/install/README.md)
+when owner-authorized installation is needed, and retain receiver-specific proof.
+
 ## Ship coding features
 
 **Connect to Ship** opens **Your Urbit**, separating successful authentication
 and available app pages from the optional coding checks. App availability is
 reported before those coding checks finish. **Open coding workspace** requires
 both the remote workspace state and native coding state APIs below with matching
-ship identity. A missing backend leaves the existing app connection usable.
+identity for the authenticated ship. A missing local coding backend leaves the
+existing app connection and separately verified guest invitation flow usable.
 
 | Feature | Required backend endpoints |
 | --- | --- |
@@ -98,23 +135,24 @@ ship identity. A missing backend leaves the existing app connection usable.
 | Shared retained request catalog | `GET /apps/readymade-collab/workspace-requests` |
 | Shared request details and admission preview | `GET /apps/readymade-collab/workspace-request`, `GET /apps/readymade-collab/workspace-preview` |
 | Explicit shared submission and recovery observation | `POST /apps/readymade-collab/workspace-submit`, `POST /apps/readymade-collab/workspace-recover` |
-| Complete file/check result preview and explicit sharing (not in the bundled backend) | `POST /apps/readymade-collab/workspace-return-rich-preview`, `POST /apps/readymade-collab/workspace-return-rich-confirm` |
-| Observe an original full-report sharing attempt (not in the bundled backend) | `GET /apps/readymade-collab/workspace-return-rich-result` |
+| Complete file/check result preview and explicit sharing (included source; live acceptance pending) | `POST /apps/readymade-collab/workspace-return-rich-preview`, `POST /apps/readymade-collab/workspace-return-rich-confirm` |
+| Observe an original full-report sharing attempt (included source; live acceptance pending) | `GET /apps/readymade-collab/workspace-return-rich-result` |
 | Observe a previous summary-only sharing attempt | `GET /apps/readymade-collab/workspace-return-result` |
-| Inspect a request's changed files and check reports (not in the bundled backend) | `GET /apps/readymade-collab/workspace-result` |
+| Inspect a request's changed files and check reports (included source; live acceptance pending) | `GET /apps/readymade-collab/workspace-result` |
 | Ship terminal observation and control | `GET /apps/<terminal>/state`, `GET /apps/<terminal>/events`, `POST /apps/<terminal>/action` |
 
 New result shares use the full-report v2 protocol. The desktop validates the
 report's request, source revisions, changed files and check diagnostics before
-offering confirmation. The corresponding native source has not passed native
-qualification or entered the bundled backend. New shares report unavailable on
+offering confirmation. The corresponding source is now bundled and passes native
+compilation, original proofs and a complete captured-DATA migration rehearsal.
+Live installation and real delivery remain pending. New shares report unavailable on
 older installations; there is no automatic fallback to a summary-only message.
 Previous v1 claims are observed through their original GET endpoint and cannot
 be upgraded into another send. Both versions use the same local exclusion key.
 
-The desktop's **Inspect Files and Checks** command also needs a newer native
-endpoint that remains unqualified and unbundled. Neither feature is established
-by an older backend installation receipt. Full-report sharing is bounded to
+The desktop's **Inspect Files and Checks** command needs the included result
+endpoint, whose live historical reads remain unverified. Neither feature is
+established by an older backend installation receipt. Full-report sharing is bounded to
 128 KiB of outgoing message text and a 512 KiB encoded reply; oversized or
 incomplete evidence is refused rather than truncated. These are application
 bounds, not verified Noltbook transport limits.
@@ -145,16 +183,17 @@ operations governed by the ship.
 ### Backend distribution gates
 
 The [complete source assembly](../backend/README.md) reconstructs the current
-1,463-file backend from included application source and pinned public inputs:
-916 application files, 543 inherited or derived Urbit files, four browser assets,
+1,474-file backend from included application source and pinned public inputs:
+927 application files, 543 inherited or derived Urbit files, four browser assets,
 and six accompanying notice files. The ten-app installation bill is distinct
 from historical development/staging bills. Use the shipped receiver tools and
 the receiving ship's actual inventory; never copy a development bill.
 
-Current source assembly and offline installer checks pass. The new activity,
-shared-source, suggestion recovery and owner inbox code has native compilation
-and bounded proof evidence; fresh installation of this ten-app bundle remains
-unqualified.
+Current source extraction and offline installer checks pass. Activity,
+shared-source, suggestion recovery and owner inbox code have native compilation
+and bounded proof evidence. The full-report result and sharing code also passes
+native compilation, original proofs and the actual captured-DATA rehearsal;
+fresh installation of this exact ten-app bundle remains unqualified.
 
 The earlier nine-app installation path passed on a fresh owned receiver. All nine
 apps, 194 mark graphs and six runtime threads compiled; bounded evaluation

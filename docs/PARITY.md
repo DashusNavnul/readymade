@@ -4,6 +4,51 @@ The target is a complete project workflow: open files, ask for work, inspect
 changes and checks, review and accept a result, and resume with a collaborator.
 A working app tab or a retained instruction does not prove that workflow.
 
+## Full-report native compilation — November 10
+
+The request-attributed result libraries, their original positive and adverse
+proofs, and the complete rich-sharing app now compile on an owned native Urbit
+test ship. Explicit list types resolve the compiler failures without removing
+validation or proof cases. The full-app proof response is bound by SHA256
+`2b71cb5518eb5a2cdac15c6b4bb2f3c75da4e7470909646a162c89d9c4e32f95`.
+No standalone Hoon linter is configured.
+
+The separate native migration rehearsal also passed against the existing app's
+complete captured v9 DATA. The old loader preserved it exactly; the new loader
+saved the entire v9 noun inside v10 with an empty rich journal. Both emitted the
+same single load card, kept inert, and the new full save passed an exact reload
+roundtrip. The captured subscriptions and native bowl fields were retained.
+The original saved type was not supplied or asserted equal; both pinned loaders
+consume only the complete DATA. Rehearsal response SHA256:
+`323b62930dc800d2f70641a31e941f8766548677eade28483eb880c8f9ca5d69`.
+
+Live installation, historical file retrieval and a real rich-result conversation
+reply remain unfinished. The local public source now includes the matching v2
+backend: 927 application files and 1,474 assembled files. Extraction, dependency,
+deterministic archive and all 16 targeted packaging/installer tests pass, along
+with type checking and lint. Existing files and notices are preserved. This has
+not been published, installed or qualified for live delivery.
+
+## Shared-source review integrity — November 10
+
+Shared snapshots and original-versus-draft comparisons now check the displayed
+editor text against their retained source before and after opening. Reusing an
+altered historical buffer is refused; its backing source and the editable draft
+are preserved. This covers shared file links and collaborator activity links as
+well as ordinary shared-file navigation.
+
+Type checking, lint and all 635 tests pass. The exact packaged extension's
+`shared-claim-host` fixture used actual `WorkspaceEdit` mutations to verify both
+refusals, unchanged backing bytes and journals, and preservation of the editable
+dirty draft. It also exercised saved-project resume and lost-response recovery.
+Privileged extensions can still modify editor buffers; these checks detect
+alteration when evidence is reused, rather than make the editor immutable.
+The receipt is `/Users/tgb/.readymade-test-evidence/host-SIrJMC/result.json`;
+package source fingerprint:
+`276c9e4d67aac574b322be8e69051fe112692b9bc1d15c5e3380902b70f0e3d5`.
+This is installed-editor fixture acceptance, not a new native peer exchange,
+independent-user installation or full multiplayer completion.
+
 ## Full-report result sharing desktop — November 9
 
 New **Share result with original group…** attempts now require the full native
@@ -22,10 +67,10 @@ recovery without resending. Confirmation was scripted; it made zero native or
 execution calls and sent no real group message. Package receipt:
 `1e1525b3fa7fbae1eec93d35037afa3f46135a45705d29812d90da44260498e7`.
 
-The matching native v2 implementation remains uncompiled, uninstalled and absent
-from the bundled backend. Existing bundled installations cannot make new shares
-through this desktop version. Native qualification and the real conversation
-reply remain unfinished; this is desktop implementation evidence only.
+The matching native v2 implementation now passes the compilation checks above
+and is included in the source bundle. Older installed backends cannot make new
+shares through this desktop version. The native DATA rehearsal is qualified
+separately; live installation and the real conversation reply remain unfinished.
 
 ## Shared-document focus and reconciliation — November 9
 
@@ -51,9 +96,8 @@ revisions, changed-file comparisons and exact check diagnostics. Changes to the
 same filename at different revisions remain separate. The desktop rejects a
 changed project or request and reports unavailable evidence instead of showing
 an empty successful result. The corresponding authenticated native result
-projection is implemented in source, but still needs native compilation and
-live installation. Existing installations without that endpoint cannot use the
-complete feature yet.
+projection now passes native compilation, but still needs live installation.
+Existing installations without that endpoint cannot use the complete feature yet.
 
 Original and submitted draft comparisons now share an explicitly read-only
 filesystem with the result inspector. Working drafts remain editable, with

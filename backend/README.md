@@ -19,13 +19,13 @@ a replacement for a live desk.
 The [native receiver check](install/README.md) reports identity, runtime and
 installation conflicts without writing to a ship. The current candidate contains
 ten apps, including editing activity, shared-file access, suggestion recovery,
-the owner inbox and explicit completion replies (916 application files; 1,463
-assembled desk files). Completion replies include an owner-written summary and
-native references. The current desktop requires the newer full-report protocol
-for new shares; it is not qualified or included in this archive. The bundled
-summary-only endpoints remain usable for observing previous share attempts, but
-do not satisfy new full-report sharing. Assembly and offline installer checks
-pass; fresh installation of this exact version remains open.
+the owner inbox and explicit full-report completion replies (940 application
+files; 1,487 assembled desk files). The matching result and sharing code passes
+native compilation, its original proofs and a read-only rehearsal against the
+existing app's complete captured DATA. Previous summary-only attempts retain
+their original check-only endpoints. Source extraction and offline installer
+checks pass; live installation, historical endpoint reads, real result delivery
+and fresh installation of this exact version remain open.
 Historical installation evidence covers the earlier nine-app bundle: 49 total
 live apps and all 18 declared preservation checks passed on an owned receiver.
 That evidence does not qualify this updated candidate or an existing ship upgrade.

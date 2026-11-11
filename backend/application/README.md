@@ -1,11 +1,16 @@
 # Readymade application source
 
-`source.tar.gz` contains 916 application files and the Readymade MIT license.
+`source.tar.gz` contains 940 application files and the Readymade MIT license.
 It is source code, including Hoon apps and libraries, browser presentation code,
 the native connector source carrier, marks, threads and the ten-app desk bill.
 It includes the explicit owner Apply command for approved candidates; Cantrip
 rechecks the native decision, grant and source before landing.
 It also includes explicit owner-reviewed completion replies to the originating group, with retained one-attempt outcomes and no automatic execution.
+The source includes complete request-attributed file changes and native check reports
+for owner-reviewed replies. The full app and original proofs compile natively; a
+read-only rehearsal also preserves the existing app's complete captured v9 DATA
+and reload behavior. Live installation, endpoint checks and a real result reply
+remain required before release acceptance.
 It contains no saved ship state. The archive is about 2 MB; extract it to inspect,
 search or modify the individual files.
 

@@ -15,14 +15,14 @@ These paths require actual native access to the receiving ship and retained
 verification receipts; a web login alone is insufficient. Independent-operator
 acceptance and the release gates remain open.
 
-The current ten-app backend candidate includes shared-file access, editing
-activity and explicit owner-reviewed completion replies with summary and native
-references. Its source assembly and offline checks pass; historical installation
-receipts do not establish a fresh installation of this exact candidate. The current
-desktop requests complete file/check reports for new result shares. That newer
-native protocol is not yet qualified or included in the bundled backend, so new
-shares remain unavailable with the bundled version. Previous summary-only share
-attempts can still be checked without resending; see [parity](docs/PARITY.md).
+The current ten-app backend source includes shared-file access, editing activity
+and explicit owner-reviewed replies with complete file/check reports. Its native
+compilation, original proofs and a complete captured-state migration rehearsal
+pass. Live installation and real result delivery remain unfinished; historical
+installation receipts do not qualify this exact candidate. Older installed
+backends may lack the full-report protocol and report new shares unavailable.
+Previous summary-only attempts remain check-only, without resending; see
+[parity](docs/PARITY.md).
 
 ## Download and install
 

@@ -2,6 +2,23 @@
 
 Start with the exact failing action and error. Keep access codes, authentication cookies, private note contents and local credentials out of shared logs and screenshots.
 
+## Paid for a planet but received no key
+
+Do not purchase another planet to retry delivery. A Paddle/PayPal confirmation
+proves payment, not an assigned identity or a running server. Check the purchase
+email account, including spam, for a separate delivery message. A master ticket
+or networking keyfile is different from the `+code` used to log into a running
+ship; Readymade cannot derive either from an invoice.
+
+Choose **Get an Urbit → Recover my purchase** to open
+[Orraah support](https://www.orraah.com/support). Include the Paddle transaction
+ID for each paid order and request its assigned planet name and private master
+ticket/keyfile delivery. Never post tickets, keyfiles or login codes publicly.
+Readymade does not send that request automatically, refund an order or access the
+provider's private fulfillment queue. Its checkout button stays disabled until
+actual payment-to-key delivery is verified. Keep original receipts; do not replay
+a charge or a provider issuance request after an unknown outcome.
+
 ## Build or packaging fails
 
 The package script supports Apple Silicon macOS. Node.js 22, npm and Xcode command-line tools are prerequisites. Run `node --version`, `npm --version` and `xcrun --find clang`; then run `npm ci --ignore-scripts`, `npm run check`, `npm run lint` and `npm test` from the repository root.
@@ -25,14 +42,26 @@ For isolated development or host tests, `launch.sh` and `test-host.sh` accept `R
 ## The access code seems wrong
 
 Choose **Home → Connect your Urbit** and check the address shown on **Your
-Urbit**. Choose a verified running planet, or use **Enter a ship’s web address**
-for a hosted ship. **Refresh running planets** performs another bounded check.
-An empty list means no local planet passed the current checks; old pier folders
-and saved addresses are not presented as running planets. No Settings edit is
-required. Bare remote hostnames use HTTPS and loopback addresses use HTTP.
+Urbit**. Current source lists verified real galaxies, stars, planets, moons and
+comets. **Refresh running ships** performs another bounded check. An empty list
+means no local runtime passed those checks; old pier folders and saved addresses
+are not evidence of running ships. Fake ships and duplicate identities are
+excluded. Use **Enter a ship’s web address** for a hosted ship or a local runtime
+that discovery cannot verify. No Settings edit is required. Bare remote
+hostnames use HTTPS and loopback addresses use HTTP.
 Ordinary app/login links are accepted, but query strings, fragments and URL
 credentials are refused. Enter the access code only in the private password
 field. Never paste it into chat or use it as a command-line argument.
+
+The linked November 10 meeting preview predates discovery of all ship classes:
+its list and refresh label still say planets. Use its web address option for
+other classes. Current automated tests do not prove live compatibility with
+every class or qualify a new downloadable release.
+
+If the selected ship changed or the login identifies another ship, refresh the
+local list and check the intended runtime and address. The login is refused and
+the new code is not saved. Do not bypass the identity comparison or repeatedly
+replace a valid code to fix a mismatched endpoint.
 
 The desktop may use an existing private saved-code store or editor secret
 storage. If a saved code is rejected, enter the replacement privately; the new
@@ -50,6 +79,28 @@ not install it. See [compatibility](COMPATIBILITY.md).
 CLI app requires HTTPS or an explicitly enabled owner-only loopback test mode.
 It does not mean the login code is wrong. Use the receiving ship's supported
 HTTPS origin; do not disable the transport check or change credentials to fix it.
+
+## Joining is unavailable although login works
+
+In current source, **Your Urbit** checks **Project invitations** separately from
+the local coding backend. **Join a workspace** is enabled there only after the
+read-only invitation catalog matches the authenticated ship and supported
+protocol. A guest does not need a local Viki session or model/provider connection
+to accept the owner's invitation. This setup-page check is not in the linked
+meeting preview; that build uses the existing **Home → Join a workspace** flow.
+
+HTTP 404 means the invitation service is missing. A refused, malformed,
+foreign-owner or unavailable response leaves it unverified. Keep the working
+login and app tabs; inspect the specific service failure. Changing the login
+code does not install that service. Any first installation on your ship is a
+separate owner-authorized task using the [native installation guide](../backend/install/README.md).
+Source checks and earlier test receivers do not establish your ship's readiness.
+
+Use the host's actual project invitation for your exact ship. A Tlon group
+invitation does not grant project membership, and project membership does not
+grant file access or execution. If a join was submitted but its outcome is
+unknown, use **Check Result** on that retained attempt; do not submit the link
+again to force an answer. See [Join a workspace](JOIN_A_WORKSPACE.md).
 
 ## HTTPS certificate errors
 
