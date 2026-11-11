@@ -44,11 +44,14 @@ and choose **Always Allow** for this verified build. Rebuilds from the same
 signing identity retain that approval. This is separate from your Urbit login
 code; neither belongs in chat.
 
-Choose **Home → Connect your Urbit**. A ship running on this Mac is found and
-signed in for you: nothing to type, no login code. When only one is running, or
-a join link names it, it connects without a question; the next time the app
-opens it reconnects by itself. For a hosted ship enter its web address and its
-login code once; the code is kept in the Mac's Keychain and not asked again.
+A ship running on this Mac is found and signed in for you: nothing to type, no
+login code. When exactly one is running, Readymade connects it by itself as soon
+as the app opens, the very first time included, and says so. With several
+running it reconnects the one you last used, or you pick from **Home → Connect
+your Urbit**; a join link connects the ship it names. Turn this off with the
+setting **Readymade: Connect On Start**. For a hosted ship enter its web
+address and its login code once; the code is kept in the Mac's Keychain and not
+asked again, and that ship reconnects by itself too.
 
 ## Work with someone else
 

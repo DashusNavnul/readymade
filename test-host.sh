@@ -26,6 +26,8 @@ if [[ -n "${READYMADE_TEST_EXTENSIONS_DIR:-}" ]]; then
   [[ -d "$extensions_dir" && ! -L "$extensions_dir" && -O "$extensions_dir" && "$(stat -f '%Lp' "$extensions_dir")" == 700 ]] || { printf 'Test extensions must be an owned private directory\n' >&2; exit 1; }
 fi
 export READYMADE_HOST_EVIDENCE="$test_dir/result.json"
+# Window tests start from nothing connected, whatever ships run on this Mac; a test of connecting on open sets 0.
+export READYMADE_NO_AUTO_CONNECT="${READYMADE_NO_AUTO_CONNECT-1}"
 export READYMADE_MEDIA_EVIDENCE="$test_dir/result.json"
 development_args=("--extensionDevelopmentPath=$workspace_dir")
 if [[ -n "${READYMADE_BUILTIN_EXTENSION:-}" ]]; then
@@ -40,7 +42,12 @@ fi
 # open --wait-apps). --wait instead depends on a file-close marker which an
 # extension test can leave behind after its window and process have exited.
 # Process exit alone is insufficient: require the test's result.json below.
-"$code_bin" --verbose --new-window --user-data-dir "$test_dir/user" --extensions-dir "$extensions_dir" \
+# A test that spans two launches (connect once, then reopen) names one owned private profile for both.
+user_dir="${READYMADE_TEST_USER_DIR:-$test_dir/user}"
+if [[ -n "${READYMADE_TEST_USER_DIR:-}" ]]; then
+  [[ -d "$user_dir" && ! -L "$user_dir" && -O "$user_dir" && "$(stat -f '%Lp' "$user_dir")" == 700 ]] || { printf 'Test profile must be an owned private directory\n' >&2; exit 1; }
+fi
+"$code_bin" --verbose --new-window --user-data-dir "$user_dir" --extensions-dir "$extensions_dir" \
   "${development_args[@]}" --enable-proposed-api pataphor.readymade-ship-workspace --extensionTestsPath="$workspace_dir/dist/tests/$test_module.js" \
   --skip-welcome --skip-release-notes --disable-workspace-trust --disable-telemetry --use-inmemory-secretstorage "$@" > "$test_dir/host.log" 2>&1
 node -e 'const r=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); console.log(JSON.stringify(r,null,2)); if(r.passed!==true)process.exit(1)' "$READYMADE_HOST_EVIDENCE"

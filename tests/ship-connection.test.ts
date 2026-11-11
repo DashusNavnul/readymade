@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as http from 'node:http';
 import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
-import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions, switchTarget, connectionFailureMessage, automaticShip} from '../src/ship-connection';
+import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions, switchTarget, connectionFailureMessage, automaticShip, lastShip} from '../src/ship-connection';
 import {ShipClient, ShipClientError} from '../src/ship-client';
 
 const hasCode = (code: string) => (error: unknown) => error instanceof ShipClientError && error.code === code;
@@ -208,4 +208,12 @@ test('a ship on this computer is connected without asking only when the choice i
   assert.equal(automaticShip([zod, nec], '~nec', '~zod'), nec);
   assert.equal(automaticShip([zod], '~nec'), undefined);
   assert.equal(automaticShip([nec, {ship: '~nec'}], '~nec'), undefined); // ambiguous: ask
+});
+
+test('the remembered last ship is read strictly; a damaged record means ask, never a wrong ship', () => {
+  assert.deepEqual(lastShip({ship: '~sampel-palnet', origin: 'http://localhost:8080', local: true}), {ship: '~sampel-palnet', origin: 'http://localhost:8080', local: true});
+  assert.deepEqual(lastShip({ship: '~zod', origin: 'https://ship.example', local: false}), {ship: '~zod', origin: 'https://ship.example', local: false});
+  for (const bad of [undefined, null, [], 'x', {}, {ship: '~zod', origin: 'http://localhost:8080'}, {ship: 'zod', origin: 'http://localhost:8080', local: true},
+    {ship: '~zod', origin: 'localhost:8080', local: true}, {ship: '~zod', origin: 'http://localhost:8080', local: 'yes'}, {ship: '~zod', origin: 'http://localhost:8080', local: true, code: 'x'},
+    {origin: 'http://localhost:8080', local: true}]) assert.equal(lastShip(bad), undefined);
 });

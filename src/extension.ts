@@ -396,14 +396,21 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const ship = stopped[0].ship, choice = await vscode.window.showInformationMessage(`${ship} is not running.`, 'Start it');
     if (choice === 'Start it' && !this.disposed) {await this.planetBoot.show(); await this.planetBoot.restart(ship);}
   }
-  /** When the app opens: the ship last used here connects again by itself. Nothing is asked and no page is opened. */
+  /** When the app opens: the ship last used here, or the only one running on this Mac, connects by itself. Nothing is asked. */
   private async reconnectLast(): Promise<void> {
     if (this.disposed || this.media.connectedClient) return;
-    const client = await this.media.reconnectLast();
-    if (!client || this.disposed) return;
+    const opened = await this.media.reconnectLast();
+    if (!opened || this.disposed) return;
+    const client = opened.client;
     this.render(); void this.offerInstall();
     const ship = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
-    if (ship) void vscode.window.setStatusBarMessage(`Connected to ${ship}`, 5000);
+    if (!ship) return;
+    if (!opened.first) {void vscode.window.setStatusBarMessage(`Connected to ${ship}`, 5000); return;}
+    // The first time, say what happened: the person asked for nothing and typed nothing.
+    const choice = await vscode.window.showInformationMessage(`Connected to ${ship}, the ship running on this Mac. Nothing was typed and nothing on the ship was changed.`, 'Open Your Urbit', 'Do not connect when opening');
+    if (this.disposed) return;
+    if (choice === 'Open Your Urbit') await this.setup.show(client);
+    else if (choice === 'Do not connect when opening') await vscode.workspace.getConfiguration('readymade').update('connectOnStart', false, vscode.ConfigurationTarget.Global);
   }
   /** After Switch Ship reloaded this window: connect the chosen ship, as Connect would. */
   private async resumeSwitch(): Promise<void> {

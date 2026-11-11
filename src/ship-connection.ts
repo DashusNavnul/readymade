@@ -50,6 +50,18 @@ export function switchTarget(value: unknown): SwitchTarget {
   return Object.freeze({origin: row.origin, ...(row.ship !== undefined ? {ship: row.ship} : {})});
 }
 
+/** The ship this app last connected: its name, address and whether it ran on this computer. Never a login code. */
+export interface LastShip {readonly ship: string; readonly origin: string; readonly local: boolean}
+/** Strict: anything else on disk is ignored, so a damaged file means "ask", never a wrong connection. */
+export function lastShip(value: unknown): LastShip | undefined {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const row = value as Record<string, unknown>;
+    if (Object.keys(row).sort().join(',') !== 'local,origin,ship' || typeof row.local !== 'boolean') return undefined;
+    const target = switchTarget({origin: row.origin, ship: row.ship});
+    return target.ship ? Object.freeze({ship: target.ship, origin: target.origin, local: row.local}) : undefined;
+  } catch {return undefined;}
+}
 /**
  * Which ship running on this computer to connect without asking. A link that names a ship gets exactly that
  * ship or nothing (never a different one). Otherwise: the ship this app last used, if it is running; else the

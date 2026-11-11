@@ -274,6 +274,11 @@
     "configuration": {
       "title": "Readymade",
       "properties": {
+        "readymade.connectOnStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "When Readymade opens, connect by itself: the ship you last used, or the only ship running on this Mac. Nothing is typed and nothing is asked. A hosted ship uses the login code saved in the Keychain."
+        },
         "readymade.callNotifications": {
           "type": "boolean",
           "default": true,

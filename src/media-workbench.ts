@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { dirname, basename, join } from 'node:path';
 import { homedir } from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { ShipClient, ShipClientError, readSavedCode } from './ship-client';
 import { MediaClient } from './media-client';
@@ -10,16 +10,13 @@ import { NativeMediaBrowser } from './media-browser';
 import { LegacyMedia, type LegacyMediaOwner } from './legacy-media';
 import { CallNotificationFeed, type CallNotice } from './call-notifications';
 import { ComposerJournal, attachComposerJournal } from './composer-journal';
-import {authenticateShip, normalizeShipAddress, switchTarget, type SwitchTarget, connectionFailureMessage, automaticShip} from './ship-connection';
+import {authenticateShip, normalizeShipAddress, switchTarget, type SwitchTarget, connectionFailureMessage, automaticShip, lastShip, type LastShip} from './ship-connection';
 import {discoverLocalPlanets, recheckLocalPlanet, slowShipNotice, type LocalPlanet} from './planet-discovery';
 import {queryLoginCode} from './planet-discovery-wire';
 
 export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
 interface SelectedOrigin {origin: string; planet?: LocalPlanet}
 const SWITCH_KEY = 'readymade.switchTo';
-const LAST_KEY = 'readymade.lastShip';
-/** The ship this app last connected, remembered across windows so the next launch needs no question. Never a code. */
-interface LastShip {ship: string; origin: string; local: boolean}
 interface PlanetChoice extends vscode.QuickPickItem {planet?: LocalPlanet; operation?: 'manual' | 'refresh'}
 export class MediaWorkbench implements vscode.Disposable {
   readonly bridge: MediaClient;
@@ -233,30 +230,46 @@ export class MediaWorkbench implements vscode.Disposable {
     } catch {return {origin: target.origin};}
   }
   /**
+   * The ship last connected, kept in one small private file that is written at once. The editor's own state
+   * store is flushed late and lost when the app is killed (measured: connect, kill, reopen forgot the ship).
+   */
+  private lastFile(): string {return join(this.context.globalStorageUri.fsPath, 'last-ship.json');}
+  private readLast(): LastShip | undefined {
+    try {return lastShip(JSON.parse(readFileSync(this.lastFile(), 'utf8')));} catch {return undefined;}
+  }
+  private writeLast(value: LastShip): void {
+    try {
+      const file = this.lastFile(); mkdirSync(dirname(file), {recursive: true, mode: 0o700});
+      writeFileSync(file + '.new', JSON.stringify(value), {mode: 0o600}); renameSync(file + '.new', file);
+    } catch { /* not remembered: the next launch asks, which is safe */ }
+  }
+  /**
    * A ship on this computer is connected without a question whenever the choice is clear: the ship a link
    * names, the ship last used here, or the only one running. It signs in with the code the ship itself supplies.
    */
   private async automatic(wanted?: string): Promise<SelectedOrigin | undefined> {
     try {
       const running = (await discoverLocalPlanets()).planets;
-      const planet = automaticShip(running, wanted, this.context.globalState.get<LastShip>(LAST_KEY)?.ship);
+      const planet = automaticShip(running, wanted, this.readLast()?.ship);
       return planet ? {origin: planet.origin, planet: await recheckLocalPlanet(planet)} : undefined;
     } catch {return undefined;}
   }
   /**
-   * When the app opens: connect the ship this app last used, without asking anything. A local ship is found again
-   * by name (its port may have changed) and signs in by itself; a hosted one uses the code saved in the Keychain.
-   * If either is not possible right now, nothing happens and nothing is asked.
+   * When the app opens: connect without asking anything. A ship on this computer is taken when the choice is
+   * clear (the one last used, found again by name since its port may have changed, or the only one running,
+   * which covers the very first launch) and signs in by itself; a hosted one last used here signs in with the
+   * code saved in the Keychain. If none of that is possible right now, nothing happens and nothing is asked.
    */
-  async reconnectLast(): Promise<ShipClient | undefined> {
-    const last = this.context.globalState.get<LastShip>(LAST_KEY);
-    if (!last || this.connectedClient || this.clientConnecting || this.disposed) return undefined;
+  async reconnectLast(): Promise<{client: ShipClient; first: boolean} | undefined> {
+    // Off with the setting, and in the app's own window tests, which must start from nothing connected.
+    if (!vscode.workspace.getConfiguration('readymade').get<boolean>('connectOnStart', true) || process.env.READYMADE_NO_AUTO_CONNECT === '1') return undefined;
+    const last = this.readLast();
+    if (this.connectedClient || this.clientConnecting || this.disposed) return undefined;
     try {
-      if (last.local) {
-        const found = await this.automatic(last.ship);
-        return found ? await this.connectClient(found.origin, undefined, found.planet, undefined, true) : undefined;
-      }
-      return await this.connectClient(normalizeShipAddress(last.origin), undefined, undefined, undefined, true);
+      if (last && !last.local) return {client: await this.connectClient(normalizeShipAddress(last.origin), undefined, undefined, undefined, true), first: false};
+      // The very first time too: when exactly one ship is running on this computer there is nothing to choose.
+      const found = await this.automatic();
+      return found ? {client: await this.connectClient(found.origin, undefined, found.planet, undefined, true), first: !last} : undefined;
     } catch {return undefined;}
   }
   async connectClient(selected?: string, credentials?: (origin: string) => Promise<string | undefined>, planet?: LocalPlanet, wanted?: string, silent = false): Promise<ShipClient> {
@@ -344,7 +357,7 @@ export class MediaWorkbench implements vscode.Disposable {
       await this.context.workspaceState.update('readymade.origin', client.origin);
       const signedIn = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
       if (signedIn) await this.context.workspaceState.update('readymade.ship:' + client.origin, signedIn);
-      if (signedIn) await this.context.globalState.update(LAST_KEY, {ship: signedIn, origin: client.origin, local: !!local} satisfies LastShip);
+      if (signedIn) this.writeLast({ship: signedIn, origin: client.origin, local: !!local});
       this.ensureOpen();
       this.client = client; this.localPlanet = local; this.watchCalls(client); this.changed(); return client;
     } catch (error) {
