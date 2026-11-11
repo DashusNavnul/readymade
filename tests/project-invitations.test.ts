@@ -20,6 +20,12 @@ test('invitation codecs bind native actions, canonical atoms and complete pinned
   assert.equal(invitationCommand(invite).operation, 'invite-member');
   for (const expiresAt of ['~2026.02.30', '~2026.11.09..29.00.00', '~2026.11.9']) assert.throws(() => invitationCommand({...invite, expiresAt}));
   for (const delta of [{request: '11234567-89ab-4cde-8fab-0123456789ab'}, {authority: '~bud'}, {operation: 'invite-member'}, {outcome: 'project-invited'}, {status: 'submitted'}, {permissionGranted: true}, {extra: 1}]) assert.throws(() => invitationResult({...result, ...delta}, command));
+  const leave = {request: command.request, authority: command.authority, project: command.project, operation: 'leave'};
+  assert.deepEqual(invitationCommand(leave), leave);
+  for (const delta of [{invitation: '0x1'}, {target: '~nec'}, {project: ''}]) assert.throws(() => invitationCommand({...leave, ...delta}));
+  const left = {...result, operation: 'leave', outcome: 'project-left'};
+  assert.equal(invitationResult(left, invitationCommand(leave)).outcome, 'project-left');
+  assert.throws(() => invitationResult({...left, outcome: 'project-joined'})); assert.throws(() => invitationResult({...result, outcome: 'project-left'}));
   assert.equal(invitationMembers(members, 'demo', '~wes', 'invitations').rows.length, 1);
   for (const delta of [{authority: '~bud'}, {next: 1}, {total: 2}, {catalog: '0x0'}, {rows: [members.rows[0], members.rows[0]], total: 2}]) assert.throws(() => invitationMembers({...members, ...delta}, 'demo', '~wes', 'invitations'));
   assert.throws(() => invitationMembers(members, 'demo', '~wes', 'invitations', 0, '0x8'));

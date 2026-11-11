@@ -1,6 +1,7 @@
 import {spawn, execFile} from 'node:child_process';
 import {mkdir, realpath, readFile, writeFile, stat, statfs} from 'node:fs/promises';
 import * as path from 'node:path';
+import {FULL_INSTALL_LOOM, loomOf} from './install-choice';
 
 /**
  * App-side handle on the bundled backend installer. It decides nothing about the ship: the bundled
@@ -19,7 +20,7 @@ export class BackendInstallError extends Error {constructor(message: string) {su
 
 const phases = new Set<InstallPhase>(['not-started', 'running', 'paused', 'needs-attention', 'activation-prepared', 'activated']);
 const rowStatuses = new Set<InstallRowStatus>(['waiting', 'running', 'done', 'needs-attention']);
-const MIN_LOOM = 33;
+const MIN_LOOM = FULL_INSTALL_LOOM;
 const MIN_FREE_BYTES = 3 * 1024 ** 3;
 const shipName = /^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6}){0,3})(?![\s\S])/;
 const plain = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
@@ -125,7 +126,7 @@ export class BackendInstall {
     catch {throw new BackendInstallError('Your ship is no longer running. Start it, reconnect, and try again.');}
     // Building the backend needs an 8 GiB address space; smaller ones ran out of memory compiling Viki.
     let loom: number | undefined;
-    try {const match = /\s--loom\s+(\d{1,2})(?:\s|$)/.exec(await this.probes.command(target.workerPid)); loom = match ? Number(match[1]) : undefined;}
+    try {loom = loomOf(await this.probes.command(target.workerPid));}
     catch {throw new BackendInstallError('Your ship is no longer running. Start it, reconnect, and try again.');}
     if (loom === undefined || loom < MIN_LOOM)
       throw new BackendInstallError(`Your ship was started with too little memory to build Pataphor. Stop it and start it again with “--loom ${MIN_LOOM}”, then reconnect.`);

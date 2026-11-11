@@ -19,13 +19,15 @@ import {sessionSharingTarget, sessionSharingCommand, sessionSharingHeaders, sess
   type SessionSharingCommand, type SessionSharingSnapshot, type SessionSharingReceipt} from './session-sharing';
 import {remoteSuggestionIntent, remoteSuggestionBody, remoteSuggestionHeaders, remoteSuggestionReply, remoteSuggestionRefused, remoteSuggestionRecoveryBody, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
-import {GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestInstallActions, guestServiceDesk, guestServiceProbe, guestServiceState,
-  type GuestServiceState, type GuestSource} from './guest-service';
+import {GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestDeskReceipt, guestDeskStatus, guestInstallActions, guestRemoveActions,
+  guestServiceDesk, guestServiceProbe, guestServiceState, type GuestDeskStatus, type GuestServiceState, type GuestSource} from './guest-service';
 import { activityBody, activityCommand, activityHeaders, activityReply, activitySelector, type ActivityCommand, type ActivityReply, type ActivitySelector } from './editing-activity';
 import { asRecord, codingSnapshot, isInteger, isUv, isUx, validJSON, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
 
+/** Why a request never got an answer, when the network layer said: the ship answered too slowly, nothing listens there, the name does not resolve, or the connection dropped. */
+export type TransportDetail = 'slow' | 'down' | 'unknownHost' | 'dropped';
 export class ShipClientError extends Error {
-  constructor(readonly code: string, readonly status?: number) {
+  constructor(readonly code: string, readonly status?: number, readonly detail?: TransportDetail) {
     const certificateMessage = code === 'certificateHostname'
       ? 'The HTTPS certificate does not match this ship address. Check the configured origin or ask the host to correct its certificate.'
       : code === 'certificateUntrusted'
@@ -578,16 +580,34 @@ export class ShipClient {
     try {local = guestServiceDesk(JSON.parse(desks.data.toString('utf8')));} catch {return failure('malformed');}
     return guestServiceState(seen, local);
   }
+  /** The separately installed guest desk as this ship's kiln reports it, or null when the ship has none. */
+  async guestServiceDeskRead(): Promise<ReturnType<typeof guestServiceDesk>> {
+    if (this.closed) failure('closed');
+    const actor = this.projectViewPeer(), epoch = this.generation;
+    const desks = await this.wire(GUEST_PIKES_PATH, 'GET', undefined, {}, {timeoutMs: 15000}, 2 * 1024 * 1024);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) failure('contextChanged');
+    if ([401, 403].includes(desks.status)) failure('authenticationRequired', desks.status);
+    if (desks.status !== 200) failure('unavailable', desks.status);
+    try {return guestServiceDesk(JSON.parse(desks.data.toString('utf8')));} catch {return failure('malformed');}
+  }
   /**
    * Asks this ship's own kiln, once, to install or revive the collaboration service from `source`.
    * Accepted means sent: read the state again to learn what happened. A lost reply is never resent here;
    * kiln treats a repeated install of the same desk as the same install, so the caller may ask again after reading.
    */
   async guestServiceInstall(source: GuestSource = GUEST_SOURCE, revive = false): Promise<void> {
+    return this.guestKiln(actor => guestInstallActions(actor, source, revive));
+  }
+  /**
+   * Asks this ship's own kiln, once, to remove the guest desk. Accepted means sent: read the state again.
+   * Only the guest desk is named; a ship that runs the agent from a full backend is not changed by this.
+   */
+  async guestServiceRemove(): Promise<void> {return this.guestKiln(actor => guestRemoveActions(actor));}
+  private async guestKiln(build: (actor: string) => unknown[]): Promise<void> {
     if (this.closed) failure('closed');
     const actor = this.projectViewPeer();
     if (this.busy) failure('commandBusy');
-    const actions = guestInstallActions(actor, source, revive), body = Buffer.from(JSON.stringify(actions));
+    const actions = build(actor), body = Buffer.from(JSON.stringify(actions));
     const channel = '/~/channel/readymade-guest-' + randomUUID();
     this.busy = true; const epoch = this.generation;
     try {
@@ -602,6 +622,38 @@ export class ShipClient {
       this.busy = false;
       void this.wire(channel, 'PUT', Buffer.from(JSON.stringify([{id: actions.length + 1, action: 'delete'}])), {'Content-Type': 'application/json'}, {timeoutMs: 10000}, 65536).catch(() => undefined);
     }
+  }
+  /**
+   * This ship's own guest desk and collaboration protocol. A ship whose agent predates the route answers 404,
+   * reported as protocol 0 with nothing published.
+   */
+  async guestDeskRead(): Promise<GuestDeskStatus> {
+    if (this.closed) failure('closed');
+    const actor = this.projectViewPeer(), epoch = this.generation;
+    const reply = await this.wire(GUEST_DESK_PATH, 'GET', undefined, {}, {timeoutMs: 15000}, 65536);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) failure('contextChanged');
+    if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+    if (reply.status === 404) return Object.freeze({protocol: 0, published: false, public: false, revision: 0, source: '', files: 0, missing: Object.freeze([])});
+    if (reply.status !== 200) failure('unavailable', reply.status);
+    try {return guestDeskStatus(JSON.parse(reply.data.toString('utf8')));} catch {return failure('malformed');}
+  }
+  /** Asks this ship, once, to publish its guest desk from its own installed code. The receipt confirms nothing: read again. */
+  async guestDeskPublish(): Promise<{status: 'submitted' | 'unchanged'; changed: number}> {
+    if (this.closed) failure('closed');
+    const actor = this.projectViewPeer();
+    if (this.busy) failure('commandBusy');
+    this.busy = true; const epoch = this.generation;
+    try {
+      const reply = await this.wire(GUEST_DESK_PATH, 'POST', Buffer.from(GUEST_DESK_PUBLISH),
+        {'Content-Type': 'application/json', 'x-readymade-guest-desk': 'v1'}, {timeoutMs: 30000}, 65536);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) throw new OutcomeUnknownError();
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      if ([400, 409].includes(reply.status)) failure('refused', reply.status);
+      return guestDeskReceipt(reply.status, JSON.parse(reply.data.toString('utf8')));
+    } catch (error) {
+      if (error instanceof ShipClientError && ['refused', 'authenticationRequired'].includes(error.code)) throw error;
+      throw new OutcomeUnknownError();
+    } finally {this.busy = false;}
   }
   /** Caller must persist the exact intent before this explicit one-shot submission. */
   async projectSuggestionSubmit(value: RemoteSuggestionIntent, consent: boolean): Promise<RemoteSuggestionReply> {
@@ -891,7 +943,8 @@ export class ShipClient {
         if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
         this.requests.delete(request); if (error) reject(error); else resolve(value!);
       };
-      const abort = (): void => { request.destroy(new ShipClientError('transport')); };
+      let slow = false;
+      const abort = (): void => { request.destroy(new ShipClientError('transport', undefined, slow ? 'slow' : undefined)); };
       const request = (this.origin.startsWith('https:') ? https : http).request(new URL(path, this.origin), {
         method, agent: false, headers: { Accept: 'application/json', Origin: this.origin,
           ...(this.cookies.filter(cookie => cookie.expires > Date.now()).length ? { Cookie: this.cookies.filter(cookie => cookie.expires > Date.now()).map(cookie => cookie.value).join('; ') } : {}),
@@ -907,13 +960,17 @@ export class ShipClient {
       });
       const timer = setTimeout(() => {
         if (method === 'GET' && timeout === 45000) { finish(new ShipClientError('pollExpired')); request.destroy(); }
-        else abort();
+        else { slow = true; abort(); }
       }, timeout); this.requests.add(request);
       request.on('error', (error: NodeJS.ErrnoException) => {
         const code = error.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ? 'certificateHostname'
           : ['DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
             'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_UNTRUSTED'].includes(error.code ?? '') ? 'certificateUntrusted' : 'transport';
-        finish(new ShipClientError(code));
+        // An abort carries its own reason (a slow ship); every other destroy keeps the code it always had.
+        if (error instanceof ShipClientError && error.code === 'transport' && error.detail) { finish(error); return; }
+        const detail: TransportDetail | undefined = code !== 'transport' ? undefined : error.code === 'ECONNREFUSED' ? 'down'
+          : ['ENOTFOUND', 'EAI_AGAIN'].includes(error.code ?? '') ? 'unknownHost' : ['ECONNRESET', 'EPIPE'].includes(error.code ?? '') ? 'dropped' : undefined;
+        finish(new ShipClientError(code, undefined, detail));
       });
       options.signal?.addEventListener('abort', abort, { once: true });
       if (options.signal?.aborted) abort(); else request.end(body);

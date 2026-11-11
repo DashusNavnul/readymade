@@ -4,8 +4,8 @@ import * as http from 'node:http';
 import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
 import {ShipClient, ShipClientError, OutcomeUnknownError} from '../src/ship-client';
-import {GUEST_DESK, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestInstallActions, guestServiceDesk, guestServiceMessage, guestServiceProbe,
-  guestServiceState} from '../src/guest-service';
+import {GUEST_DESK, GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, guestDeskReceipt, guestDeskServing, guestDeskStatus,
+  guestInstallActions, guestRemoveActions, guestServiceDesk, guestServiceMessage, guestServiceProbe, guestServiceState} from '../src/guest-service';
 
 const synced = (zest: string, ship = '~dashus-navnul', desk = 'readymade-peer') => ({sync: {ship, desk}, zest, wefts: [], hash: '0v1'});
 
@@ -101,4 +101,55 @@ test('install sends exactly one poke on a fresh channel, then closes it; failure
   steps.push((_c, r) => {r.socket?.destroy();}, (_c, r) => {r.writeHead(204); r.end();});
   await assert.rejects(client.guestServiceInstall(), e => e instanceof OutcomeUnknownError); await settle(captures, 11);
   assert.equal(captures.filter(c => c.method === 'PUT' && JSON.parse(c.body)[0]?.action === 'poke').length, 5);
+}));
+
+test('remove sends one kiln uninstall naming only the guest desk; the desk read reports it or null', () => fixture(async (client, steps, captures) => {
+  assert.deepEqual(guestRemoveActions('~sampel-palnet'), [{id: 1, action: 'poke', ship: 'sampel-palnet', app: 'hood', mark: 'kiln-uninstall', json: 'readymade-peer'}]);
+  for (const our of ['zod', '', '~Zod']) assert.throws(() => guestRemoveActions(our), /Invalid/);
+  steps.push((_c, r) => json(r, {[GUEST_DESK]: synced('live'), base: synced('live', '~zod', 'kids')}));
+  assert.deepEqual(await client.guestServiceDeskRead(), {zest: 'live', source: {ship: '~dashus-navnul', desk: 'readymade-peer'}});
+  assert.deepEqual(captures.slice(1).map(c => [c.method, c.url]), [['GET', GUEST_PIKES_PATH]]);
+  steps.push((_c, r) => json(r, {base: synced('live', '~zod', 'kids')}));
+  assert.equal(await client.guestServiceDeskRead(), null);
+  steps.push((_c, r) => json(r, {}, 403));
+  await assert.rejects(client.guestServiceDeskRead(), e => e instanceof ShipClientError && e.code === 'authenticationRequired');
+  const before = captures.length;
+  steps.push((_c, r) => {r.writeHead(204); r.end();}, (_c, r) => {r.writeHead(204); r.end();});
+  await client.guestServiceRemove(); await settle(captures, before + 2);
+  const [poke, close] = captures.slice(before);
+  assert.equal(poke.method, 'PUT'); assert.match(poke.url, /^\/~\/channel\/readymade-guest-[0-9a-f-]{36}$/);
+  assert.deepEqual(JSON.parse(poke.body), guestRemoveActions('~zod')); assert.deepEqual(JSON.parse(close.body), [{id: 2, action: 'delete'}]);
+  steps.push((_c, r) => {r.socket?.destroy();}, (_c, r) => {r.writeHead(204); r.end();});
+  await assert.rejects(client.guestServiceRemove(), e => e instanceof OutcomeUnknownError); await settle(captures, before + 4);
+}));
+
+const deskStatus = (patch: object = {}) => ({schema: 'readymade-guest-desk-v1', desk: 'readymade-peer', protocol: 1, published: true, public: true, revision: 3,
+  source: 'host-readymade-collab', files: 416, missing: [], ...patch});
+test('a ship reports the guest desk it publishes strictly, and serving needs published, public and nothing missing', () => {
+  assert.deepEqual(guestDeskStatus(deskStatus()), {protocol: 1, published: true, public: true, revision: 3, source: 'host-readymade-collab', files: 416, missing: []});
+  assert.equal(guestDeskServing(guestDeskStatus(deskStatus())), true);
+  assert.equal(guestDeskServing(guestDeskStatus(deskStatus({public: false}))), false);
+  assert.equal(guestDeskServing(guestDeskStatus(deskStatus({missing: ['/lib/x/hoon']}))), false);
+  assert.equal(guestDeskServing(guestDeskStatus(deskStatus({published: false, public: false, revision: 0}))), false);
+  for (const patch of [{schema: 'x'}, {desk: 'pataphor'}, {protocol: -1}, {protocol: '1'}, {published: false}, {revision: 1.5}, {source: 'Bad'},
+    {missing: ['lib/x']}, {missing: Array(33).fill('/a/b')}, {extra: 1}]) assert.throws(() => guestDeskStatus(deskStatus(patch)), /Unreadable/);
+  const rec = (patch: object = {}) => ({schema: 'readymade-guest-desk-receipt-v1', status: 'submitted', changed: 417, confirmed: false, ...patch});
+  assert.deepEqual(guestDeskReceipt(202, rec()), {status: 'submitted', changed: 417});
+  assert.deepEqual(guestDeskReceipt(202, rec({status: 'unchanged', changed: 0})), {status: 'unchanged', changed: 0});
+  for (const [s, patch] of [[200, {}], [202, {status: 'unchanged'}], [202, {confirmed: true}], [202, {changed: -1}]] as const) assert.throws(() => guestDeskReceipt(s, rec(patch)));
+});
+
+test('the guest desk route: read decodes or reports an older agent as protocol 0; publish sends the one exact body', () => fixture(async (client, steps, captures) => {
+  steps.push((_c, r) => json(r, deskStatus()));
+  assert.equal((await client.guestDeskRead()).revision, 3); assert.equal(captures.at(-1)!.url, GUEST_DESK_PATH);
+  steps.push((_c, r) => {r.writeHead(404); r.end();});
+  assert.deepEqual(await client.guestDeskRead(), {protocol: 0, published: false, public: false, revision: 0, source: '', files: 0, missing: []});
+  steps.push((_c, r) => json(r, {schema: 'readymade-guest-desk-receipt-v1', status: 'submitted', changed: 417, confirmed: false}, 202));
+  assert.deepEqual(await client.guestDeskPublish(), {status: 'submitted', changed: 417});
+  const post = captures.at(-1)!;
+  assert.equal(post.method, 'POST'); assert.equal(post.body, GUEST_DESK_PUBLISH); assert.equal(post.headers['x-readymade-guest-desk'], 'v1');
+  steps.push((_c, r) => json(r, {status: 'refused', message: 'guest-files-missing'}, 409));
+  await assert.rejects(client.guestDeskPublish(), e => e instanceof ShipClientError && e.code === 'refused');
+  steps.push((_c, r) => {r.socket?.destroy();});
+  await assert.rejects(client.guestDeskPublish(), e => e instanceof OutcomeUnknownError);
 }));

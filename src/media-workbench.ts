@@ -10,12 +10,13 @@ import { NativeMediaBrowser } from './media-browser';
 import { LegacyMedia, type LegacyMediaOwner } from './legacy-media';
 import { CallNotificationFeed, type CallNotice } from './call-notifications';
 import { ComposerJournal, attachComposerJournal } from './composer-journal';
-import {authenticateShip, normalizeShipAddress} from './ship-connection';
+import {authenticateShip, normalizeShipAddress, switchTarget, type SwitchTarget, connectionFailureMessage} from './ship-connection';
 import {discoverLocalPlanets, recheckLocalPlanet, slowShipNotice, type LocalPlanet} from './planet-discovery';
 import {queryLoginCode} from './planet-discovery-wire';
 
 export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
 interface SelectedOrigin {origin: string; planet?: LocalPlanet}
+const SWITCH_KEY = 'readymade.switchTo';
 interface PlanetChoice extends vscode.QuickPickItem {planet?: LocalPlanet; operation?: 'manual' | 'refresh'}
 export class MediaWorkbench implements vscode.Disposable {
   readonly bridge: MediaClient;
@@ -172,11 +173,50 @@ export class MediaWorkbench implements vscode.Disposable {
     this.connecting = this.connect();
     try { return await this.connecting; } finally { this.connecting = undefined; }
   }
-  async connectClient(selected?: string, credentials?: (origin: string) => Promise<string | undefined>): Promise<ShipClient> {
+  /**
+   * One window holds one ship. Switching picks another of your ships with the same list Connect shows, remembers
+   * the choice and reloads this window onto it; everything the old ship was doing stays on that ship. Returns
+   * false when nothing was chosen or the choice is the ship already connected.
+   */
+  async switchShip(): Promise<boolean> {
+    this.ensureOpen();
+    const current = this.connectedClient?.origin;
+    this.selectingOrigin ??= this.pickOrigin(current ?? this.context.workspaceState.get<string>('readymade.origin'));
+    let choice: SelectedOrigin | undefined;
+    try {choice = await this.selectingOrigin;} finally {this.selectingOrigin = undefined;}
+    this.ensureOpen();
+    if (!choice) return false;
+    const origin = normalizeShipAddress(choice.origin);
+    if (origin === current) {void vscode.window.showInformationMessage('This window is already connected to that ship.'); return false;}
+    const name = choice.planet?.ship ?? new URL(origin).host;
+    if (current && (await vscode.window.showWarningMessage(`Switch this window to ${name}?`, {modal: true,
+      detail: 'The window reloads onto the other ship. Anything running on the current ship keeps running there, and its drafts stay saved.'}, 'Switch')) !== 'Switch') return false;
+    this.ensureOpen();
+    await this.context.workspaceState.update(SWITCH_KEY, switchTarget({origin, ...(choice.planet ? {ship: choice.planet.ship} : {})}));
+    if (!current) return true; // nothing to tear down: the caller connects now
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    return true;
+  }
+  /**
+   * After a switch reload: the ship to connect, read once and cleared. A ship that ran on this computer is found
+   * again in the running-ship list so it still signs in by itself; if it is no longer there, its saved code is used.
+   */
+  async takeSwitch(): Promise<SelectedOrigin | undefined> {
+    const raw = this.context.workspaceState.get<unknown>(SWITCH_KEY);
+    if (raw === undefined) return undefined;
+    await this.context.workspaceState.update(SWITCH_KEY, undefined);
+    let target: SwitchTarget; try {target = switchTarget(raw);} catch {return undefined;}
+    if (!target.ship) return {origin: target.origin};
+    try {
+      const planet = (await discoverLocalPlanets()).planets.find(p => p.ship === target.ship && p.origin === target.origin);
+      return planet ? {origin: target.origin, planet: await recheckLocalPlanet(planet)} : {origin: target.origin};
+    } catch {return {origin: target.origin};}
+  }
+  async connectClient(selected?: string, credentials?: (origin: string) => Promise<string | undefined>, planet?: LocalPlanet): Promise<ShipClient> {
     this.ensureOpen();
     const configured = vscode.workspace.getConfiguration('readymade').inspect<string>('origin');
     const remembered = this.context.workspaceState.get<string>('readymade.origin') ?? configured?.workspaceFolderValue ?? configured?.workspaceValue ?? configured?.globalValue;
-    let address = selected ?? this.connectedClient?.origin ?? this.connectingOrigin, expectedShip: string | undefined, local: LocalPlanet | undefined;
+    let address = selected ?? this.connectedClient?.origin ?? this.connectingOrigin, expectedShip: string | undefined = planet?.ship, local: LocalPlanet | undefined = planet;
     if (!address) {
       this.selectingOrigin ??= this.pickOrigin(remembered);
       let choice: SelectedOrigin | undefined;
@@ -188,7 +228,7 @@ export class MediaWorkbench implements vscode.Disposable {
     const origin = normalizeShipAddress(address);
     const existing = this.connectedClient;
     if (existing || this.clientConnecting) {
-      if ((existing?.origin ?? this.connectingOrigin) !== origin) throw new Error('Open another Readymade window for a different ship; existing apps keep their connection.');
+      if ((existing?.origin ?? this.connectingOrigin) !== origin) throw new Error('This window is connected to another ship. Use “Readymade: Switch Ship…” to move it, or open another Readymade window; existing apps keep their connection.');
       const shared = existing ?? await this.clientConnecting!;
       this.ensureOpen();
       if (expectedShip && shared.browserCookies(origin)[0]?.name !== 'urbauth-' + expectedShip) throw Error('The selected ship changed. Refresh the running-ship list.');
@@ -242,9 +282,31 @@ export class MediaWorkbench implements vscode.Disposable {
       });
       this.ensureOpen();
       await this.context.workspaceState.update('readymade.origin', client.origin);
+      const signedIn = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
+      if (signedIn) await this.context.workspaceState.update('readymade.ship:' + client.origin, signedIn);
       this.ensureOpen();
       this.client = client; this.localPlanet = local; this.watchCalls(client); this.changed(); return client;
-    } catch (error) { client?.close(); throw error; }
+    } catch (error) {
+      client?.close();
+      if (error instanceof ShipClientError && error.code === 'transport' && error.detail === 'down') await this.explainMoved(origin, expectedShip, error);
+      throw error;
+    }
+  }
+  /**
+   * Nothing answered at a local address. If the ship that was last signed in there is running on this computer at
+   * another port (ports change when ships restart in a different order), say so instead of "could not reach".
+   */
+  private async explainMoved(origin: string, expectedShip: string | undefined, error: ShipClientError): Promise<void> {
+    try {
+      if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(origin).hostname)) return;
+      const ship = expectedShip ?? this.context.workspaceState.get<string>('readymade.ship:' + origin);
+      if (!ship) return;
+      const found = (await discoverLocalPlanets()).planets.filter(p => p.ship === ship && p.origin !== origin);
+      if (found.length !== 1 || this.disposed) return;
+      error.message = connectionFailureMessage(origin, 'down', {ship, origin: found[0].origin});
+      await this.context.workspaceState.update('readymade.origin', found[0].origin);
+      error.message += ' Connect again to use it.';
+    } catch { /* the plain "nothing is answering" message stands */ }
   }
   private async connect(): Promise<MediaController<vscode.BrowserTab>> {
     await this.bridge.request('status');

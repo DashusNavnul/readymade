@@ -70,3 +70,15 @@ test('public source preparation refuses existing output and invalid archives bef
     assert.notEqual(run(linked).status, 0); assert.equal(fs.readFileSync(path.join(output, 'keep'), 'utf8'), 'preserve');
   } finally {fs.rmSync(root, {recursive: true, force: true});}
 });
+
+test('the recorded source of the shipped application archive matches the archive, its pin and its manifest', () => {
+  const crypto = require('node:crypto'), backend = path.join(__dirname, '../backend');
+  const record = JSON.parse(fs.readFileSync(path.join(backend, 'application/source.json'), 'utf8'));
+  assert.deepEqual(Object.keys(record).sort(), ['applicationFiles', 'archiveSha256', 'pataphorCommit', 'schema']);
+  assert.equal(record.schema, 'readymade-application-source-v1'); assert.match(record.pataphorCommit, /^[0-9a-f]{40}$/);
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(backend, 'application/source.tar.gz'))).digest('hex'), record.archiveSha256);
+  assert.ok(fs.readFileSync(path.join(backend, 'application/extract.py'), 'utf8').includes(`ARCHIVE_SHA256 = "${record.archiveSha256}"`));
+  const manifest = JSON.parse(fs.readFileSync(path.join(backend, 'assembly-manifest.json'), 'utf8'));
+  assert.equal(Object.values(manifest.files).filter(row => row.component === 'application').length, record.applicationFiles);
+  assert.ok(fs.readFileSync(path.join(backend, 'application/README.md'), 'utf8').includes(`contains ${record.applicationFiles} application files`));
+});

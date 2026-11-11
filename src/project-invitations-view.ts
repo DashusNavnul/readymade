@@ -1,31 +1,34 @@
 import * as vscode from 'vscode';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {OutcomeUnknownError, type ShipClient} from './ship-client';
-import {GUEST_SOURCE, guestServiceMessage, type GuestServiceState} from './guest-service';
+import {GUEST_DESK, GUEST_PROTOCOL, GUEST_SOURCE, guestDeskServing, guestServiceMessage, type GuestServiceState, type GuestSource} from './guest-service';
 import {remoteShip} from './remote-project-view';
 import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow} from './project-invitations';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
 import type {MediaTreeRow} from './media-workbench';
 
 type Outcome = Awaited<ReturnType<InvitationJournal['recover']>>;
-export interface JoinProjectLink {authority: string; project: string; invitation: string; target: string}
+/** `source`, when present, is the ship the owner said publishes the guest desk (normally the owner itself). */
+export interface JoinProjectLink {authority: string; project: string; invitation: string; target: string; source?: string}
 export function joinProjectLink(uri: vscode.Uri, extension: string): JoinProjectLink {
   if (uri.toString().length > 2048 || uri.scheme !== vscode.env.uriScheme || uri.authority !== extension || uri.path !== '/join-project' || uri.fragment) throw new Error('Invalid project invitation link.');
   const query = new URLSearchParams(uri.query), keys = [...query.keys()];
-  if (keys.length !== 4 || new Set(keys).size !== 4 || keys.some(key => !['authority', 'project', 'invitation', 'target'].includes(key))) throw new Error('Invalid project invitation fields.');
-  const authority = query.get('authority'), project = query.get('project'), invitation = query.get('invitation'), target = query.get('target');
+  if (![4, 5].includes(keys.length) || new Set(keys).size !== keys.length || keys.some(key => !['authority', 'project', 'invitation', 'target', 'source'].includes(key)) ||
+      keys.length === 5 && !keys.includes('source')) throw new Error('Invalid project invitation fields.');
+  const authority = query.get('authority'), project = query.get('project'), invitation = query.get('invitation'), target = query.get('target'), source = query.get('source');
   if (!remoteShip(authority) || !remoteShip(target) || authority === target || !invitationProject(project) || !invitationHash(invitation)) throw new Error('Invalid project invitation recipient or identity.');
-  return Object.freeze({authority, project, invitation, target});
+  if (source !== null && (!remoteShip(source) || source === target)) throw new Error('Invalid project invitation source.');
+  return Object.freeze({authority, project, invitation, target, ...(source !== null ? {source} : {})});
 }
 /** How the join flow asks before installing, waits, and gives up. Replaceable in tests; defaults are the product's. */
 export interface GuestServiceSteps {
-  confirm(detail: string): Thenable<boolean>;
+  confirm(detail: string, title?: string, action?: string): Thenable<boolean>;
   progress<T>(title: string, work: () => Promise<T>): Thenable<T>;
   pause(ms: number): Promise<void>;
   readonly pollMs: number; readonly deadlineMs: number;
 }
 const guestSteps: GuestServiceSteps = {
-  confirm: async detail => (await vscode.window.showWarningMessage('Install the collaboration service?', {modal: true, detail}, 'Install')) === 'Install',
+  confirm: async (detail, title = 'Install the collaboration service?', action = 'Install') => (await vscode.window.showWarningMessage(title, {modal: true, detail}, action)) === action,
   progress: (title, work) => vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title}, work),
   pause: ms => new Promise(resolve => setTimeout(resolve, ms)),
   pollMs: 3000, deadlineMs: 10 * 60 * 1000,
@@ -45,19 +48,19 @@ export class ProjectInvitationsView implements vscode.Disposable {
    * have the ship's kiln install it from the published source, and wait until the agent answers.
    * Nothing is joined or granted here; declining leaves the ship unchanged.
    */
-  private async ensureGuestService(client: ShipClient, actor: string): Promise<void> {
+  private async ensureGuestService(client: ShipClient, actor: string, from: GuestSource = GUEST_SOURCE): Promise<void> {
     let state: GuestServiceState = await client.guestServiceRead();
-    if (state.status === 'ready') return;
+    if (state.status === 'ready') return this.ensureProtocol(client, actor, from);
     if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
-    const elsewhere = state.source && (state.source.ship !== GUEST_SOURCE.ship || state.source.desk !== GUEST_SOURCE.desk);
+    const elsewhere = state.source && (state.source.ship !== from.ship || state.source.desk !== from.desk);
     const detail = [guestServiceMessage(state), 'Joining a shared project needs it.',
-      `Your ship will install it from ${GUEST_SOURCE.ship} (desk %${GUEST_SOURCE.desk}, about 400 files) and keep it updated from there.`,
-      ...(elsewhere ? [`It currently follows ${state.source!.ship} (desk %${state.source!.desk}); installing switches it to ${GUEST_SOURCE.ship}.`] : []),
+      `Your ship will install it from ${from.ship} (desk %${from.desk}, about 400 files) and keep it updated from there.`,
+      ...(elsewhere ? [`It currently follows ${state.source!.ship} (desk %${state.source!.desk}); installing switches it to ${from.ship}.`] : []),
       'Nothing is joined until it is running.'].join(' ');
     if (state.status !== 'starting' && !await this.guest.confirm(detail)) throw new Error('Not joined: your ship needs the collaboration service to join.');
     await this.guest.progress('Installing the collaboration service on your ship', async () => {
       if (state.status !== 'starting') {
-        try {await client.guestServiceInstall(undefined, state.status === 'suspended');} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
+        try {await client.guestServiceInstall(from, state.status === 'suspended');} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
       }
       for (const end = Date.now() + this.guest.deadlineMs; Date.now() < end;) {
         await this.guest.pause(this.guest.pollMs);
@@ -67,6 +70,51 @@ export class ProjectInvitationsView implements vscode.Disposable {
       }
       throw new Error(`The collaboration service did not start in time (${guestServiceMessage(state)}). Check your ship, then join again.`);
     });
+    await this.ensureProtocol(client, actor, from);
+  }
+  /** A running service older than this Readymade is updated by its own kiln from the same source, then read again. */
+  /** Install the collaboration service on the connected ship without joining anything; asks first, like a join does. */
+  async installGuestService(): Promise<void> {
+    if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
+    this.busy = true; this.changed();
+    try {
+      const client = await this.connect(); if (!client || this.closed) return;
+      const actor = this.actor(client);
+      await this.ensureGuestService(client, actor);
+      void vscode.window.showInformationMessage(`${actor} runs the collaboration service. Paste an invitation link under Join Project to join one.`);
+    } finally {this.busy = false; this.changed();}
+  }
+  private async ensureProtocol(client: ShipClient, actor: string, from: GuestSource): Promise<void> {
+    let seen = (await client.guestDeskRead()).protocol;
+    if (seen >= GUEST_PROTOCOL) return;
+    await this.guest.progress('Updating the collaboration service on your ship', async () => {
+      try {await client.guestServiceInstall(from);} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
+      for (const end = Date.now() + this.guest.deadlineMs; Date.now() < end;) {
+        await this.guest.pause(this.guest.pollMs);
+        if (!this.active(client, actor)) throw new Error('Connection changed while the collaboration service was updating.');
+        try {seen = (await client.guestDeskRead()).protocol;} catch { /* Read again; a reload answers nothing for a moment. */ }
+        if (seen >= GUEST_PROTOCOL) return;
+      }
+      throw new Error(`Your ship's collaboration service is older (protocol ${seen}) than this Readymade needs (${GUEST_PROTOCOL}) and did not update in time.`);
+    });
+  }
+  /**
+   * Before an owner hands out a join link: this ship publishes the guest desk from its own code, so the guest can
+   * install from the owner. One publish, then reads; if it does not settle, the link names no source (the guest uses
+   * the distributor) and the owner is told.
+   */
+  private async publishedSource(client: ShipClient, actor: string): Promise<string | undefined> {
+    let status = await client.guestDeskRead();
+    if (guestDeskServing(status)) return actor;
+    if (status.protocol === 0) return undefined; // This ship's agent predates publication.
+    try {await client.guestDeskPublish();} catch (error) {if (!(error instanceof OutcomeUnknownError)) return undefined;}
+    for (let reads = 0; reads < 15; reads++) {
+      await this.guest.pause(1000);
+      if (!this.active(client, actor)) return undefined;
+      try {status = await client.guestDeskRead();} catch {continue;}
+      if (guestDeskServing(status)) return actor;
+    }
+    return undefined;
   }
   private actor(client: ShipClient): string {
     const cookies = client.browserCookies(client.origin);
@@ -132,13 +180,62 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const actor = this.actor(client);
       if (actor !== link.target) throw new Error(`This invitation is for ${link.target}. Connect that ship in another window.`);
       if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
-      await this.ensureGuestService(client, actor);
+      await this.ensureGuestService(client, actor, link.source ? {ship: link.source, desk: GUEST_DESK} : GUEST_SOURCE);
       if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
       const command = invitationCommand({request: randomUUID(), authority: link.authority, project: link.project, operation: 'join', invitation: link.invitation});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
       const result = await this.journal.submit(client, intent, true);
       if (!this.active(client, actor)) throw new Error('Connection changed; check the retained join result.');
       this.observed.set(this.key(intent), result);
+    } finally {this.busy = false; this.changed();}
+  }
+  /**
+   * A guest leaves a project it joined. The owner's ship settles it; sent once through the same journal as the
+   * join, so an unknown outcome is checked, never resent. The owner's file and session grants end with membership.
+   */
+  async leave(request: string): Promise<void> {
+    const client = this.current();
+    if (!client || this.closed || this.busy) throw new Error('Connect the ship that joined this project.');
+    const actor = this.actor(client), joined = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
+    if (!joined || joined.command.operation !== 'join' || this.observed.get(this.key(joined))?.status !== 'accepted') throw new Error('Check the join result before leaving this project.');
+    const {authority, project} = joined.command;
+    const open = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.operation === 'leave' && row.command.authority === authority &&
+      row.command.project === project && !['accepted', 'refused'].includes(this.observed.get(this.key(row))?.status ?? ''));
+    if (open) throw new Error('Check the retained leave result before leaving again.');
+    if (!await this.guest.confirm(`Leave ${project} on ${authority}? You lose access to its shared files and sessions. The owner can invite you again.`, 'Leave Project?', 'Leave')) return;
+    this.busy = true; this.changed();
+    try {
+      const command = invitationCommand({request: randomUUID(), authority, project, operation: 'leave'});
+      const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
+      const result = await this.journal.submit(client, intent, true);
+      if (!this.active(client, actor)) throw new Error('Connection changed; check the retained leave result.');
+      this.observed.set(this.key(intent), result);
+    } finally {this.busy = false; this.changed();}
+  }
+  /**
+   * Remove the collaboration service from a guest's own ship: kiln uninstalls the guest desk, nothing else.
+   * A ship that runs the agent from a full Readymade backend has no guest desk and is refused here.
+   */
+  async removeGuestService(): Promise<void> {
+    const client = this.current();
+    if (!client || this.closed || this.busy) throw new Error('Connect the ship first.');
+    const actor = this.actor(client);
+    this.busy = true; this.changed();
+    try {
+      const desk = await client.guestServiceDeskRead();
+      if (!this.active(client, actor)) throw new Error('Connection changed; nothing was removed.');
+      if (!desk) throw new Error('This ship has no separately installed collaboration service. A full Readymade backend is removed from its own setup screen.');
+      if (!await this.guest.confirm(`Remove the collaboration service (%${GUEST_DESK}) from ${actor}? Projects you joined stay joined on their owners' ships, but this ship can no longer open them until the service is installed again.`, 'Remove the collaboration service?', 'Remove')) return;
+      await client.guestServiceRemove();
+      await this.guest.progress('Removing the collaboration service from your ship', async () => {
+        for (let n = 0; n < 30; n++) {
+          await this.guest.pause(this.guest.pollMs);
+          if (!this.active(client, actor)) throw new Error('Connection changed while removing; read the ship again.');
+          if (await client.guestServiceDeskRead() === null) return;
+        }
+        throw new Error('The ship has not reported the service removed yet. Check again in a minute; nothing is sent twice.');
+      });
+      void vscode.window.showInformationMessage('The collaboration service was removed from your ship.');
     } finally {this.busy = false; this.changed();}
   }
   async check(request: string): Promise<void> {
@@ -173,10 +270,13 @@ export class ProjectInvitationsView implements vscode.Disposable {
     try {
       const matches = (await this.pending(client, actor, project)).filter(row => row.target === command.target && row.role === command.role && row.issuedBy === actor && row.expiresAt === command.expiresAt && !row.expired);
       if (matches.length !== 1) throw new Error('One exact current native invitation was not found. No link was copied.');
+      const source = await this.publishedSource(client, actor);
+      if (!this.active(client, actor, project)) throw new Error('Connection changed; no link was copied.');
       const uri = vscode.Uri.from({scheme: vscode.env.uriScheme, authority: this.extension, path: '/join-project',
-        query: new URLSearchParams({authority: actor, project, invitation: matches[0].id, target: command.target}).toString()});
+        query: new URLSearchParams({authority: actor, project, invitation: matches[0].id, target: command.target, ...(source ? {source} : {})}).toString()});
       joinProjectLink(uri, this.extension); await vscode.env.clipboard.writeText(uri.toString());
-      void vscode.window.showInformationMessage('Join link copied. Membership lasts until revoked; file access is granted separately.');
+      void vscode.window.showInformationMessage(`Join link copied. ${source ? 'Your ship serves the collaboration service to the guest.' :
+        `Your ship could not publish the collaboration service; the guest will install it from ${GUEST_SOURCE.ship}.`} Membership lasts until revoked; file access is granted separately.`);
     } finally {this.busy = false; this.changed();}
   }
   async closeInvitation(id: string, expire = false): Promise<void> {
@@ -197,6 +297,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     this.sync(); const client = this.current(); let actor: string | undefined;
     try {if (client) actor = this.actor(client);} catch { /* Authentication is required for actions. */ }
     const children: MediaTreeRow[] = [{label: 'Join Project…', command: {command: 'readymade.joinProject', title: 'Join Project'}}];
+    if (client && actor && !client.snapshot) children.push({label: 'Remove Collaboration Service…', command: {command: 'readymade.removeCollaborationService', title: 'Remove Collaboration Service'}});
     if (client && actor === client.snapshot?.owner && this.project()) children.push(
       {label: 'Invite Collaborator…', command: {command: 'readymade.inviteCollaborator', title: 'Invite Collaborator'}},
       {label: 'Members', command: {command: 'readymade.projectMembers', title: 'Members'}},
@@ -214,7 +315,8 @@ export class ProjectInvitationsView implements vscode.Disposable {
       children.push({label: command.project, description: `${command.operation} · ${outcome?.status ?? 'retained — check result'}`,
         children: [{label: 'Check Result', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]}},
           ...(accepted && command.operation === 'invite-member' ? [{label: 'Copy Join Link', command: {command: 'readymade.copyProjectJoinLink', title: 'Copy Join Link', arguments: [command.request]}}] : []),
-          ...(accepted && command.operation === 'join' ? [{label: 'Joined — ask owner for shared files'}] : [])]});
+          ...(accepted && command.operation === 'join' ? [{label: 'Joined — ask owner for shared files'},
+            {label: 'Leave Project…', command: {command: 'readymade.leaveProject', title: 'Leave Project', arguments: [command.request]}}] : [])]});
     }
     return [{id: 'project-invitations', label: 'Project Invitations', icon: 'organization', children}];
   }

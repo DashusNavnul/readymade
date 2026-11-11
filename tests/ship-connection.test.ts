@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as http from 'node:http';
 import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
-import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions} from '../src/ship-connection';
+import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions, switchTarget, connectionFailureMessage} from '../src/ship-connection';
 import {ShipClient, ShipClientError} from '../src/ship-client';
 
 const hasCode = (code: string) => (error: unknown) => error instanceof ShipClientError && error.code === code;
@@ -141,4 +141,32 @@ test('selected identities of every rank are captured across awaits and matching 
     }
     assert.deepEqual(requests, shipNames.flatMap(() => ['replacement', 'manual']));
   });
+});
+
+test('a remembered switch target is a normalized origin and at most one ship name', () => {
+  assert.deepEqual(switchTarget({origin: 'http://localhost:8080'}), {origin: 'http://localhost:8080'});
+  assert.deepEqual(switchTarget({origin: 'https://ship.example', ship: '~bondyl-libpen-dashus-navnul'}), {origin: 'https://ship.example', ship: '~bondyl-libpen-dashus-navnul'});
+  for (const bad of [undefined, null, [], 'http://localhost:8080', {}, {origin: 'localhost:8080'}, {origin: 'http://localhost:8080/'}, {origin: 'http://ship.example'},
+    {origin: 'http://localhost:8080', ship: 'zod'}, {origin: 'http://localhost:8080', ship: '~Zod'}, {origin: 'http://localhost:8080', code: 'x'}]) assert.throws(() => switchTarget(bad), /Invalid switch target|web address/);
+});
+
+test('a connection that got no answer is named by what was measured', () => {
+  assert.match(connectionFailureMessage('http://localhost:8080', 'slow'), /localhost:8080 is running but did not answer in time/);
+  assert.match(connectionFailureMessage('http://localhost:8080', 'down'), /Nothing is answering at localhost:8080.*stopped.*another port/);
+  assert.match(connectionFailureMessage('https://ship.example', 'down'), /ship\.example refused the connection/);
+  assert.match(connectionFailureMessage('https://shp.example', 'unknownHost'), /address shp\.example was not found/);
+  assert.match(connectionFailureMessage('https://ship.example', 'dropped'), /dropped before your ship answered/);
+  assert.match(connectionFailureMessage('http://localhost:8080', 'down', {ship: '~zod', origin: 'http://localhost:8081'}), /~zod no longer answers at localhost:8080.*localhost:8081 now/);
+  assert.match(connectionFailureMessage('https://ship.example', undefined), /Could not reach your Urbit/);
+});
+test('the client reports why nothing answered: refused port, unknown name, or too slow', async () => {
+  const refused = http.createServer(); refused.listen(0, '127.0.0.1'); await once(refused, 'listening');
+  const port = (refused.address() as AddressInfo).port; refused.close(); await once(refused, 'close');
+  const down = new ShipClient(`http://127.0.0.1:${port}`, async () => 'code');
+  await assert.rejects(down.signIn(), (error: unknown) => error instanceof ShipClientError && error.code === 'transport' && error.detail === 'down'); down.close();
+  const silent = http.createServer(() => { /* never answers */ }); silent.listen(0, '127.0.0.1'); await once(silent, 'listening');
+  const slow = new ShipClient(`http://127.0.0.1:${(silent.address() as AddressInfo).port}`, async () => 'code');
+  try {
+    await assert.rejects(slow.requestJSON('/apps/pataphor/remote/state.json', {timeoutMs: 150}), (error: unknown) => error instanceof ShipClientError && error.code === 'transport' && error.detail === 'slow');
+  } finally {slow.close(); silent.closeAllConnections(); silent.close();}
 });

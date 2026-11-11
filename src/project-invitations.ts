@@ -4,7 +4,8 @@ import {remoteShip} from './remote-project-view';
 
 export type InvitationCommand = {request: string; authority: string; project: string} & (
   {operation: 'invite-member'; target: string; role: 'maintainer' | 'contributor' | 'observer' | 'model'; expiresAt: string; nonce: string} |
-  {operation: 'join' | 'decline-invitation' | 'revoke-invitation' | 'expire-invitation'; invitation: string});
+  {operation: 'join' | 'decline-invitation' | 'revoke-invitation' | 'expire-invitation'; invitation: string} |
+  {operation: 'leave'});
 export const invitationUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 export const invitationHash = (v: unknown): v is string => typeof v === 'string' && /^0x[1-9a-f][0-9a-f]{0,3}(?:\.[0-9a-f]{4})*$/.test(v) && v.replaceAll('.', '').length <= 66;
 export const invitationProject = (v: unknown): v is string => typeof v === 'string' && validUnicode(v) && Buffer.byteLength(v) > 0 && Buffer.byteLength(v) <= 128 && !/[\u0000-\u001f\u007f:]/u.test(v);
@@ -17,14 +18,15 @@ export function invitationCommand(value: unknown): InvitationCommand {
   requireValue(invitationUuid(r.request) && remoteShip(r.authority) && invitationProject(r.project));
   if (r.operation === 'invite-member') {
     requireValue(exact(r, [...base, 'target', 'role', 'expiresAt', 'nonce']) && remoteShip(r.target) && role(r.role) && r.role !== 'operator' && date(r.expiresAt) && invitationHash(r.nonce));
-  } else requireValue(exact(r, [...base, 'invitation']) && ['join', 'decline-invitation', 'revoke-invitation', 'expire-invitation'].includes(String(r.operation)) && invitationHash(r.invitation));
+  } else if (r.operation === 'leave') requireValue(exact(r, base));
+  else requireValue(exact(r, [...base, 'invitation']) && ['join', 'decline-invitation', 'revoke-invitation', 'expire-invitation'].includes(String(r.operation)) && invitationHash(r.invitation));
   return Object.freeze({...r}) as InvitationCommand;
 }
 export interface InvitationResult {request: string; authority: string; project: string; operation: InvitationCommand['operation']; digest: string; status: 'prepared' | 'submitted' | 'unknown' | 'accepted' | 'refused'; permissionGranted: false; outcome: string | null}
 export function invitationResult(value: unknown, command?: InvitationCommand): InvitationResult {
   const r = asRecord(value);
   requireValue(exact(r, ['schema', 'request', 'authority', 'project', 'operation', 'digest', 'status', 'permissionGranted', 'outcome']) && r.schema === 'readymade-project-invitation-result-v1' && invitationUuid(r.request) && remoteShip(r.authority) && invitationProject(r.project) && invitationHash(r.digest) && r.permissionGranted === false);
-  const outcomes: Record<string, string> = {'invite-member': 'project-invited', join: 'project-joined', 'decline-invitation': 'invitation-declined', 'revoke-invitation': 'invitation-revoked', 'expire-invitation': 'invitation-expired'};
+  const outcomes: Record<string, string> = {'invite-member': 'project-invited', join: 'project-joined', 'decline-invitation': 'invitation-declined', 'revoke-invitation': 'invitation-revoked', 'expire-invitation': 'invitation-expired', leave: 'project-left'};
   requireValue(typeof r.operation === 'string' && Object.hasOwn(outcomes, r.operation));
   requireValue(r.status === 'accepted' ? r.outcome === outcomes[r.operation] : r.status === 'refused' ? r.outcome === 'native-refused' : ['prepared', 'submitted', 'unknown'].includes(String(r.status)) && r.outcome === null);
   if (command) requireValue(['request', 'authority', 'project', 'operation'].every(k => r[k] === command[k as keyof InvitationCommand]));

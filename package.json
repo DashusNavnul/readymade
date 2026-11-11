@@ -41,7 +41,11 @@
       {"command": "readymade.inspectWorkspaceResult", "title": "Readymade: Inspect Files and Checks"},
       {"command": "readymade.inviteCollaborator", "title": "Readymade: Invite Collaborator"},
       {"command": "readymade.joinProject", "title": "Readymade: Join Project"},
+      {"command": "readymade.switchShip", "title": "Readymade: Switch Ship…"},
+      {"command": "readymade.doctor", "title": "Readymade: Ship Doctor"},
       {"command": "readymade.checkProjectInvitation", "title": "Readymade: Check Invitation Result"},
+      {"command": "readymade.leaveProject", "title": "Readymade: Leave Project"},
+      {"command": "readymade.removeCollaborationService", "title": "Readymade: Remove Collaboration Service"},
       {"command": "readymade.copyProjectJoinLink", "title": "Readymade: Copy Project Join Link"},
       {"command": "readymade.projectMembers", "title": "Readymade: Project Members"},
       {"command": "readymade.projectInvitations", "title": "Readymade: Pending Project Invitations"},
@@ -325,6 +329,7 @@
     "build": "tsc -p .",
     "check": "tsc -p . --noEmit",
     "lint": "eslint src tests platform packaging/*.cjs backend/install/*.cjs",
+    "bundle:backend": "python3 backend/application/rebuild.py",
     "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.cjs"
   },
   "devDependencies": {

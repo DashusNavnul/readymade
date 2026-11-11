@@ -68,9 +68,49 @@ export function guestInstallActions(our: string, source: GuestSource = GUEST_SOU
   const install = {id: 1, action: 'poke', ship: our.slice(1), app: 'hood', mark: 'kiln-install', json: {local: GUEST_DESK, ship: source.ship, desk: source.desk}};
   return revive ? [install, {id: 2, action: 'poke', ship: our.slice(1), app: 'hood', mark: 'kiln-revive', json: GUEST_DESK}] : [install];
 }
+/**
+ * The Eyre channel action that asks the ship's own kiln to remove the guest desk. Only the guest desk is ever
+ * named: a full Readymade backend runs the agent from its own desk and is never touched by this.
+ */
+export function guestRemoveActions(our: string): unknown[] {
+  if (!remoteShip(our)) throw Error('Invalid ship.');
+  return [{id: 1, action: 'poke', ship: our.slice(1), app: 'hood', mark: 'kiln-uninstall', json: GUEST_DESK}];
+}
 export function guestServiceMessage(state: GuestServiceState): string {
   if (state.status === 'ready') return 'This ship runs the collaboration service.';
   if (state.status === 'starting') return 'The collaboration service is installed and still starting.';
   if (state.status === 'suspended') return 'The collaboration service is installed but suspended on this ship.';
   return 'This ship does not have the collaboration service yet.';
 }
+
+/** The collaboration protocol this Readymade needs on any ship it works with. Older ships are updated by kiln. */
+export const GUEST_PROTOCOL = 1;
+export const GUEST_DESK_PATH = '/apps/readymade-collab/guest-desk';
+export const GUEST_DESK_PUBLISH = '{"schema":"readymade-guest-desk-command-v1","operation":"publish"}';
+/** What a ship reports about the guest desk it publishes, and the protocol its collaboration agent speaks. */
+export interface GuestDeskStatus {
+  readonly protocol: number; readonly published: boolean; readonly public: boolean; readonly revision: number;
+  readonly source: string; readonly files: number; readonly missing: readonly string[];
+}
+const exactKeys = (row: Row, keys: string[]) => Object.keys(row).length === keys.length && keys.every(k => Object.hasOwn(row, k));
+export function guestDeskStatus(value: unknown): GuestDeskStatus {
+  const r = record(value);
+  if (!r || !exactKeys(r, ['schema', 'desk', 'protocol', 'published', 'public', 'revision', 'source', 'files', 'missing']) ||
+      r.schema !== 'readymade-guest-desk-v1' || r.desk !== GUEST_DESK || !Number.isSafeInteger(r.protocol) || (r.protocol as number) < 0 ||
+      typeof r.published !== 'boolean' || typeof r.public !== 'boolean' || !Number.isSafeInteger(r.revision) || (r.revision as number) < 0 ||
+      !desk(r.source) || !Number.isSafeInteger(r.files) || (r.files as number) < 0 || !Array.isArray(r.missing) || r.missing.length > 32 ||
+      r.missing.some(p => typeof p !== 'string' || !/^(?:\/[a-z0-9.~-]+)+$/.test(p)) || r.published === false && (r.public !== false || r.revision !== 0)) {
+    throw Error('Unreadable guest desk status.');
+  }
+  return Object.freeze({protocol: r.protocol as number, published: r.published, public: r.public, revision: r.revision as number, source: r.source,
+    files: r.files as number, missing: Object.freeze([...r.missing as string[]])});
+}
+export function guestDeskReceipt(status: number, value: unknown): {status: 'submitted' | 'unchanged'; changed: number} {
+  const r = record(value);
+  if (status !== 202 || !r || !exactKeys(r, ['schema', 'status', 'changed', 'confirmed']) || r.schema !== 'readymade-guest-desk-receipt-v1' ||
+      !(r.status === 'submitted' || r.status === 'unchanged') || !Number.isSafeInteger(r.changed) || (r.changed as number) < 0 || r.confirmed !== false ||
+      (r.status === 'unchanged') !== (r.changed === 0)) throw Error('Unreadable guest desk receipt.');
+  return {status: r.status, changed: r.changed as number};
+}
+/** Serving: published, readable by everyone, and nothing missing from the manifest. */
+export function guestDeskServing(s: GuestDeskStatus): boolean {return s.published && s.public && s.missing.length === 0;}

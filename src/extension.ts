@@ -50,6 +50,9 @@ import { SetupView } from './setup-view';
 import { WelcomeView } from './welcome-view';
 import { PlanetSetupView } from './planet-setup-view';
 import { BackendInstallView } from './backend-install-view';
+import { hostProbes } from './backend-install';
+import { installChoice, loomOf } from './install-choice';
+import { ShipDoctorView } from './ship-doctor-view';
 import { PlanetBootView } from './planet-boot-view';
 
 type Row = MediaTreeRow;
@@ -74,6 +77,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   readonly home: WelcomeView;
   readonly planetSetup: PlanetSetupView;
   readonly backendInstall: BackendInstallView;
+  readonly doctor: ShipDoctorView;
   readonly planetBoot: PlanetBootView;
   readonly setup: SetupView;
   readonly workspaceRequests: WorkspaceRequestView;
@@ -213,8 +217,14 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.planetSetup = new PlanetSetupView(connection, () => this.connectApps());
     this.backendInstall = new BackendInstallView(context.extensionPath, join(context.globalStorageUri.fsPath, 'backend-install'), () => this.media.connectedLocalPlanet, () => this.connectApps());
     this.planetBoot = new PlanetBootView(context.extensionPath, () => this.connectApps());
-    this.registrations.push(this.backendInstall, this.planetBoot);
+    this.doctor = new ShipDoctorView(context.extensionPath, () => {
+      const client = this.media.connectedClient, cookies = client?.browserCookies(client.origin) ?? [];
+      if (!client || cookies.length !== 1 || !/^urbauth-~[a-z-]{3,128}$/.test(cookies[0].name)) return undefined;
+      return {ship: cookies[0].name.slice('urbauth-'.length), origin: client.origin, planet: this.media.connectedLocalPlanet};
+    });
+    this.registrations.push(this.backendInstall, this.planetBoot, this.doctor);
     void this.offerStart();
+    void this.resumeSwitch();
     this.home = new WelcomeView(connection, async action => {
       if (action === 'openProject') return vscode.commands.executeCommand('workbench.action.files.openFolder');
       if (action === 'connect') {if (await this.connectApps()) await this.setup.show(this.media.connectedClient); return;}
@@ -238,6 +248,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('installBackend', () => this.backendInstall.show());
     command('startPlanet', () => this.planetBoot.show());
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
+    command('doctor', () => this.doctor.show());
+    command('switchShip', async () => {if (await this.media.switchShip() && !this.media.connectedClient) await this.resumeSwitch();});
     command('openSharedProject', link => this.remoteSource.open(typeof link === 'string' ? link : undefined));
     command('resumeSharedProject', id => this.remoteSource.resume(typeof id === 'string' ? id : undefined));
     command('refreshSharedProject', () => this.remoteSource.refresh());
@@ -255,6 +267,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('inviteCollaborator', target => this.invitations.invite(typeof target === 'string' ? target : undefined));
     command('joinProject', link => this.invitations.join(typeof link === 'string' ? link : undefined));
     command('checkProjectInvitation', request => this.invitations.check(String(request)));
+    command('leaveProject', request => this.invitations.leave(String(request)));
+    command('removeCollaborationService', () => this.invitations.removeGuestService());
     command('copyProjectJoinLink', request => this.invitations.copyLink(String(request)));
     command('projectMembers', () => this.invitations.observe('members'));
     command('projectInvitations', () => this.invitations.observe('invitations'));
@@ -373,6 +387,18 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const ship = stopped[0].ship, choice = await vscode.window.showInformationMessage(`${ship} is not running.`, 'Start it');
     if (choice === 'Start it' && !this.disposed) {await this.planetBoot.show(); await this.planetBoot.restart(ship);}
   }
+  /** After Switch Ship reloaded this window: connect the chosen ship, as Connect would. */
+  private async resumeSwitch(): Promise<void> {
+    try {
+      const target = await this.media.takeSwitch();
+      if (!target || this.disposed) return;
+      const client = await this.media.connectClient(target.origin, undefined, target.planet);
+      this.render(); void this.offerInstall(); await this.setup.show(client);
+    } catch (error) {
+      if (error instanceof ShipClientError && error.code === 'cancelled') return;
+      void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Could not connect the ship you switched to.');
+    }
+  }
   private readonly installOffered = new Set<string>();
   /** Once per ship per window: a local ship without Pataphor is offered the install instead of a dead end. */
   private async offerInstall(): Promise<void> {
@@ -383,8 +409,15 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     catch (error) {
       // Only a definite "not there" is an offer; a busy or unreachable ship is left alone.
       if (!(error instanceof ShipClientError) || error.status !== 404 || this.disposed) return;
-      const choice = await vscode.window.showInformationMessage(`Pataphor is not on ${local.ship} yet.`, 'Install Pataphor');
-      if (choice === 'Install Pataphor' && !this.disposed) await this.backendInstall.show();
+      // Offer what this ship can run: all of Pataphor for a planet or larger with enough memory, else the collaboration service.
+      let loom: number | undefined; try {loom = loomOf(await hostProbes.command(local.workerPid));} catch {loom = undefined;}
+      if (this.disposed) return;
+      const offer = installChoice(local.ship, loom), full = 'Install Pataphor', guest = 'Install the collaboration service';
+      const actions = offer.recommended === 'full' ? [full, guest] : offer.fullPossible ? [guest, full] : [guest];
+      const choice = await vscode.window.showInformationMessage(`Pataphor is not on ${local.ship} yet. ${offer.reason}`, ...actions);
+      if (this.disposed) return;
+      if (choice === full) await this.backendInstall.show();
+      else if (choice === guest) await this.invitations.installGuestService();
     }
   }
   async connect(origin?: string, credentials?: (origin: string) => Promise<string | undefined>): Promise<void> {

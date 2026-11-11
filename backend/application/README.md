@@ -1,6 +1,6 @@
 # Readymade application source
 
-`source.tar.gz` contains 940 application files and the Readymade MIT license.
+`source.tar.gz` contains 942 application files and the Readymade MIT license.
 It is source code, including Hoon apps and libraries, browser presentation code,
 the native connector source carrier, marks, threads and the ten-app desk bill.
 It includes the explicit owner Apply command for approved candidates; Cantrip
@@ -13,6 +13,21 @@ and reload behavior. Live installation, endpoint checks and a real result reply
 remain required before release acceptance.
 It contains no saved ship state. The archive is about 2 MB; extract it to inspect,
 search or modify the individual files.
+
+## Rebuilding it for a release
+
+Every release rebuilds the archive from the Pataphor repository's HEAD commit:
+
+```sh
+npm run bundle:backend -- --pataphor /path/to/pataphor          # rebuild; prints what changed
+npm run bundle:backend -- --pataphor /path/to/pataphor --check  # exit 1 if the archive is stale
+```
+
+`rebuild.py` reads committed bytes only, keeps every application file, adds any file those now
+import and the files the guest-desk manifest names, and stops if the collaboration agent imports
+a file that manifest does not list. It writes the archive, the pins in `../assembly-manifest.json`,
+the hash in `extract.py`, the count above, and `source.json`: the Pataphor commit and the archive
+hash this package carries. A test checks those four agree.
 
 From the repository root, with Python 3.9+:
 

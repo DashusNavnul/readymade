@@ -1,4 +1,17 @@
-import {ShipClient, ShipClientError} from './ship-client';
+import {ShipClient, ShipClientError, type TransportDetail} from './ship-client';
+
+/** One plain sentence for a connection that got no answer, naming what was measured: slow, down, unknown address or dropped. */
+export function connectionFailureMessage(origin: string, detail: TransportDetail | undefined, moved?: {ship: string; origin: string}): string {
+  let host = origin, local = false;
+  try {const url = new URL(origin); host = url.host; local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);} catch { /* shown as given */ }
+  if (moved) return `${moved.ship} no longer answers at ${host}. It is running at ${new URL(moved.origin).host} now (its port changed when it restarted).`;
+  if (detail === 'slow') return `Your ship at ${host} is running but did not answer in time. It may be busy; wait a moment and connect again.`;
+  if (detail === 'down') return local ? `Nothing is answering at ${host}. Your ship is stopped, or it restarted on another port: choose it again from Connect.` :
+    `${host} refused the connection. The ship may be stopped; check with whoever hosts it.`;
+  if (detail === 'unknownHost') return `The address ${host} was not found. Check the spelling of your ship’s web address.`;
+  if (detail === 'dropped') return `The connection to ${host} dropped before your ship answered. It may be restarting; connect again in a moment.`;
+  return 'Could not reach your Urbit. Check that its web address opens in your browser.';
+}
 
 /** Friendly address admission; ShipClient's strict transport boundary stays intact. */
 export function normalizeShipAddress(raw: string): string {
@@ -25,6 +38,16 @@ export function normalizeShipAddress(raw: string): string {
     error.message = 'Enter your ship’s web address, such as ship.example or localhost:8080.';
     throw error;
   }
+}
+
+export interface SwitchTarget {readonly origin: string; readonly ship?: string}
+/** The remembered switch target, strictly: a normalized origin and, for a ship on this computer, its name. */
+export function switchTarget(value: unknown): SwitchTarget {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid switch target.');
+  const row = value as Record<string, unknown>, keys = Object.keys(row);
+  if (typeof row.origin !== 'string' || normalizeShipAddress(row.origin) !== row.origin || keys.some(k => k !== 'origin' && k !== 'ship') ||
+      row.ship !== undefined && (typeof row.ship !== 'string' || !/^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6}){0,3}(?:--[a-z]{6}(?:-[a-z]{6}){3})?)$/.test(row.ship))) throw Error('Invalid switch target.');
+  return Object.freeze({origin: row.origin, ...(row.ship !== undefined ? {ship: row.ship} : {})});
 }
 
 export interface ShipAuthenticationOptions {
@@ -80,8 +103,10 @@ export async function authenticateShip(origin: string, options: ShipAuthenticati
       else if (error.code === 'identityUnavailable') error.message = expectedShip !== undefined ?
         'The selected ship’s connection changed. Choose your ship again from Connect; your login code has not been saved.' :
         'The server did not identify one Urbit. Check that this is your ship’s web address.';
-      else if (error.code === 'authenticationRequired') error.message = 'Your ship could not complete sign-in. Check that it opens normally in your browser.';
-      else if (['transport', 'timeout'].includes(error.code)) error.message = 'Could not reach your Urbit. Check that its web address opens in your browser.';
+      else if (error.code === 'authenticationRequired') error.message = [400, 401, 403].includes(error.status ?? 0) ?
+        'Your ship did not accept the login code. Type +code in the ship’s terminal for the current one, then connect again.' :
+        'Your ship could not complete sign-in. Check that it opens normally in your browser.';
+      else if (['transport', 'timeout'].includes(error.code)) error.message = connectionFailureMessage(origin, error.detail);
       throw error;
     }
     const failure = new ShipClientError('connectionFailed');

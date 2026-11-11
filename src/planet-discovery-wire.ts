@@ -112,6 +112,41 @@ export function decodeLoginCode(id: number, frame: Buffer): string {
     const code = text(value); need(/^[a-z]{6}(?:-[a-z]{6}){3}(?![\s\S])/.test(code)); return code;
   } catch {throw new NativeObservationFailure(reason);}
 }
+/**
+ * The doctor's read-only strand: the kelvin, the count of pending timers, and who set the ones due within
+ * five minutes. One Behn scry that exists on every kernel; nothing is written and no agent is asked.
+ */
+const DOCTOR_STRAND = `=/  m  (strand ,vase)
+;<  b=bowl  bind:m  get-bowl
+?>  =(our.b src.b)
+=/  timers=(list [@da duct])  .^((list [@da duct]) %bx /(scot %p our.b)//(scot %da now.b)/debug/timers)
+=/  soon=(list [@da duct])  (scag 128 (skim timers |=([d=@da *] (lth d (add now.b ~m5)))))
+=/  rows=(list @t)
+  %+  turn  soon
+  |=  [d=@da =duct]
+  =/  who=@t
+    ?~  duct  'unknown'
+    =/  w=path  i.duct
+    ?:  ?=([%gall %use @ *] w)  i.t.t.w
+    ?~(w 'unknown' i.w)
+  (rap 3 ~[(scot %ud (div (sub (max d now.b) now.b) ~s1)) ':' who])
+(pure:m !>((rap 3 (join ' ' \`(list @t)\`[(scot %ud zuse) (scot %ud (lent timers)) rows]))))
+`;
+export function encodeDoctorRequest(id: number): Buffer {
+  need(Number.isSafeInteger(id) && id >= 0 && id <= 0xffffffff);
+  return jam(tuple(BigInt(id), atom('fyrd'), atom('base'), atom('khan-eval'), atom('noun'), atom('ted-eval'), atom(DOCTOR_STRAND)));
+}
+export function decodeDoctorReading(id: number, frame: Buffer): string {
+  let reason: NativeObservationReason = 'frame-or-decode';
+  try {
+    const noun = cue(frame); reason = 'envelope';
+    const [rid, kind, failed, mark, value] = parts(noun, 5);
+    need(rid === BigInt(id) && kind === atom('avow') && failed === 0n && mark === atom('noun'));
+    need(typeof value === 'bigint' && value > 0n);
+    let hex = value.toString(16); need(hex.length <= 32768); if (hex.length % 2) hex = '0' + hex;
+    const reading = Buffer.from(hex, 'hex').reverse().toString('latin1'); need(/^[0-9a-z.: -]+(?![\s\S])/.test(reading)); return reading;
+  } catch {throw new NativeObservationFailure(reason);}
+}
 /** One request, one bounded reply, no retry. */
 function exchange<T>(socket: string, request: Buffer, decode: (frame: Buffer) => T, signal?: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -146,6 +181,11 @@ function exchange<T>(socket: string, request: Buffer, decode: (frame: Buffer) =>
 export function queryLoginCode(socket: string, signal?: AbortSignal): Promise<string> {
   const id = randomInt(0x100000000);
   return Promise.resolve().then(() => exchange(socket, encodeLoginCodeRequest(id), frame => decodeLoginCode(id, frame), signal));
+}
+/** Ask a ship running on this computer for the doctor's reading over its owner-only socket. Read-only. */
+export function queryDoctorReading(socket: string, signal?: AbortSignal): Promise<string> {
+  const id = randomInt(0x100000000);
+  return Promise.resolve().then(() => exchange(socket, encodeDoctorRequest(id), frame => decodeDoctorReading(id, frame), signal));
 }
 export function queryNative(socket: string, query: 'real', signal?: AbortSignal): Promise<NativeReality>;
 export function queryNative(socket: string, query: Exclude<NativeQuery, 'real'>, signal?: AbortSignal): Promise<bigint>;
