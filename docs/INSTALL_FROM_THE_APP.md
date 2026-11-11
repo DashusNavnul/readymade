@@ -20,8 +20,8 @@ code. It cannot be installed to from here yet.
 Choose **Get an Urbit → Start my planet**, or run **Readymade: Start a Planet
 from a Keyfile**.
 
-1. Choose the `.key` file. It is inside the passport you download when you
-   claim a planet in Bridge.
+1. Choose the passport you downloaded when you claimed the planet in Bridge (a
+   `.zip`), just as it is, or the `.key` file inside it.
 2. Confirm the planet is not running anywhere else. A planet must only ever run
    in one place.
 3. Readymade starts it once, with the Urbit runtime and boot file shipped inside
@@ -62,7 +62,7 @@ retried automatically.
 
 ## What a planet needs
 
-- **This Mac:** Apple Silicon, and Python 3 (Apple's Command Line Tools provide
+- **This Mac:** Apple Silicon, about 3 GB of free disk space, and Python 3 (Apple's Command Line Tools provide
   it; the app says so if it is missing).
 - **The Readymade runtime.** Pataphor needs a runtime feature the stock Urbit
   runtime does not have. A planet started by Readymade has it. A planet already

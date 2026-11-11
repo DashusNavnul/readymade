@@ -1,4 +1,5 @@
-import {copyFile, chmod, mkdir, stat, unlink} from 'node:fs/promises';
+import {copyFile, chmod, mkdir, stat, statfs, unlink, writeFile} from 'node:fs/promises';
+import {execFile} from 'node:child_process';
 import * as path from 'node:path';
 import {parseRowsReport, runTool, type RowsReport, type ToolRunner} from './backend-install';
 
@@ -17,16 +18,35 @@ const planet = /^~[a-z]{6}-[a-z]{6}(?![\s\S])/;
 // Records are written only by the bundled tool; any well-formed ship name it recorded is accepted for restart.
 const planetOrTest = /^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6})?)(?![\s\S])/;
 
-/** A planet name from a keyfile's name, such as sampel-palnet-1.key. The key's content is checked against it by the tools. */
+/**
+ * A planet name from a keyfile's name (sampel-palnet-1.key) or from the passport Bridge downloads
+ * (sampel-palnet-passport.zip). The key's content is checked against it by the tools.
+ */
 export function planetFromKeyfile(file: string): string | undefined {
-  const match = /^([a-z]{6}-[a-z]{6})(?:-\d+)?\.key$/.exec(path.basename(file));
+  const match = /^([a-z]{6}-[a-z]{6})(?:-\d+)?\.key$/.exec(path.basename(file)) ?? /^([a-z]{6}-[a-z]{6})-passport(?:[ -]?\(?\d+\)?)?\.zip$/.exec(path.basename(file));
   return match ? '~' + match[1] : undefined;
+}
+/** About four times what a switched-on test ship and its install records measured (0.55 GB + 0.22 GB). */
+export const MIN_FREE_BYTES = 3 * 1024 ** 3;
+const unzip = (args: string[], encoding: BufferEncoding | 'buffer') => new Promise<Buffer | string>((resolve, reject) =>
+  execFile('/usr/bin/unzip', args, {timeout: 10000, maxBuffer: 262144, encoding: encoding as 'buffer'}, (error, stdout) => error ? reject(error) : resolve(stdout)));
+/** The one keyfile inside a Bridge passport zip, as bytes. Nothing else in the archive is read or written anywhere. */
+export async function keyFromPassport(zip: string): Promise<Buffer> {
+  let names: string[];
+  try {names = String(await unzip(['-Z1', zip], 'utf8')).split('\n').filter(Boolean);}
+  catch {throw new PlanetBootError('That passport could not be opened.');}
+  const keys = names.filter(name => /(?:^|\/)[a-z]{6}-[a-z]{6}-\d+\.key$/.test(name) && !name.includes('..') && !/[\u0000-\u001f*?\[\]\\]/.test(name));
+  if (keys.length !== 1) throw new PlanetBootError(keys.length ? 'That passport holds more than one keyfile. Choose the .key file itself.' : 'That passport has no keyfile in it. Choose the .key file itself.');
+  const bytes = await unzip(['-p', zip, keys[0]], 'buffer').catch(() => {throw new PlanetBootError('The keyfile inside that passport could not be read.');}) as Buffer;
+  if (!bytes.length || bytes.length > 65536) throw new PlanetBootError('The keyfile inside that passport could not be read.');
+  return bytes;
 }
 export function parseBootReport(line: string): BootReport | undefined {return parseRowsReport(line, bootPhases);}
 
 export class PlanetBoot {
   /** `tools` is the bundled backend/install folder; `root` is the private folder that will hold ships. */
-  constructor(private readonly tools: string, private readonly root: string, private readonly tool: ToolRunner = runTool) {}
+  constructor(private readonly tools: string, private readonly root: string, private readonly tool: ToolRunner = runTool,
+    private readonly freeBytes: (directory: string) => Promise<number> = async directory => {const s = await statfs(directory); return Number(s.bavail) * Number(s.bsize);}) {}
 
   /** True when this build carries the runtime and boot pill. */
   async available(): Promise<boolean> {
@@ -38,10 +58,13 @@ export class PlanetBoot {
   async prepare(ship: string, keyfile: string): Promise<BootPlan> {
     if (!planet.test(ship)) throw new PlanetBootError('Enter the planet’s name, such as ~sampel-palnet.');
     await mkdir(this.root, {recursive: true, mode: 0o700});
+    let free = Infinity; try {free = await this.freeBytes(this.root);} catch { /* an unreadable figure is not a refusal */ }
+    if (free < MIN_FREE_BYTES) throw new PlanetBootError('This Mac needs about 3 GB of free disk space to start a planet. Free some space, then try again.');
     // Bridge saves keyfiles world-readable; the tools accept only a private file, so hand them a private copy.
     const copy = path.join(this.root, `.incoming-${ship.slice(1)}.key`);
     try {
-      try {await copyFile(keyfile, copy); await chmod(copy, 0o600);}
+      if (/\.zip$/i.test(keyfile)) await writeFile(copy, await keyFromPassport(keyfile), {mode: 0o600, flag: 'wx'});
+      else try {await copyFile(keyfile, copy); await chmod(copy, 0o600);}
       catch {throw new PlanetBootError('That keyfile could not be read.');}
       const result = await this.tool(path.join(this.tools, 'boot-run.cjs'), ['prepare', '--ship', ship, '--keyfile', copy, '--root', this.root, '--confirm-not-running-elsewhere', 'yes']);
       let value: Record<string, unknown> = {};

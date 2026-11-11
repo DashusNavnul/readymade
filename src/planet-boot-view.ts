@@ -45,8 +45,8 @@ export class PlanetBootView implements vscode.Disposable {
   }
 
   private async choose(): Promise<void> {
-    const picked = await vscode.window.showOpenDialog({title: 'Choose your planet’s keyfile', canSelectMany: false, canSelectFiles: true, canSelectFolders: false,
-      filters: {Keyfile: ['key']}, openLabel: 'Use this keyfile'});
+    const picked = await vscode.window.showOpenDialog({title: 'Choose your planet’s keyfile or passport', canSelectMany: false, canSelectFiles: true, canSelectFolders: false,
+      filters: {'Keyfile or passport': ['key', 'zip']}, openLabel: 'Use this'});
     if (this.closed || !picked?.length || picked[0].scheme !== 'file') return;
     const file = picked[0].fsPath;
     const ship = planetFromKeyfile(file) ?? await vscode.window.showInputBox({title: 'Which planet is this keyfile for?', prompt: 'The planet’s name, such as ~sampel-palnet',
@@ -141,8 +141,8 @@ function render(s){
   if(s.step==='unavailable'){body.append(el('p',s.message||'Starting a planet is not available.'));return}
   if(s.step==='choose'){
     body.append(el('p','If you have a planet’s keyfile, Readymade can start that planet on this Mac.'),
-      el('p','A keyfile is a small file ending in “.key”. When you claim a planet in Bridge it is inside the passport download.','muted'),
-      button('Choose your keyfile','choose'));
+      el('p','When you claim a planet in Bridge you download a passport (a “.zip”). Choose that passport as it is, or the “.key” file inside it.','muted'),
+      button('Choose your passport or keyfile','choose'));
     if(Array.isArray(s.ships)&&s.ships.length){
       body.append(el('h2','Your planets on this Mac'));const ul=el('ul');
       for(const ship of s.ships){const li=el('li');li.append(el('span',ship.running?'✓':'·','mark'),el('span',ship.ship+(ship.running?' — running':' — not running')));

@@ -1,5 +1,5 @@
 import {spawn, execFile} from 'node:child_process';
-import {mkdir, realpath, readFile, writeFile, stat} from 'node:fs/promises';
+import {mkdir, realpath, readFile, writeFile, stat, statfs} from 'node:fs/promises';
 import * as path from 'node:path';
 
 /**
@@ -20,6 +20,7 @@ export class BackendInstallError extends Error {constructor(message: string) {su
 const phases = new Set<InstallPhase>(['not-started', 'running', 'paused', 'needs-attention', 'activation-prepared', 'activated']);
 const rowStatuses = new Set<InstallRowStatus>(['waiting', 'running', 'done', 'needs-attention']);
 const MIN_LOOM = 33;
+const MIN_FREE_BYTES = 3 * 1024 ** 3;
 const shipName = /^~(?:[a-z]{3}|[a-z]{6}(?:-[a-z]{6}){0,3})(?![\s\S])/;
 const plain = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 
@@ -85,6 +86,8 @@ export interface HostProbes {
   python(): Promise<void>;
   /** The full command line of a process, as ps reports it. */
   command(pid: number): Promise<string>;
+  /** Free bytes on the volume holding a path. */
+  freeBytes(directory: string): Promise<number>;
 }
 const run = (file: string, args: string[]) => new Promise<string>((resolve, reject) =>
   execFile(file, args, {timeout: 5000, maxBuffer: 65536}, (error, stdout) => error ? reject(error) : resolve(String(stdout).trim())));
@@ -92,6 +95,7 @@ export const hostProbes: HostProbes = {
   executable: async pid => realpath(await run('/bin/ps', ['-p', String(pid), '-o', 'comm='])),
   python: async () => {await run('python3', ['-I', '-c', 'import sys; assert sys.version_info >= (3, 9)']);},
   command: pid => run('/bin/ps', ['-p', String(pid), '-o', 'args=']),
+  freeBytes: async directory => {const s = await statfs(directory); return Number(s.bavail) * Number(s.bsize);},
 };
 
 export class BackendInstall {
@@ -127,6 +131,9 @@ export class BackendInstall {
       throw new BackendInstallError(`Your ship was started with too little memory to build Pataphor. Stop it and start it again with “--loom ${MIN_LOOM}”, then reconnect.`);
     const parent = path.join(this.storage, 'installs');
     await mkdir(parent, {recursive: true, mode: 0o700});
+    // Measured: a switched-on test ship grew to 0.55 GB and its install records took 0.22 GB.
+    let free = Infinity; try {free = Math.min(await this.probes.freeBytes(parent), await this.probes.freeBytes(target.pier));} catch { /* an unreadable figure is not a refusal */ }
+    if (free < MIN_FREE_BYTES) throw new BackendInstallError('This Mac needs about 3 GB of free disk space to install Pataphor. Free some space, then try again.');
     const state = path.join(parent, `${target.ship.slice(1)}-${now}`), output = state + '-compile';
     const result = await this.tool(path.join(this.files.tools, 'install-local.cjs'),
       ['plan', '--state', state, '--ship', target.ship, '--desk', 'readymade', '--pier', target.pier, '--vere', vere, '--bundle', this.files.bundle]);

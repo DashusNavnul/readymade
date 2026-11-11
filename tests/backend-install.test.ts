@@ -12,7 +12,7 @@ function workspace(t: {after(fn: () => void): void}): string {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rm-backend-install-')); t.after(() => fs.rmSync(root, {recursive: true, force: true})); return root;
 }
 const probes = (overrides: Partial<HostProbes> = {}): HostProbes => ({executable: async () => '/verified/urbit', python: async () => undefined,
-  command: async () => '/verified/urbit work --snap-dir /piers/sampel --runtime-config 128 --loom 33 --toss 0', ...overrides});
+  command: async () => '/verified/urbit work --snap-dir /piers/sampel --runtime-config 128 --loom 33 --toss 0', freeBytes: async () => 50 * 1024 ** 3, ...overrides});
 const target = {ship: '~sampel-palnet', pier: '/piers/sampel', workerPid: 4133};
 
 test('a printed report is shown only when its whole shape is valid', () => {
@@ -61,6 +61,7 @@ test('planning refuses in plain words before the ship is asked anything', async 
   await assert.rejects(make({command: async () => '/verified/urbit work --snap-dir /piers/sampel --loom 31'}).plan(target), /too little memory.*--loom 33/);
   await assert.rejects(make({command: async () => '/verified/urbit work --snap-dir /piers/sampel'}).plan(target), /too little memory/);
   await assert.rejects(make({command: async () => {throw Error();}}).plan(target), /no longer running/);
+  await assert.rejects(make({freeBytes: async () => 2 * 1024 ** 3}).plan(target), /about 3 GB of free disk space/);
   assert.equal(calls, 0);
   await assert.rejects(make().plan(target), (error: unknown) => error instanceof BackendInstallError && /cannot be prepared/.test(error.message));
   assert.equal(calls, 1, 'A refused plan is not retried');

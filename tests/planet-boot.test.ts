@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {PlanetBoot, PlanetBootError, parseBootReport, planetFromKeyfile} from '../src/planet-boot';
+import {execFileSync} from 'node:child_process';
+import {PlanetBoot, PlanetBootError, keyFromPassport, parseBootReport, planetFromKeyfile} from '../src/planet-boot';
 import type {ToolRunner} from '../src/backend-install';
 
 const digest = 'c'.repeat(64);
@@ -85,4 +86,34 @@ test('known planets are listed only from well-formed rows, and a restart reports
   const silent: ToolRunner = async () => ({code: 2, stdout: ''});
   await assert.rejects(new PlanetBoot('/t', '/r', silent).restart('~sampel-palnet', () => undefined), /not started a second time/);
   assert.deepEqual(await new PlanetBoot('/t', '/r', async () => ({code: 0, stdout: 'not json'})).ships(), []);
+});
+
+test('a Bridge passport is accepted as it is: the one keyfile inside is used and nothing else is read', async t => {
+  const root = workspace(t), ships = path.join(root, 'ships'), stage = path.join(root, 'sampel-palnet-passport');
+  fs.mkdirSync(stage); fs.writeFileSync(path.join(stage, 'sampel-palnet-1.key'), 'key material from passport'); fs.writeFileSync(path.join(stage, 'sampel-palnet-MasterTicket.png'), 'not a key');
+  const zip = path.join(root, 'sampel-palnet-passport.zip');
+  execFileSync('/usr/bin/zip', ['-q', '-r', zip, 'sampel-palnet-passport'], {cwd: root});
+  assert.equal(planetFromKeyfile(zip), '~sampel-palnet');
+  assert.equal(planetFromKeyfile(path.join(root, 'sampel-palnet-passport (1).zip')), '~sampel-palnet');
+  assert.equal((await keyFromPassport(zip)).toString(), 'key material from passport');
+  let handed = '';
+  const tool: ToolRunner = async (_script, args) => {
+    const copy = args[args.indexOf('--keyfile') + 1]; handed = fs.readFileSync(copy, 'utf8'); assert.equal(fs.statSync(copy).mode & 0o777, 0o600);
+    return {code: 0, stdout: JSON.stringify({ship: '~sampel-palnet', digest, pier: path.join(ships, 'sampel-palnet'), output: path.join(ships, 'sampel-palnet-boot'), httpPort: 8081})};
+  };
+  await new PlanetBoot('/t', ships, tool).prepare('~sampel-palnet', zip);
+  assert.equal(handed, 'key material from passport'); assert.deepEqual(fs.readdirSync(ships), []);
+  // No keyfile, or more than one, is refused in words.
+  fs.rmSync(path.join(stage, 'sampel-palnet-1.key')); const empty = path.join(root, 'empty.zip'); execFileSync('/usr/bin/zip', ['-q', '-r', empty, 'sampel-palnet-passport'], {cwd: root});
+  await assert.rejects(keyFromPassport(empty), /no keyfile in it/);
+  fs.writeFileSync(path.join(stage, 'sampel-palnet-1.key'), 'a'); fs.writeFileSync(path.join(stage, 'sampel-palnet-2.key'), 'b'); const two = path.join(root, 'two.zip'); execFileSync('/usr/bin/zip', ['-q', '-r', two, 'sampel-palnet-passport'], {cwd: root});
+  await assert.rejects(keyFromPassport(two), /more than one keyfile/);
+  await assert.rejects(keyFromPassport(path.join(root, 'absent.zip')), /could not be opened/);
+});
+
+test('a planet is not started on a Mac that is nearly out of disk space', async t => {
+  const root = workspace(t), keyfile = path.join(root, 'sampel-palnet-1.key'); fs.writeFileSync(keyfile, 'k'); let calls = 0;
+  const tool: ToolRunner = async () => {calls++; return {code: 0, stdout: ''};};
+  await assert.rejects(new PlanetBoot('/t', path.join(root, 'ships'), tool, async () => 2 * 1024 ** 3).prepare('~sampel-palnet', keyfile), /about 3 GB of free disk space/);
+  assert.equal(calls, 0);
 });
