@@ -84,9 +84,10 @@ does. Private journals retain raw evidence and block replay after unknown outcom
 See [Local planet installation](../../docs/LOCAL_PLANET_INSTALL.md) for exact
 arguments, approval-digest handling and purchase/private-delivery boundaries.
 Success is `source-staged-not-activated` with `ready: false`: this controller's
-complete native run passed on a fresh owned fake ship with the current 1,463-file
-bundle. It does not itself perform purchase, boot, app activation or a first
-Pataphor task.
+complete native run passed on a fresh owned fake ship with the earlier 1,463-file
+bundle. Fresh installation of the current 1,490-file bundle through this controller remains unqualified;
+purchased-planet installation work remains paused. This controller does not itself
+perform purchase, boot, app activation or a first Pataphor task.
 
 `boot-local.cjs` separately prepares and launches one new macOS arm64 planet
 using a private keyfile, pinned runtime/bootstrap and a per-user identity
