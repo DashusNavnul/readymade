@@ -50,6 +50,7 @@
       {"command": "readymade.copyProjectJoinLink", "title": "Readymade: Copy Project Join Link"},
       {"command": "readymade.projectMembers", "title": "Readymade: Project Members"},
       {"command": "readymade.projectInvitations", "title": "Readymade: Pending Project Invitations"},
+      {"command": "readymade.projectHistory", "title": "Readymade: Project History"},
       {"command": "readymade.nextProjectMembers", "title": "Readymade: Next Membership Page"},
       {"command": "readymade.closeProjectInvitation", "title": "Readymade: Close Project Invitation"},
       {"command": "readymade.reconcileSharedDraft", "title": "Readymade: Reconcile Shared Draft"},

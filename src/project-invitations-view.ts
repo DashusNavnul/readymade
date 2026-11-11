@@ -3,7 +3,8 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import {OutcomeUnknownError, type ShipClient} from './ship-client';
 import {GUEST_DESK, GUEST_PROTOCOL, GUEST_SOURCE, guestDeskServing, guestServiceMessage, type GuestServiceState, type GuestSource} from './guest-service';
 import {remoteShip} from './remote-project-view';
-import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow} from './project-invitations';
+import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type MemberRow, type MembersKind} from './project-invitations';
+import type {SessionSharingSnapshot} from './session-sharing';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
 import type {MediaTreeRow} from './media-workbench';
 
@@ -33,12 +34,21 @@ const guestSteps: GuestServiceSteps = {
   pause: ms => new Promise(resolve => setTimeout(resolve, ms)),
   pollMs: 3000, deadlineMs: 10 * 60 * 1000,
 };
+/** The ship-side limit (lib/readymade-project-members member-limit): ships in a project, the owner and open invitations included. */
+export const PROJECT_SHIP_LIMIT = 16;
+/** A member's grants in a few words, from what the owner's ship holds now. */
+export function memberGrants(held: SessionSharingSnapshot | undefined): string {
+  if (!held) return 'grants not read';
+  const shared = held.sessions.filter(session => session.shared).length;
+  return `files ${held.viewGrant === 'live' ? 'shared' : 'not shared'} · ${shared === 0 ? 'no sessions' : shared === 1 ? '1 session' : `${shared} sessions`} shared`;
+}
 export class ProjectInvitationsView implements vscode.Disposable {
   private busy = false;
   private closed = false;
   private page?: InvitationPage;
   private scope = '';
   private readonly observed = new Map<string, Outcome>();
+  private grants = new Map<string, SessionSharingSnapshot>();
   constructor(private readonly extension: string, private readonly current: () => ShipClient | undefined,
     private readonly project: () => string | undefined, private readonly connect: () => Promise<ShipClient | undefined>,
     private readonly journal: InvitationJournal, private readonly changed: () => void,
@@ -134,19 +144,44 @@ export class ProjectInvitationsView implements vscode.Disposable {
     const client = this.current(), scope = JSON.stringify([client?.origin, client?.snapshot?.owner, this.project()]);
     if (scope !== this.scope) {this.scope = scope; this.page = undefined;}
   }
-  private async members(client: ShipClient, actor: string, project: string, kind: 'members' | 'invitations', offset = 0, catalog?: string): Promise<InvitationPage> {
+  private async members(client: ShipClient, actor: string, project: string, kind: MembersKind, offset = 0, catalog?: string): Promise<InvitationPage> {
     const reply = await client.projectInvitation('members', {project, kind, offset, ...(catalog ? {catalog} : {})});
     if (!this.active(client, actor, project) || reply.status !== 200) throw new Error('Project membership changed or is unavailable. Refresh explicitly.');
     return invitationMembers(reply.body, project, actor, kind, offset, catalog);
   }
-  async observe(kind: 'members' | 'invitations' = 'members', next = false): Promise<void> {
+  async observe(kind: MembersKind = 'members', next = false): Promise<void> {
     this.sync(); const {client, actor, project} = this.owner();
     if (this.busy || this.closed) throw new Error('An invitation operation is already running.');
     const prior = this.page;
     if (next && (!prior || prior.kind !== kind || prior.next === null)) throw new Error('Refresh membership before reading another page.');
     this.busy = true; this.changed();
-    try {this.page = await this.members(client, actor, project, kind, next ? prior!.next! : 0, next ? prior!.catalog : undefined);}
-    finally {this.busy = false; this.changed();}
+    try {
+      const page = await this.members(client, actor, project, kind, next ? prior!.next! : 0, next ? prior!.catalog : undefined);
+      // Each member's grants beside the role: one read per member, of what the owner's ship holds right now.
+      const grants = new Map<string, SessionSharingSnapshot>();
+      if (kind === 'members') for (const row of page.rows as MemberRow[]) {
+        if (row.ship === actor) continue;
+        try {grants.set(row.ship, await client.sessionSharingRead(project, row.ship));} catch { /* shown as not read */ }
+        if (!this.active(client, actor, project)) throw new Error('Project changed while reading members. Refresh explicitly.');
+      }
+      this.page = page; this.grants = grants;
+    } finally {this.busy = false; this.changed();}
+  }
+  /** Copy the join link of one pending invitation from the ship's own list, whoever recorded it and in whichever window. */
+  async copyPendingLink(id: string): Promise<void> {
+    const {client, actor, project} = this.owner();
+    if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
+    this.busy = true; this.changed();
+    try {
+      const row = (await this.pending(client, actor, project)).find(row => row.id === id);
+      if (!row || row.expired) throw new Error('That invitation is no longer open. Refresh pending invitations.');
+      const source = await this.publishedSource(client, actor);
+      if (!this.active(client, actor, project)) throw new Error('Connection changed; no link was copied.');
+      const uri = vscode.Uri.from({scheme: vscode.env.uriScheme, authority: this.extension, path: '/join-project',
+        query: new URLSearchParams({authority: actor, project, invitation: row.id, target: row.target, ...(source ? {source} : {})}).toString()});
+      joinProjectLink(uri, this.extension); await vscode.env.clipboard.writeText(uri.toString());
+      void vscode.window.showInformationMessage(`Join link for ${row.target} copied (${row.role}). Only ${row.target} can use it.`);
+    } finally {this.busy = false; this.changed();}
   }
   async invite(target?: string, selectedRole?: 'contributor' | 'observer' | 'maintainer'): Promise<void> {
     const {client, actor, project} = this.owner();
@@ -156,11 +191,17 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const recipient = target ?? await vscode.window.showInputBox({title: 'Invite Collaborator', prompt: 'Collaborator ship, including ~'});
       if (!recipient) return;
       if (!remoteShip(recipient) || recipient === actor) throw new Error('Enter another ship’s exact name.');
-      const role = selectedRole ?? (await vscode.window.showQuickPick(['contributor', 'observer', 'maintainer'], {title: 'Collaborator role'}));
+      // Someone who is already a member is offered another role: the same invitation, applied when they accept it.
+      const roster = await this.members(client, actor, project, 'members');
+      const held = (roster.rows as MemberRow[]).find(row => row.ship === recipient);
+      const role = selectedRole ?? (await vscode.window.showQuickPick((['contributor', 'observer', 'maintainer'] as const).filter(name => name !== held?.role),
+        {title: held ? `Offer ${recipient} another role (now ${held.role})` : 'Collaborator role', placeHolder: held ? 'Their role changes when they accept the new link; until then nothing changes.' : undefined}));
       if (!role) return;
+      if (held?.role === role) throw new Error(`${recipient} already has that role.`);
       const unresolved = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.project === project && row.command.operation === 'invite-member' && row.command.target === recipient && !['accepted', 'refused'].includes(this.observed.get(this.key(row))?.status ?? ''));
       if (unresolved) throw new Error('Check the retained invitation result before inviting this collaborator again.');
       const page = await this.members(client, actor, project, 'invitations');
+      if (!held && roster.total + page.total >= PROJECT_SHIP_LIMIT) throw new Error(`This project is full: ${PROJECT_SHIP_LIMIT} ships in all, counting yours and open invitations. Remove a member or withdraw an invitation first.`);
       const nonce = '0x' + (BigInt('0x' + randomBytes(16).toString('hex')) || 1n).toString(16).replace(/\B(?=(?:[0-9a-f]{4})+$)/g, '.');
       const command = invitationCommand({request: randomUUID(), authority: actor, project, operation: 'invite-member', target: recipient, role, expiresAt: page.inviteUntil, nonce});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
@@ -301,13 +342,21 @@ export class ProjectInvitationsView implements vscode.Disposable {
     if (client && actor === client.snapshot?.owner && this.project()) children.push(
       {label: 'Invite Collaborator…', command: {command: 'readymade.inviteCollaborator', title: 'Invite Collaborator'}},
       {label: 'Members', command: {command: 'readymade.projectMembers', title: 'Members'}},
-      {label: 'Pending Invitations', command: {command: 'readymade.projectInvitations', title: 'Pending Invitations'}});
+      {label: 'Pending Invitations', command: {command: 'readymade.projectInvitations', title: 'Pending Invitations'}},
+      {label: 'Project History', command: {command: 'readymade.projectHistory', title: 'Project History'}});
     if (this.busy) children.push({label: 'Observing invitation action…'});
     for (const row of this.page?.rows ?? []) {
-      if ('ship' in row) children.push({label: row.ship, description: row.role, children: row.ship === actor ? [] : [{label: 'Manage Shared Files…',
-        command: {command: 'readymade.projectSharing', title: 'Manage Shared Files', arguments: [row.ship]}}]});
-      else children.push({label: row.target, description: `${row.role} · ${row.expired ? 'Acceptance window expired' : 'Awaiting join'}`,
-        children: [{label: row.expired ? 'Close Expired Invitation' : 'Revoke Invitation', command: {command: 'readymade.closeProjectInvitation', title: 'Close Invitation', arguments: [row.id, row.expired]}}]});
+      if ('sequence' in row) children.push({label: eventSentence(row), description: row.at.slice(1, 11).replaceAll('.', '-')});
+      else if ('ship' in row) {
+        const held = this.grants.get(row.ship), shared = held?.sessions.filter(session => session.shared).length ?? 0;
+        children.push({label: row.ship, description: row.ship === actor ? row.role : `${row.role} · ${memberGrants(held)}`, children: row.ship === actor ? [] : [
+          {label: held ? (held.viewGrant === 'live' ? 'Files: shared' : held.viewGrant === 'revoked' ? 'Files: sharing ended' : 'Files: not shared') : 'Grants not read'},
+          ...(held ? [{label: `Sessions: ${shared} shared${held.sessionSharing === 'on' ? '' : ' (session sharing is off for this project)'}`}] : []),
+          {label: 'Manage Shared Files…', command: {command: 'readymade.projectSharing', title: 'Manage Shared Files', arguments: [row.ship]}},
+          ...(row.role === 'operator' ? [] : [{label: 'Offer Another Role…', command: {command: 'readymade.inviteCollaborator', title: 'Offer Another Role', arguments: [row.ship]}}])]});
+      } else children.push({label: row.target, description: `${row.role} · ${row.expired ? 'Acceptance window expired' : 'Awaiting join'}`,
+        children: [...(row.expired ? [] : [{label: 'Copy Join Link', command: {command: 'readymade.copyPendingJoinLink', title: 'Copy Join Link', arguments: [row.id]}}]),
+          {label: row.expired ? 'Close Expired Invitation' : 'Revoke Invitation', command: {command: 'readymade.closeProjectInvitation', title: 'Close Invitation', arguments: [row.id, row.expired]}}]});
     }
     if (this.page?.next !== null && this.page) children.push({label: 'Next Page', command: {command: 'readymade.nextProjectMembers', title: 'Next Page', arguments: [this.page.kind]}});
     if (client && actor) for (const intent of this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor)) {
@@ -320,5 +369,5 @@ export class ProjectInvitationsView implements vscode.Disposable {
     }
     return [{id: 'project-invitations', label: 'Project Invitations', icon: 'organization', children}];
   }
-  dispose(): void {this.closed = true; this.observed.clear(); this.page = undefined;}
+  dispose(): void {this.closed = true; this.observed.clear(); this.grants.clear(); this.page = undefined;}
 }

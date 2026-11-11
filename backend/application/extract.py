@@ -6,7 +6,7 @@ import json
 import tarfile
 from pathlib import Path, PurePosixPath
 
-ARCHIVE_SHA256 = "7aa6c89a690240398ddb13f426d4df7c7a44d2ea098fb2f888be43b1ee805699"
+ARCHIVE_SHA256 = "f6f005b9dd0c863f0111a5dc1a78606cb6eb0f09ac2f16c1d6a6d147b52c872e"
 LICENSE_SHA256 = "150e19f883107e85b8d2748bf5c722076070f0fb98463cfc8c468eba8941a41e"
 
 
@@ -21,7 +21,7 @@ def extract(archive, manifest, output):
         raise ValueError("Source archive hash mismatch")
     expected = {name: pin for name, pin in manifest["files"].items()
                 if pin["component"] == "application"}
-    if len(expected) != 942:
+    if len(expected) != 943:
         raise ValueError("Unexpected application file set")
     prepared = {}
     with tarfile.open(archive) as source:

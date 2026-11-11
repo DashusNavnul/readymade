@@ -149,8 +149,8 @@
     "app/multiplayer-runtime.hoon": {
       "component": "application",
       "source": "app/multiplayer-runtime.hoon",
-      "sha256": "95a4cc1b379c7e37c57594d94f83939b457594103cf460e248843b0eeffd0e1f",
-      "bytes": 7612
+      "sha256": "b7637bcc3453f172cc8ca501527fa90efc0933270ae9461acdb911196568f835",
+      "bytes": 8521
     },
     "app/native-coding-source-import.hoon": {
       "component": "application",
@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "db8f6348b57cdc8c66e9d1721206033eb4641bd0f935f9a6d8bfaf87f20f871a",
-      "bytes": 71027
+      "sha256": "77b8786a5b5715ddb3564632c8e92226d9c3ebfa5f6134c5536358d89f180bbf",
+      "bytes": 73065
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -2828,6 +2828,12 @@
       "sha256": "a4e97a20575d7c1f5e723ea6c47413df10cc60eda83dcea7c13bba1f77cff0b4",
       "bytes": 10486
     },
+    "lib/multiplayer-project-role.hoon": {
+      "component": "application",
+      "source": "lib/multiplayer-project-role.hoon",
+      "sha256": "c14e4bcc4ed4ef4fffe777c69d4649ca61dcb7a0c8ff61ef417586dc65a05452",
+      "bytes": 3964
+    },
     "lib/multiplayer-project.hoon": {
       "component": "application",
       "source": "lib/multiplayer-project.hoon",
@@ -2849,8 +2855,8 @@
     "lib/multiplayer-runtime.hoon": {
       "component": "application",
       "source": "lib/multiplayer-runtime.hoon",
-      "sha256": "d51fffe8aeefa3ab2a8b73599f8ed058769668a171c4171e94e3997a6d0c2fb3",
-      "bytes": 38944
+      "sha256": "9a93dff7abdaf1db55b1309854bff06c6350a114c7a6182cf40545e7dd52d73b",
+      "bytes": 39171
     },
     "lib/multiplayer-seat.hoon": {
       "component": "application",
@@ -4787,14 +4793,14 @@
     "lib/readymade-project-members-http.hoon": {
       "component": "application",
       "source": "lib/readymade-project-members-http.hoon",
-      "sha256": "4a287309cc94452940a086f50dc7395e12a8c3ed8f9b264bd6ddf31cacc2f26b",
-      "bytes": 1527
+      "sha256": "2fdbc69bc081dea0ee92165aa0eddf70e87b79844307b18932b235f2f17d012b",
+      "bytes": 1928
     },
     "lib/readymade-project-members.hoon": {
       "component": "application",
       "source": "lib/readymade-project-members.hoon",
-      "sha256": "7d2cf6c116575e0d83d8ab7cbd0493a97e6ace11d80eecf1b4397b136da153a6",
-      "bytes": 2646
+      "sha256": "92137edf29d86d204fc1e4473e4611c084466d4fe04e270c4fc8f4110681b6e2",
+      "bytes": 4308
     },
     "lib/readymade-project-sessions-client.hoon": {
       "component": "application",

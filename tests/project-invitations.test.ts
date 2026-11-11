@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {invitationCommand, invitationResult, invitationMembers, invitationCatalog, type InvitationCommand} from '../src/project-invitations';
+import {invitationCommand, invitationResult, invitationMembers, invitationCatalog, type InvitationCommand, eventSentence, type EventRow} from '../src/project-invitations';
 import {InvitationJournal, type InvitationIntent} from '../src/project-invitation-journal';
 import {ShipClient} from '../src/ship-client';
 const command: InvitationCommand = {request: '01234567-89ab-4cde-8fab-0123456789ab', authority: '~wes', project: 'demo', operation: 'join', invitation: '0x123'};
@@ -76,4 +76,19 @@ test('real HTTP invitation transport joins remote authority without local Viki a
   await assert.rejects(client.projectInvitation('requests', {offset: 64})); assert.equal(calls, 2);
   mode = 'foreign'; await assert.rejects(client.projectInvitation('result', {request: command.request}));
   mode = 'close'; await assert.rejects(client.projectInvitation('result', {request: command.request}));
+});
+
+test('a project history page is strict, newest first, and reads as plain sentences', () => {
+  const row = (sequence: number, action: string, actor: string, subject: string | null, role: string | null) => ({sequence, at: '~2026.11.11', actor, action, subject, role});
+  const rows = [row(5, 'member-left', '~wes', '~nec', null), row(4, 'member-left', '~bud', '~bud', null), row(3, 'invitation-accepted', '~nec', '~nec', 'contributor'),
+    row(2, 'invitation-issued', '~wes', '~nec', 'contributor'), row(1, 'project-opened', '~wes', null, null)];
+  const page = {schema: 'readymade-project-members-v1', project: 'demo', authority: '~wes', permissionGranted: false, inviteUntil: '~2026.11.12', kind: 'events', catalog: '0x7', offset: 0, total: 5, next: null, rows};
+  const read = invitationMembers(page, 'demo', '~wes', 'events');
+  assert.deepEqual((read.rows as EventRow[]).map(eventSentence), ['~wes removed ~nec', '~bud left', '~nec accepted as contributor', '~wes invited ~nec as contributor', '~wes opened the project']);
+  assert.equal(eventSentence(row(9, 'invitation-revoked', '~wes', '~nec', 'observer') as EventRow), '~wes withdrew the invitation for ~nec');
+  assert.equal(eventSentence(row(9, 'invitation-declined', '~nec', '~nec', 'observer') as EventRow), '~nec declined the invitation as observer');
+  assert.equal(eventSentence(row(9, 'invitation-expired', '~wes', '~nec', 'observer') as EventRow), 'The invitation for ~nec expired');
+  for (const bad of [[rows[1], rows[0], ...rows.slice(2)], [{...rows[0], action: 'granted'}, ...rows.slice(1)], [{...rows[0], extra: 1}, ...rows.slice(1)], [{...rows[0], subject: 'nec'}, ...rows.slice(1)],
+    [{...rows[0], sequence: 0}, ...rows.slice(1)], [{...rows[0], role: 'owner'}, ...rows.slice(1)]]) assert.throws(() => invitationMembers({...page, rows: bad}, 'demo', '~wes', 'events'));
+  assert.throws(() => invitationMembers(page, 'demo', '~wes', 'members'));
 });

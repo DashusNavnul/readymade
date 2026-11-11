@@ -66,7 +66,7 @@ export interface ProjectSharingParameters {
 }
 export interface ProjectInvitationParameters {
   submit: InvitationCommand; result: {request: string}; requests: {offset?: number; catalog?: string};
-  members: {project: string; kind: 'members' | 'invitations'; offset?: number; catalog?: string};
+  members: {project: string; kind: 'members' | 'invitations' | 'events'; offset?: number; catalog?: string};
 }
 export interface BrowserSessionCookie { readonly name: string; readonly value: string; readonly expires?: number }
 type SavedCode = (origin: string) => Promise<string | undefined>;
@@ -766,7 +766,7 @@ export class ShipClient {
       if (p.catalog !== undefined) headers[prefix + 'catalog'] = String(p.catalog);
       route = operation === 'members' ? 'project-members' : 'project-invitation-requests';
       if (operation === 'members') {
-        if (!invitationProject(p.project) || !['members', 'invitations'].includes(String(p.kind))) failure('contextChanged');
+        if (!invitationProject(p.project) || !['members', 'invitations', 'events'].includes(String(p.kind))) failure('contextChanged');
         headers['x-readymade-project'] = Buffer.from(p.project, 'utf8').toString('latin1'); headers['x-readymade-project-kind'] = String(p.kind);
       }
     }
@@ -780,7 +780,7 @@ export class ShipClient {
         if (operation === 'submit') invitationResult(json, invitationCommand(value));
         else if (operation === 'result') {if (invitationResult(json).request !== p.request) failure('contextChanged');}
         else if (operation === 'requests') invitationCatalog(json, actor, Number(p.offset ?? 0), p.catalog as string | undefined);
-        else invitationMembers(json, String(p.project), actor, p.kind as 'members' | 'invitations', Number(p.offset ?? 0), p.catalog as string | undefined);
+        else invitationMembers(json, String(p.project), actor, p.kind as 'members' | 'invitations' | 'events', Number(p.offset ?? 0), p.catalog as string | undefined);
       }
       return {status: reply.status, body: json};
     } finally {this.busy = false;}

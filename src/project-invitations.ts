@@ -34,15 +34,42 @@ export function invitationResult(value: unknown, command?: InvitationCommand): I
 }
 export interface InvitationRow {id: string; target: string; role: string; issuedBy: string; expiresAt: string; expired: boolean}
 export interface MemberRow {ship: string; role: string; joinedAt: string}
-export interface InvitationPage {project: string; authority: string; kind: 'members' | 'invitations'; inviteUntil: string; catalog: string; offset: number; total: number; next: number | null; rows: (InvitationRow | MemberRow)[]}
+/** One row of a project's own history, newest first: who did what to whom, as the project law recorded it. */
+export interface EventRow {sequence: number; at: string; actor: string; action: typeof PROJECT_EVENTS[number]; subject: string | null; role: string | null}
+export const PROJECT_EVENTS = ['project-opened', 'invitation-issued', 'invitation-accepted', 'invitation-declined', 'invitation-expired', 'invitation-revoked', 'member-left'] as const;
+export type MembersKind = 'members' | 'invitations' | 'events';
+export interface InvitationPage {project: string; authority: string; kind: MembersKind; inviteUntil: string; catalog: string; offset: number; total: number; next: number | null; rows: (InvitationRow | MemberRow | EventRow)[]}
+/** A history row in plain words. A member-left whose actor is not the member is a removal by that actor. */
+export function eventSentence(row: EventRow): string {
+  const who = row.subject ?? 'someone', as = row.role ? ` as ${row.role}` : '';
+  switch (row.action) {
+    case 'project-opened': return `${row.actor} opened the project`;
+    case 'invitation-issued': return `${row.actor} invited ${who}${as}`;
+    case 'invitation-accepted': return `${who} accepted${as}`;
+    case 'invitation-declined': return `${who} declined the invitation${as}`;
+    case 'invitation-expired': return `The invitation for ${who} expired`;
+    case 'invitation-revoked': return `${row.actor} withdrew the invitation for ${who}`;
+    case 'member-left': return row.actor === row.subject ? `${who} left` : `${row.actor} removed ${who}`;
+  }
+}
 function page(r: ReturnType<typeof asRecord>, rows: unknown[], offset: number, catalog?: string, limit = 4096): void {
   requireValue(invitationHash(r.catalog) && (!catalog || r.catalog === catalog) && Number.isSafeInteger(offset) && offset >= 0 && r.offset === offset && (offset === 0 || !!catalog) && Number.isSafeInteger(r.total) && Number(r.total) >= 0 && Number(r.total) <= limit && rows.length <= 64 && offset + rows.length <= Number(r.total));
   requireValue(rows.length === Math.min(64, Number(r.total) - offset) && r.next === (offset + rows.length === r.total ? null : offset + rows.length));
 }
-export function invitationMembers(value: unknown, project: string, authority: string, kind: 'members' | 'invitations', offset = 0, catalog?: string): InvitationPage {
+export function invitationMembers(value: unknown, project: string, authority: string, kind: MembersKind, offset = 0, catalog?: string): InvitationPage {
   const r = asRecord(value);
   requireValue(exact(r, ['schema', 'project', 'authority', 'permissionGranted', 'inviteUntil', 'kind', 'catalog', 'offset', 'total', 'next', 'rows']) && r.schema === 'readymade-project-members-v1' && r.project === project && r.authority === authority && remoteShip(authority) && invitationProject(project) && r.kind === kind && r.permissionGranted === false && date(r.inviteUntil) && Array.isArray(r.rows));
   page(r, r.rows, offset, catalog);
+  if (kind === 'events') {
+    let before = Infinity;
+    for (const value of r.rows) {
+      const row = asRecord(value);
+      requireValue(exact(row, ['sequence', 'at', 'actor', 'action', 'subject', 'role']) && Number.isSafeInteger(row.sequence) && Number(row.sequence) > 0 && Number(row.sequence) < before &&
+        date(row.at) && remoteShip(row.actor) && PROJECT_EVENTS.some(name => name === row.action) && (row.subject === null || remoteShip(row.subject)) && (row.role === null || role(row.role)));
+      before = Number(row.sequence);
+    }
+    return r as unknown as InvitationPage;
+  }
   const ids = new Set<string>();
   for (const value of r.rows) {
     const row = asRecord(value);
