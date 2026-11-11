@@ -4,6 +4,7 @@ import {writeFileSync, realpathSync, mkdtempSync, chmodSync, existsSync, readFil
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {ReadymadeWorkspace} from '../src/extension';
+import type {GuestServiceSteps} from '../src/project-invitations-view';
 import * as http from 'node:http';
 import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
@@ -85,6 +86,25 @@ export async function run(): Promise<void> {
     assert.equal(api.media.connectedClient, client);
     assert.equal(await vscode.window.tabGroups.close(firstSetup!), true);
     await until(() => panels().length === 0); assert.equal(api.setup.state.origin, undefined);
+    // An older collaboration service is updated only after asking, naming the ship it would come from.
+    {
+      const view = api.invitations as unknown as {guest: GuestServiceSteps; ensureProtocol(client: unknown, actor: string, from: {ship: string; desk: string}): Promise<void>};
+      const ship = client as unknown as {guestDeskRead?: () => Promise<{protocol: number}>; guestServiceInstall?: (from: unknown) => Promise<unknown>};
+      const steps = view.guest, asked: string[] = [], installs: unknown[] = [], from = {ship: '~nec', desk: 'readymade-peer'};
+      let protocol = 0, answer = false;
+      ship.guestDeskRead = async () => ({protocol});
+      ship.guestServiceInstall = async source => {installs.push(source); protocol = 1; return undefined;};
+      view.guest = {...steps, pollMs: 1, deadlineMs: 2000, progress: (_title, work) => work(), confirm: async (detail, title, action) => {asked.push(`${title} | ${action} | ${detail}`); return answer;}};
+      try {
+        await assert.rejects(view.ensureProtocol(client, '~zod', from), /Not joined: your ship's collaboration service is older/);
+        assert.equal(installs.length, 0, 'declining installs nothing'); assert.equal(asked.length, 1);
+        assert.match(asked[0], /^Update the collaboration service\? \| Update \| .*install the current one from ~nec \(desk %readymade-peer.*Only do this for a ship you trust/);
+        answer = true; await view.ensureProtocol(client, '~zod', from);
+        assert.deepEqual(installs, [from]); assert.equal(asked.length, 2);
+        await view.ensureProtocol(client, '~zod', from);
+        assert.equal(asked.length, 2, 'a current service is not asked about'); assert.equal(installs.length, 1);
+      } finally {view.guest = steps; delete ship.guestDeskRead; delete ship.guestServiceInstall;}
+    }
     invitationService = true;
     await api.setup.show(client); await until(() => !api.setup.state.checking && !!api.setup.state.report);
     assert.equal(api.setup.state.report!.checks.find(row => row.name === 'Project invitations')!.status, 'observed');

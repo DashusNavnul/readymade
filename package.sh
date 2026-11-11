@@ -46,8 +46,14 @@ cleanup() {
 trap cleanup EXIT
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail 'This package is for Apple Silicon macOS.'
 for tool in node npm python3 git xcrun curl shasum ditto codesign openssl; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
-# A Mac that never packaged before has no prepared Urbit runtime and needs zig to build it: say so now, not after the tests.
-[[ -d "$HOME/.cache/readymade/runtime" ]] || command -v zig >/dev/null || fail 'Missing tool: zig 0.15.2 (needed once to build the Urbit runtime).'
+# The prepared Urbit runtime is reused while runtime/ is unchanged. When this Mac has none for this source, zig
+# 0.15.2 builds it: say so now, not after the tests.
+runtime_key="$(cd "$workspace_dir/runtime" && cat source-manifest.json readymade-vere.patch bounded-evaluation-proof.hoon | shasum -a 256 | awk '{print $1}')"
+runtime_cache="$HOME/.cache/readymade/runtime/$runtime_key"
+if [[ ! -f "$runtime_cache/urbit" || ! -f "$runtime_cache/proved" ]]; then
+  command -v zig >/dev/null || fail 'Missing tool: zig 0.15.2 (needed once to build the Urbit runtime).'
+  [[ "$(zig version)" == 0.15.2 ]] || fail 'The Urbit runtime is qualified with zig 0.15.2; this Mac has another version.'
+fi
 [[ ! -e "$app_path" && ! -L "$app_path" && ! -e "$receipt_path" && ! -L "$receipt_path" ]] || fail 'The preview app or receipt already exists; it will not be replaced.'
 for cache_parent in "$HOME/.cache" "$HOME/.cache/readymade" "$cache_dir"; do
   [[ ! -L "$cache_parent" ]] || fail 'A package-cache parent is a symlink.'
@@ -138,8 +144,6 @@ ditto "$backend_stage/prepared/package" "$extension/backend/package"
 # inside the app too, so starting a planet downloads and builds nothing on the user's machine.
 # The runtime is built from the pinned public source plus runtime/readymade-vere.patch and must pass
 # the bounded-evaluation proof; a finished build is reused while runtime/ is unchanged.
-runtime_key="$(cd "$workspace_dir/runtime" && cat source-manifest.json readymade-vere.patch bounded-evaluation-proof.hoon | shasum -a 256 | awk '{print $1}')"
-runtime_cache="$HOME/.cache/readymade/runtime/$runtime_key"
 runtime_proof='[%native-coding-bounded-evaluation-proof-v1 %.y]'
 # The proof prints its result inside terminal colour codes, so look for the line rather than compare it
 # whole; require a clean exit; and on failure show what the runtime actually printed.

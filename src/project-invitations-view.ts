@@ -3,7 +3,7 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import {OutcomeUnknownError, ShipClientError, type ShipClient} from './ship-client';
 import {GUEST_DESK, GUEST_PROTOCOL, GUEST_SOURCE, guestDeskServing, guestServiceMessage, type GuestServiceState, type GuestSource, guestServiceRemoved} from './guest-service';
 import {remoteShip} from './remote-project-view';
-import {invitationCommand, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type EventRow, type MemberRow, type MembersKind} from './project-invitations';
+import {invitationCommand, leavableJoins, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type EventRow, type MemberRow, type MembersKind} from './project-invitations';
 import type {SessionSharingSnapshot} from './session-sharing';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
 import type {MediaTreeRow} from './media-workbench';
@@ -297,15 +297,9 @@ export class ProjectInvitationsView implements vscode.Disposable {
    * A guest leaves a project it joined. The owner's ship settles it; sent once through the same journal as the
    * join, so an unknown outcome is checked, never resent. The owner's file and session grants end with membership.
    */
-  /** The joins this ship can still leave, by request: one per project, and only while its accepted joins outnumber its accepted leaves. */
+  /** The joins this ship can still leave, by request: per project, its newest accepted join, unless an accepted leave is newer. */
   private leavable(client: ShipClient, actor: string): Set<string> {
-    const retained = this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor), found = new Set<string>();
-    const balance = new Map<string, number>(), pair = (row: InvitationIntent) => row.command.authority + '\n' + row.command.project;
-    const accepted = (row: InvitationIntent) => this.observed.get(this.key(row))?.status === 'accepted';
-    for (const row of retained) if (accepted(row) && (row.command.operation === 'join' || row.command.operation === 'leave'))
-      balance.set(pair(row), (balance.get(pair(row)) ?? 0) + (row.command.operation === 'join' ? 1 : -1));
-    for (const row of retained) if (accepted(row) && row.command.operation === 'join' && (balance.get(pair(row)) ?? 0) > 0) {found.add(row.command.request); balance.set(pair(row), 0);}
-    return found;
+    return leavableJoins(this.journal.ordered().filter(row => row.origin === client.origin && row.actor === actor && this.observed.get(this.key(row))?.status === 'accepted').map(row => row.command));
   }
   /** With no request named (the command palette, the Home command line): the one project this ship can leave, or a choice among several. */
   async leave(request?: string): Promise<void> {
@@ -316,7 +310,8 @@ export class ProjectInvitationsView implements vscode.Disposable {
       await this.observeRetained(); await this.quiet();
       const who = this.actor(client), can = this.leavable(client, who);
       const open = this.journal.entries().filter(row => row.origin === client.origin && row.actor === who && can.has(row.command.request));
-      if (!open.length) throw new Error('This ship has not joined a project it can leave.');
+      const unread = this.journal.entries().some(row => row.origin === client.origin && row.actor === who && !this.observed.has(this.key(row)));
+      if (!open.length) throw new Error(unread ? 'This ship\'s join results could not all be read yet. Try again, or use Check Result on the row under Project Invitations.' : 'This ship has not joined a project it can leave.');
       const picked = open.length === 1 ? open[0] : (await vscode.window.showQuickPick(open.map(row => ({label: row.command.project, description: row.command.authority, row})), {title: 'Leave which project?'}))?.row;
       if (!picked) return;
       request = picked.command.request;

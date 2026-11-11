@@ -22,6 +22,16 @@ export function invitationCommand(value: unknown): InvitationCommand {
   else requireValue(exact(r, [...base, 'invitation']) && ['join', 'decline-invitation', 'revoke-invitation', 'expire-invitation'].includes(String(r.operation)) && invitationHash(r.invitation));
   return Object.freeze({...r}) as InvitationCommand;
 }
+/**
+ * Which accepted joins can still be left. `rows` holds this ship's accepted joins and leaves, oldest first. For
+ * each project the newest row decides: a join is membership (a role change is a second join and replaces the
+ * first), a leave ends it. Counting joins against leaves cannot tell "left, then rejoined" from "changed role, then left".
+ */
+export function leavableJoins(rows: readonly Pick<InvitationCommand, 'request' | 'authority' | 'project' | 'operation'>[]): Set<string> {
+  const newest = new Map<string, {request: string; operation: string}>();
+  for (const row of rows) if (row.operation === 'join' || row.operation === 'leave') newest.set(row.authority + '\n' + row.project, row);
+  return new Set([...newest.values()].filter(row => row.operation === 'join').map(row => row.request));
+}
 export interface InvitationResult {request: string; authority: string; project: string; operation: InvitationCommand['operation']; digest: string; status: 'prepared' | 'submitted' | 'unknown' | 'accepted' | 'refused'; permissionGranted: false; outcome: string | null}
 export function invitationResult(value: unknown, command?: InvitationCommand): InvitationResult {
   const r = asRecord(value);

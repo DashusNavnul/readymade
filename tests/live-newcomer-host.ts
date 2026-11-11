@@ -78,8 +78,17 @@ async function phase(): Promise<void> {
       while (!held && Date.now() < until) {await new Promise(resolve => setTimeout(resolve, 200)); held = rows().find(row => row.request);}
       record.rowsOnReopen = rows().map(row => `${row.label}: ${row.description}`).slice(0, 6);
       assert.ok(held?.request, 'the joined project offers Leave after reopening, with no Check Result click');
-      await api.invitations.leave(held.request);
+      // READYMADE_LEAVE_BY=command leaves the way the command palette and the Home command line do: no row, no ID.
+      const byCommand = process.env.READYMADE_LEAVE_BY === 'command'; record.leaveBy = byCommand ? 'command' : 'row';
+      record.joinsHeld = rows().filter(row => /^join · accepted/.test(row.description ?? '')).length;
+      if (byCommand) await vscode.commands.executeCommand('readymade.leaveProject'); else await api.invitations.leave(held.request);
       const left = rows().filter(row => /^leave · /.test(row.description ?? '')).at(-1); record.leaveRow = left; assert.equal(left?.description, 'leave · accepted');
+      // Left now: no row offers Leave any more, however many joins (a role change is a second one) came before.
+      record.leaveOfferedAfter = rows().some(row => row.request); assert.equal(record.leaveOfferedAfter, false, 'Leave is not offered for a project already left');
+      if (byCommand) {
+        let refusal = ''; try {await vscode.commands.executeCommand('readymade.leaveProject');} catch (error) {refusal = error instanceof Error ? error.message : String(error);}
+        record.secondLeave = refusal; assert.match(refusal, /has not joined a project it can leave/);
+      }
       finish();
     }
     record.serviceBefore = await client.guestServiceDeskRead();

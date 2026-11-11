@@ -25,8 +25,10 @@ async function ownProject(c: LiveContext): Promise<string> {
 async function invite(c: LiveContext): Promise<void> {
   const peer = needShip('READYMADE_PEER_SHIP'), handoff = need('READYMADE_HANDOFF');
   assert.notEqual(peer, c.ship); readHandoff(handoff, true); // Refuse an unusable handoff before any write.
-  const project = await ownProject(c); c.record.peer = peer; c.record.role = 'contributor';
-  const accepted = await invitationAction(c, 'invite-member', async () => {await c.api.invitations.invite(peer, 'contributor');});
+  // READYMADE_INVITE_ROLE names another role: for a ship that is already a member that is a role offer, applied when it accepts the new link.
+  const role = process.env.READYMADE_INVITE_ROLE ?? 'contributor'; assert.ok(role === 'contributor' || role === 'observer' || role === 'maintainer');
+  const project = await ownProject(c); c.record.peer = peer; c.record.role = role;
+  const accepted = await invitationAction(c, 'invite-member', async () => {await c.api.invitations.invite(peer, role);});
   const joinLink = await c.timed('copy-join-link', () => copied(() => c.api.invitations.copyLink(accepted.request)), 60000);
   const link = joinProjectLink(vscode.Uri.parse(joinLink, true), c.extension.id);
   assert.deepEqual({authority: link.authority, project: link.project, target: link.target}, {authority: c.ship, project, target: peer});

@@ -26,7 +26,10 @@ export class InvitationJournal {
   private privateInfo(info: fs.Stats, directory = false): void {
     if (!(directory ? info.isDirectory() : info.isFile()) || info.isSymbolicLink() || process.getuid && (info.uid !== process.getuid() || (info.mode & 0o077) !== 0)) throw new Error('Invitation journal must be private and owned.');
   }
-  entries(): InvitationIntent[] {
+  entries(): InvitationIntent[] {return this.read().map(row => row.intent);}
+  /** Oldest first, by when each intent was written to this journal (its file's creation time). */
+  ordered(): InvitationIntent[] {return this.read().sort((a, b) => a.at - b.at).map(row => row.intent);}
+  private read(): {intent: InvitationIntent; at: number}[] {
     fs.mkdirSync(this.directory, {recursive: true, mode: 0o700}); this.privateInfo(fs.lstatSync(this.directory), true);
     const files = fs.readdirSync(this.directory).filter(f => f.endsWith('.intent.json'));
     if (files.length > 512) throw new Error('Invitation journal capacity reached.');
@@ -37,7 +40,7 @@ export class InvitationJournal {
         if (info.size > 8192) throw new Error('Invitation intent exceeds its limit.');
         const intent = validate(JSON.parse(fs.readFileSync(fd, 'utf8')));
         if (file !== this.key(intent) + '.intent.json') throw new Error('Invitation intent identity changed.');
-        return intent;
+        return {intent, at: info.birthtimeMs || info.mtimeMs};
       } finally {fs.closeSync(fd);}
     });
   }

@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {invitationCommand, invitationResult, invitationMembers, invitationCatalog, type InvitationCommand, eventSentence, type EventRow} from '../src/project-invitations';
+import {invitationCommand, leavableJoins, invitationResult, invitationMembers, invitationCatalog, type InvitationCommand, eventSentence, type EventRow} from '../src/project-invitations';
 import {InvitationJournal, type InvitationIntent} from '../src/project-invitation-journal';
 import {ShipClient} from '../src/ship-client';
 const command: InvitationCommand = {request: '01234567-89ab-4cde-8fab-0123456789ab', authority: '~wes', project: 'demo', operation: 'join', invitation: '0x123'};
@@ -110,4 +110,28 @@ test('leaving a project again after rejoining is retained and sent again; every 
   assert.equal((await journal.submit(client as never, intent(ids[2], 'join'), true)).status, 'accepted');
   await assert.rejects(journal.submit(client as never, intent(ids[3], 'join'), true), /will not be sent again/);  // same invitation, new request id
   assert.deepEqual(sent.map(row => row.operation), ['leave', 'leave', 'join']); assert.equal(journal.entries().length, 3);
+});
+
+test('leave is decided by the newest accepted join or leave of each project', () => {
+  const row = (request: string, operation: 'join' | 'leave' | 'invite-member', project = 'demo', authority = '~nec') => ({request, operation, project, authority});
+  const can = (...rows: ReturnType<typeof row>[]) => [...leavableJoins(rows)];
+  assert.deepEqual(can(row('a', 'join')), ['a']);
+  assert.deepEqual(can(row('a', 'join'), row('b', 'leave')), []);
+  assert.deepEqual(can(row('a', 'join'), row('b', 'leave'), row('c', 'join')), ['c'], 'left, then rejoined');
+  assert.deepEqual(can(row('a', 'join'), row('b', 'join'), row('c', 'leave')), [], 'changed role (a second join), then left');
+  assert.deepEqual(can(row('a', 'join'), row('b', 'join')), ['b'], 'a role change is left through its newest join');
+  assert.deepEqual(can(row('a', 'join'), row('b', 'leave', 'other'), row('c', 'join', 'demo', '~bud'), row('d', 'invite-member')), ['a', 'c'], 'projects and owners are separate');
+  assert.deepEqual(can(), []);
+});
+test('the journal can be read oldest first', async t => {
+  const directory = fs.mkdtempSync(join(tmpdir(), 'readymade-invitation-order-')); t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const client = {origin: 'https://wes.example', browserCookies: () => [{name: 'urbauth-~wes', value: 'fixture'}], projectInvitation: async () => {throw new Error('lost POST');}};
+  const journal = new InvitationJournal(directory), written: string[] = [];
+  for (let n = 0; n < 6; n++) {
+    const request = `${n}1234567-89ab-4cde-8fab-0123456789ab`; written.push(request);
+    await assert.rejects(journal.submit(client, {version: 1, origin: client.origin, actor: '~wes', command: invitationCommand({request, authority: '~nec', project: 'demo', operation: 'leave'})}, true), /lost POST/);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.deepEqual(journal.ordered().map(row => row.command.request), written);
+  assert.deepEqual(journal.entries().map(row => row.command.request).sort(), [...written].sort());
 });
