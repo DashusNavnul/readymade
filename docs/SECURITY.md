@@ -53,7 +53,9 @@ discovered binary, reads keyfiles, boots a pier, mounts a desk or changes a ship
 lock. Each scan has an eight-second deadline, a candidate cap and bounded query
 frames.
 
-Three things go beyond listing, each only for the ship you chose:
+Three things go beyond listing, each only for the ship being connected: the
+one you chose, the only one running or the last one used when **Connect On
+Start** is on (the default), or the one a join link names:
 
 - **Signing in a ship on this Mac.** Readymade asks that ship for its own login
   code over the ship's owner-only local socket (one read-only thread), uses it
@@ -63,8 +65,12 @@ Three things go beyond listing, each only for the ship you chose:
 - **Ship Doctor and the install offer** read the runtime's command line to see
   its `--loom` memory setting, and Ship Doctor runs one read-only thread for the
   ship's system version and pending timers. Neither changes the ship.
-- **Installing** the collaboration service or Pataphor changes the ship, and
-  happens only after you confirm it in the app.
+- **Installing or updating** the collaboration service, or installing Pataphor,
+  changes the ship and happens only after you confirm it in the app. The
+  collaboration service comes from the ship the join link names and stays
+  synced to it: that ship chooses the contents and later updates, and an
+  installed agent runs with your ship's authority. Confirm only for a host you
+  trust.
 
 Discovered connections use the verified listener's literal IPv4 or IPv6 loopback
 address, rather than resolving `localhost`. A process listening on the other
@@ -144,7 +150,9 @@ registered app URI with the selected local profile. They accept no
 arguments and do not modify global shell configuration. None is a remote
 shell or a ship installer. The package trusts its own bundled URI handler so
 these local app commands need no repeated permission dialog. The handler admits
-only its exact Groups, Landscape and Lattice URIs; other extensions retain upstream policy.
+only its five exact app URIs and project join and shared-project links; a join
+link opened this way starts the join flow, with its own confirmations, without
+an editor permission dialog. Other extensions retain upstream policy.
 
 ## Local trust and reporting
 

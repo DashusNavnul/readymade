@@ -21,7 +21,7 @@ is made for one named ship.
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer) running macOS 12 or later**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3).
 Quit any older Readymade first. Open the image, drag **Readymade Workspace** to
 **Applications** (choose Replace if asked), then open the app from Applications
 and eject the disk image. Running the download needs no
@@ -66,7 +66,7 @@ the list of Readymade commands, and whether a ship is connected and a project is
 answer can only name commands from that list, and a ship name, role, link or address is used only
 if you typed that exact word yourself. Claude Code is given no tools for this. Codex runs in its
 own read-only sandbox; it returned no answer in testing (the test account was out of quota), so
-treat Codex as untested.
+treat Codex as untested. An address must be typed with `http://` or `https://`.
 
 Each command opens its usual screen and asks there for anything you did not type. What you did
 type is acted on: an invitation with the ship and role typed is sent straight away. Removing,
@@ -85,9 +85,12 @@ ship, and Readymade connects and signs it in by itself. If your ship does not
 have the collaboration service yet, Readymade asks once, then has your ship's
 own package manager install it from the ship the link names as its source,
 normally the inviting ship (`~dashus-navnul` when an older link names none).
-That is one small agent; it needs no coding worker, model
+An older service is updated the same way, also after asking. Installing it
+means trusting that ship: it chooses what is installed and its later updates,
+and an installed agent runs with your ship's authority, so join hosts you
+trust. The service as published is one small agent; it needs no coding worker, model
 or provider on your ship, and your ship keeps it updated by itself. Nothing is
-installed without that one confirmation. The result shows in the Readymade
+installed or updated without that confirmation. The result shows in the Readymade
 sidebar under **Project Invitations** as a row reading **join · accepted**.
 **Readymade: Leave Project** and **Readymade: Remove Collaboration Service**,
 from the command palette, undo both steps.

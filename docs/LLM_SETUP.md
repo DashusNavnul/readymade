@@ -20,33 +20,43 @@ sending the link.
 The person's own Urbit ship can run on this Mac or be hosted elsewhere, on any
 runtime: joining was run live with a ship on the stock Urbit runtime at its
 default memory. The ship must be on Kelvin 408, which a ship kept up to date
-is. You cannot check that from the shell and must not touch the ship; after
-step 3, **Readymade: Ship Doctor** shows it as "System version".
+is. You cannot check that from the shell and must not touch the ship. For a
+ship running on this Mac, **Readymade: Ship Doctor** shows it after step 3 as
+"System version"; for a hosted ship, ask the person or their hosting provider.
 
-**2. Download, verify, install, open.** No build tools are needed. Run this as
-ONE script: the lines depend on each other. The download is about 280 MB, so
-allow several minutes before treating it as stuck.
+**2. Download, verify, install, open.** No build tools are needed. First tell
+the person that Readymade will be closed if it is open. Run the block below
+exactly as it is, as one command, from Terminal or your own shell (not from a
+terminal inside Readymade). The download is about 280 MB, so allow several
+minutes before treating it as stuck.
 
 ```sh
-set -e
+bash -e <<'INSTALL'
 mkdir -p ~/Downloads/readymade && cd ~/Downloads/readymade
-base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.2
-curl -fLO $base/Readymade-0.2.0-alpha.20261111.2-macos-arm64.dmg
+base=https://github.com/DashusNavnul/readymade/releases/download/v0.2.0-alpha.20261111.3
+curl -fLO $base/Readymade-0.2.0-alpha.20261111.3-macos-arm64.dmg
 curl -fLO $base/SHA256SUMS.txt
-shasum -a 256 -c SHA256SUMS.txt          # must print: OK. If not, stop here.
-# An older copy must be closed and moved away first, never copied over.
+shasum -a 256 -c SHA256SUMS.txt
+dest=/Applications; [ -w "$dest" ] || { dest="$HOME/Applications"; mkdir -p "$dest"; }
 pkill -TERM -f "Readymade Workspace.app/Contents/Resources/VSCodium.app/Contents/MacOS/[V]SCodium" && sleep 3 || true
-[ ! -e "/Applications/Readymade Workspace.app" ] || mv "/Applications/Readymade Workspace.app" ~/.Trash/"Readymade Workspace replaced $(date +%Y%m%d-%H%M%S).app"
-hdiutil attach Readymade-0.2.0-alpha.20261111.2-macos-arm64.dmg -nobrowse
-cp -R "/Volumes/Readymade Workspace/Readymade Workspace.app" /Applications/
-hdiutil detach "/Volumes/Readymade Workspace"
-open "/Applications/Readymade Workspace.app"
+[ ! -e "$dest/Readymade Workspace.app" ] || mv "$dest/Readymade Workspace.app" "replaced-$(date +%Y%m%d-%H%M%S).app"
+hdiutil detach "$PWD/mnt" 2>/dev/null || true
+hdiutil attach Readymade-0.2.0-alpha.20261111.3-macos-arm64.dmg -nobrowse -mountpoint "$PWD/mnt"
+cp -R "mnt/Readymade Workspace.app" "$dest/"
+hdiutil detach "$PWD/mnt"
+open "$dest/Readymade Workspace.app"
+INSTALL
 ```
 
-If the copy into `/Applications` is refused (an account without administrator
-rights), use `~/Applications` in the three places instead (`mkdir -p
-~/Applications` first). Projects, settings and the saved connection live outside
-the app and survive replacing it.
+What it does, line by line: downloads the image and its checksum; `shasum`
+must print `OK` or the block stops there and nothing is installed; it installs
+into `/Applications`, or into `~/Applications` when this account cannot write
+there; it closes an open Readymade and moves an installed older copy into
+`~/Downloads/readymade/replaced-….app` (never copy a new app over an old one:
+that can leave an app that will not launch); it mounts the image in its own
+folder, copies the app, unmounts and opens it. Projects, settings and the saved
+connection live outside the app and survive. The person can delete the
+`replaced-….app` copy later.
 
 A file fetched with `curl` carries no quarantine mark, so the app opens
 directly. If the person downloaded it in a browser instead, macOS may block the
@@ -65,7 +75,9 @@ to watch for that dialog; the app waits until it is answered.
   followed by `-` or `.` and a version, and it answers within a few seconds.
 - *Ship on this Mac that is not listed:* **Home → Connect your Urbit → Enter a
   ship's web address**, give `localhost:` and the ship's web port, and the
-  person types the login code into Readymade's own private box, once.
+  person types the login code into Readymade's own private box, once. The port
+  is in the line the ship printed when it started (`http: web interface live on
+  http://localhost:8080`) and in the file `.http.ports` in the ship's folder.
 - *Hosted ship:* the same **Enter a ship's web address**, with the ship's web
   address. Never ask for the login code in chat.
 
@@ -77,8 +89,10 @@ without a question. If the app says the invitation is for another ship, the
 link was made for a different name: ask the host for a link for this ship.
 
 If the ship has no collaboration service yet, Readymade asks once to install
-it. The person confirms; the ship then installs one small agent from the host's
-ship and keeps it updated. Expect about a minute and a half the first time on a
+it, naming the ship it will install from; an older service is updated the same
+way, also after asking. The person confirms only for a host they trust: that
+ship chooses what is installed and its later updates. The ship then installs
+one small agent from the host's ship and keeps it updated. Expect about a minute and a half the first time on a
 ship that never had it, a few seconds afterwards. The result appears in the
 Readymade sidebar under **Project Invitations**: a row named after the project
 that reads **join · accepted**.
@@ -98,7 +112,7 @@ palette (it is also offered once after connecting), then in the sidebar
 [install from the app](INSTALL_FROM_THE_APP.md).
 
 Three confirmations belong to the person alone: the macOS Keychain dialog,
-installing the collaboration service, and installing Pataphor. Do not start,
+installing or updating the collaboration service, and installing Pataphor. Do not start,
 stop, restart or reconfigure the person's ship, and do not install anything on
 it yourself. Everything below this section is the careful, complete version.
 
@@ -119,9 +133,10 @@ Read [compatibility](COMPATIBILITY.md) and [security](SECURITY.md) before select
 
 ## Install the download
 
-Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2)
-for a tester who wants to run the app. Open the `.dmg`, drag Readymade Workspace
-to Applications, open it there and eject the disk image. The download uses a
+Prefer the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3)
+for a tester who wants to run the app. Quit any older Readymade, open the
+`.dmg`, drag Readymade Workspace to Applications (Replace if asked), open it
+there and eject the disk image. The download uses a
 persistent local signing certificate and is not notarized; a trusted official download may need macOS
 **System Settings → Privacy & Security → Open Anyway** on first launch.
 [Apple's instructions](https://support.apple.com/en-us/102445) explain the prompt.
@@ -146,6 +161,7 @@ node --version
 npm --version
 python3 --version
 xcrun --find clang
+zig version        # must print 0.15.2
 npm ci --ignore-scripts
 npm run check
 npm run lint

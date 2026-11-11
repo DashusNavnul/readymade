@@ -58,8 +58,9 @@ class.
 
 ## My ship runs on this Mac but is not in the list
 
-Readymade lists a running ship when its runtime file is named `urbit` or
-starts with `vere` (the names the runtime ships under), the ship is real (not a
+Readymade lists a running ship when its runtime file is named `urbit`, `vere`,
+or `vere` followed by `-` or `.` and a version (the names the runtime ships
+under), the ship is real (not a
 fake), and it answers its own identity check within a few seconds. A runtime
 copied under another name is not recognised (measured: a comet started from a
 renamed copy was invisible until restarted as `urbit`). A busy ship shows as

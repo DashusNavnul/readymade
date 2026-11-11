@@ -32,8 +32,8 @@ The owner selects a project and chooses **Invite Collaborator** in **Project
 Invitations**. After **Check Result** confirms acceptance, **Copy Join Link**
 copies the current matching native invitation for that recipient.
 
-The recipient opens that link, or uses **Join Project**, while connected to
-their own ship. **Check Result** reads a retained outcome after a lost response
+The recipient pastes that link under **Home → Join a workspace** (or **Join
+Project**), with their own ship. **Check Result** reads a retained outcome after a lost response
 or restart; it does not resend the join. Joining needs no local Viki session.
 The owner can then grant file access in **Project Sharing** and copy the separate
 shared-project link described below.
@@ -54,7 +54,10 @@ service. When you paste an invitation link and your ship does not have it:
 2. Your ship's own package manager installs the desk `%readymade-peer` from the
    ship named in the link (the inviter), or from `~dashus-navnul` when the link
    names none. It holds only the collaboration agent and what it compiles
-   against: no coding worker, no model connection, nothing that runs code.
+   against: as published, no coding worker, no model connection, nothing that
+   runs code. Installing it means trusting the ship you install from: that ship
+   chooses the desk's contents and its later updates, and an installed agent
+   runs with your ship's authority. Join hosts you trust.
 3. Readymade waits until the agent answers, checks that it speaks the protocol
    this app needs (an older one is updated the same way first), then sends the
    join once. **Check Result** reads the outcome later; it never joins twice.
@@ -70,8 +73,8 @@ command palette, ends your membership after asking (the owner's ship ends your
 file and session grants at the same moment). **Readymade: Remove Collaboration
 Service** uninstalls the desk; it works only on a ship that has no full backend.
 
-Requirements: your ship on Kelvin 408 (an up-to-date ship is; **Readymade: Ship
-Doctor** shows it as "System version"), able to reach the inviting ship. Any
+Requirements: your ship on Kelvin 408 (an up-to-date ship is; for a ship on
+this Mac **Readymade: Ship Doctor** shows it as "System version"), able to reach the inviting ship. Any
 runtime will do, at its default memory. This flow was run live with the packaged
 app: a planet hosted, and its moon and two unrelated, brand-new comets (one on
 the app's bundled runtime, one on the stock Urbit runtime) joined from a link
@@ -108,8 +111,9 @@ Activity** in the project view collect what needs you and what happened.
 
 ## Your own apps in Readymade
 
-Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2),
-drag Readymade Workspace to Applications and open it. See [LLM setup](LLM_SETUP.md)
+Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3),
+quit any older Readymade, drag Readymade Workspace to Applications (Replace if
+asked) and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
 Choose **Home → Connect your Urbit**, authenticate privately, then open Groups, Glurff,
 Calls or Landscape if those apps are already installed on your ship. In a new
@@ -172,7 +176,7 @@ authorized, bounded coding request produces the correlated result. Distinguish
 request recording, execution, review and deployment. A local fixture, shared
 chat, or successful login is not that proof.
 
-## Shared project drafts in the development build
+## Shared project drafts
 
 The desktop now has **Open Shared Project**, **Edit Draft**, **Compare**,
 **Reconcile**, **Send Suggestion** and **Check Result**. The owner copies a link
@@ -252,7 +256,7 @@ back into the originating conversation.
 
 ## Share a completed result with its original group
 
-The development build adds **Share result with original group…** to the selected
+Readymade adds **Share result with original group…** to the selected
 request in **Readymade: Project Requests**. It requires the new native
 `workspace-return` backend, a genuinely completed request, and its current
 project/session. The first version supports only Noltbook groups hosted by the

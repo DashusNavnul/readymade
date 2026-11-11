@@ -73,7 +73,7 @@ retained Landscape tab. `groups` opens Tlon Groups; `lattice` opens Lattice's
 document workspace; `glurff` and `noltbook` open those apps. Each command
 accepts no arguments.
 
-The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.2) discovers every
+The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.3) discovers every
 real ship class running on the Mac. A planet, a moon and comets have been
 connected live with the packaged app; the other classes have automated discovery
 and authentication coverage only. Ship class does not establish installed app
@@ -110,7 +110,7 @@ recipient and current authenticated connection before submitting.
 | Current-source change | Verified scope | Still required |
 | --- | --- | --- |
 | Local discovery and selected-identity login for every real ship class | Automated identity/rank, stale-selection and authentication checks | Exact-package and live receiving-ship acceptance for every class |
-| Guest invitation readiness without a local coding backend | Read-only HTTP fixtures, schema and authenticated-owner checks | Exact-package UI acceptance and real owner/guest invitation, join and revocation checks |
+| Guest invitation readiness without a local coding backend | Read-only HTTP fixtures, schema and authenticated-owner checks | Run live with the packaged app between a planet, its moon and two unrelated comets on one Mac; two people on separate computers still required |
 
 These additions are included in the current preview. They do not
 qualify a first installation on the receiving operator's ship or a twelve-person
