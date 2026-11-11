@@ -58,6 +58,7 @@ import { waitingReport, waitingSummary, type WaitingReport } from './owner-inbox
 import { projectActivity, type ActivityEntry } from './project-activity';
 import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
+import { askAssistant } from './home-assistant';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -235,6 +236,18 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (action === 'getUrbit') return this.planetSetup.show();
       if (action === 'join') return this.invitations.join();
       if (await this.connectApps()) return this.media.open(action);
+    }, async (text, report) => {
+      // The assistant only chooses from the listed commands; each runs exactly as it would from its own button.
+      const now = connection(), chosen = vscode.workspace.getConfiguration('readymade').get<string>('assistantPath')?.trim() || undefined;
+      const plan = await askAssistant(text, {connected: !!now.ship, project: !!now.project}, {chosen});
+      const lines = plan.say ? [plan.say] : [];
+      for (const step of plan.steps) {
+        report([...lines, `Running: ${step.title}…`].join('\n'));
+        try {await vscode.commands.executeCommand(step.command, ...step.args);}
+        catch (error) {report([...lines, `Stopped at: ${step.title}. ${error instanceof Error ? error.message.slice(0, 300) : 'It did not finish.'}`].join('\n')); return;}
+        lines.push(`Ran: ${step.title}`);
+      }
+      report(lines.join('\n'));
     });
     const homeStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 101);
     homeStatus.name = 'Readymade Home'; homeStatus.text = '$(home) Home'; homeStatus.command = 'readymade.home';
@@ -271,7 +284,9 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('reconcileSharedDraft', id => this.remoteSource.reconcile(typeof id === 'string' ? id : undefined));
     command('sendSharedSuggestion', id => this.remoteSource.sendSuggestion(typeof id === 'string' ? id : undefined));
     command('checkSharedSuggestion', request => this.remoteSource.checkSuggestion(String(request)));
-    command('inviteCollaborator', target => this.invitations.invite(typeof target === 'string' ? target : undefined));
+    const role = (value: unknown) => value === 'contributor' || value === 'observer' || value === 'maintainer' ? value : undefined;
+    command('inviteCollaborator', async (target, wanted) => {await this.invitations.invite(typeof target === 'string' ? target : undefined, role(wanted));});
+    command('inviteAndCopyLink', (target, wanted) => this.invitations.inviteAndCopyLink(typeof target === 'string' ? target : undefined, role(wanted)));
     command('joinProject', link => this.invitations.join(typeof link === 'string' ? link : undefined));
     command('checkProjectInvitation', request => this.invitations.check(String(request)));
     command('leaveProject', request => this.invitations.leave(String(request)));

@@ -61,6 +61,24 @@ setting **Readymade: Connect On Start**. For a hosted ship enter its web
 address and its login code once; the code is kept in the Mac's Keychain and not
 asked again, and that ship reconnects by itself too.
 
+## Tell Readymade what to do
+
+Home has a command line. Type what you want in plain words and press Return:
+
+```text
+› invite ~sampel-palnet as a contributor and copy the link
+› why is my ship slow
+› show who is in the project, then open Noltbook
+```
+
+It is answered by the coding assistant already installed on your computer: Claude Code if it is
+found, otherwise Codex, signed in with your own account. Readymade sends it only the line you typed,
+the list of Readymade commands, and whether a ship is connected and a project is chosen. The
+assistant gets no tools and can only name commands from that list; a ship name, role, link or
+address is used only if you typed it yourself. Each command then opens its usual screen, with its
+usual questions and confirmations. To pick the assistant yourself, set `readymade.assistantPath`
+to the full path of a `claude` or `codex` program.
+
 ## Work with someone else
 
 **To join someone's project** you need only your own ship and their invitation

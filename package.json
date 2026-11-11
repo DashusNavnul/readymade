@@ -42,6 +42,7 @@
       {"command": "readymade.inviteCollaborator", "title": "Readymade: Invite Collaborator"},
       {"command": "readymade.joinProject", "title": "Readymade: Join Project"},
       {"command": "readymade.switchShip", "title": "Readymade: Switch Ship…"},
+      {"command": "readymade.inviteAndCopyLink", "title": "Readymade: Invite Collaborator and Copy Join Link"},
       {"command": "readymade.doctor", "title": "Readymade: Ship Doctor"},
       {"command": "readymade.ownerInbox", "title": "Readymade: Check What Is Waiting on Me"},
       {"command": "readymade.projectActivity", "title": "Readymade: Project Activity"},
@@ -274,6 +275,7 @@
     "configuration": {
       "title": "Readymade",
       "properties": {
+        "readymade.assistantPath": {"type": "string", "default": "", "description": "The command line on Home asks the coding assistant installed on this computer: Claude Code if it is found, otherwise Codex. To choose one yourself, give the full path of its claude or codex program here."},
         "readymade.connectOnStart": {
           "type": "boolean",
           "default": true,

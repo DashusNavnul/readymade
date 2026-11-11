@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
-import {writeFileSync, realpathSync} from 'node:fs';
+import {writeFileSync, realpathSync, mkdtempSync, chmodSync, existsSync, readFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import type {ReadymadeWorkspace} from '../src/extension';
 import * as http from 'node:http';
 import {once} from 'node:events';
@@ -110,5 +112,28 @@ export async function run(): Promise<void> {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await config.update('callNotifications', previous, vscode.ConfigurationTarget.Global);
   }
+  // The command line: a stand-in assistant program answers with one listed command; the typed line reaches it on standard input only.
+  const askDir = mkdtempSync(join(tmpdir(), 'rm-ask-')), fake = join(askDir, 'claude'), seen = join(askDir, 'seen.txt');
+  const canned = (plan: unknown) => JSON.stringify({type: 'result', is_error: false, result: JSON.stringify(plan)});
+  const answerWith = (plan: unknown) => {writeFileSync(fake, `#!/bin/sh\ncat > '${seen}'\nprintf '%s' '${canned(plan)}'\n`); chmodSync(fake, 0o755);};
+  const settings = vscode.workspace.getConfiguration('readymade'), earlier = settings.inspect<string>('assistantPath')?.globalValue;
+  await settings.update('assistantPath', fake, vscode.ConfigurationTarget.Global);
+  try {
+    await vscode.commands.executeCommand('readymade.home'); await until(() => homes().length === 1);
+    const line = api.home as unknown as {panel: vscode.WebviewPanel; reply: string; error: string; busy: boolean; receive(panel: vscode.WebviewPanel, message: unknown): Promise<void>};
+    assert.match(line.panel.webview.html, /<input id="ask" type="text" maxlength="500"/);
+    answerWith({say: 'Opening Home.', steps: [{command: 'readymade.home', args: []}]});
+    for (const bad of [{ask: 'go home', extra: 1}, {ask: 7}, {ask: '   '}, {ask: 'a\nb'}, {ask: 'x'.repeat(501)}]) await line.receive(line.panel, bad);
+    assert.equal(existsSync(seen), false, 'a malformed message starts nothing');
+    await line.receive(line.panel, {ask: '  go home  '});
+    assert.equal(readFileSync(seen, 'utf8'), 'go home'); assert.equal(line.error, ''); assert.equal(line.reply, 'Opening Home.\nRan: Home'); assert.equal(line.busy, false);
+    answerWith({say: 'x', steps: [{command: 'workbench.action.closeWindow', args: []}]});
+    await line.receive(line.panel, {ask: 'close the window'});
+    assert.match(line.error, /named a command Readymade does not offer here\)\. Nothing was run\.$/); assert.equal(line.reply, '');
+    answerWith({say: 'x', steps: [{command: 'readymade.inviteAndCopyLink', args: ['~sampel-palnet']}]});
+    await line.receive(line.panel, {ask: 'invite someone'});
+    assert.match(line.error, /a ship you did not type\)\. Nothing was run\.$/);
+    assert.equal(homes().length, 1);
+  } finally {await settings.update('assistantPath', earlier, vscode.ConfigurationTarget.Global); rmSync(askDir, {recursive: true, force: true});}
   if (process.env.READYMADE_HOST_EVIDENCE) writeFileSync(process.env.READYMADE_HOST_EVIDENCE, JSON.stringify({passed: true, installedExtension: extension.extensionPath, actualHomeCommand: true, singleton: true, reopen: true, dirtyEditorPreserved: true, layoutPreserved: true, startupDoesNotStealExistingEditor: true, noAutomaticConnection: true, appOnlyConnectionRetained: true, missingCodingDoesNotLogout: true, unsupportedActionsRefused: true, guestJoinWithoutLocalCoding: true, joinDispatches, joinSubmissionTrapped: true, fixture: true, nativeCalls: 0, buttonDispatchTested: false, serializedRestartTested: false}), {flag: 'wx', mode: 0o600});
 }

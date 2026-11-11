@@ -229,21 +229,29 @@ export class ProjectInvitationsView implements vscode.Disposable {
       void vscode.window.showInformationMessage(`Join link for ${row.target} copied (${row.role}). Only ${row.target} can use it.`);
     } finally {this.busy = false; this.changed();}
   }
-  async invite(target?: string, selectedRole?: 'contributor' | 'observer' | 'maintainer'): Promise<void> {
+  /** Invite, then put that invitation's join link on the clipboard: one step for the owner. */
+  async inviteAndCopyLink(target?: string, selectedRole?: 'contributor' | 'observer' | 'maintainer'): Promise<void> {
+    const sent = await this.invite(target, selectedRole);
+    if (!sent) return;
+    if (sent.status === 'refused') throw new Error('The ship refused the invitation, so no link was copied. Its reason is under Pending Project Invitations.');
+    if (sent.status !== 'accepted') throw new Error('The ship has not confirmed the invitation yet, so no link was copied. Check the invitation result, then copy its link.');
+    await this.copyLink(sent.request);
+  }
+  async invite(target?: string, selectedRole?: 'contributor' | 'observer' | 'maintainer'): Promise<{request: string; status: string} | undefined> {
     await this.quiet();
     const {client, actor, project} = this.owner();
     if (this.closed || this.busy) throw new Error('An invitation operation is already running.');
     this.busy = true; this.changed();
     try {
       const recipient = target ?? await vscode.window.showInputBox({title: 'Invite Collaborator', prompt: 'Collaborator ship, including ~'});
-      if (!recipient) return;
+      if (!recipient) return undefined;
       if (!remoteShip(recipient) || recipient === actor) throw new Error('Enter another ship’s exact name.');
       // Someone who is already a member is offered another role: the same invitation, applied when they accept it.
       const roster = await this.members(client, actor, project, 'members');
       const held = (roster.rows as MemberRow[]).find(row => row.ship === recipient);
       const role = selectedRole ?? (await vscode.window.showQuickPick((['contributor', 'observer', 'maintainer'] as const).filter(name => name !== held?.role),
         {title: held ? `Offer ${recipient} another role (now ${held.role})` : 'Collaborator role', placeHolder: held ? 'Their role changes when they accept the new link; until then nothing changes.' : undefined}));
-      if (!role) return;
+      if (!role) return undefined;
       if (held?.role === role) throw new Error(`${recipient} already has that role.`);
       const unresolved = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.project === project && row.command.operation === 'invite-member' && row.command.target === recipient && !['accepted', 'refused'].includes(this.observed.get(this.key(row))?.status ?? ''));
       if (unresolved) throw new Error('Check the retained invitation result before inviting this collaborator again.');
@@ -255,6 +263,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
       if (!this.active(client, actor, project)) throw new Error('Project changed; check the retained invitation result.');
       this.observed.set(this.key(intent), result);
+      return {request: command.request, status: result.status};
     } finally {this.busy = false; this.changed();}
   }
   async join(value?: string | vscode.Uri): Promise<void> {
