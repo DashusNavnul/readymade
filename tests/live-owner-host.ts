@@ -5,11 +5,12 @@ import {sharedProjectLink} from '../src/remote-source-view';
 import type {InvitationPage} from '../src/project-invitations';
 import type {SharingView} from '../src/project-sharing';
 import type {SessionSharingCommand, SessionSharingOutcome, SessionSharingSnapshot} from '../src/session-sharing';
+import {dateAtomMillis} from '../src/editing-activity';
 import {LiveFailure, LiveTimeout, acceptQuickInput, copied, errorInfo, invitationAction, liveRun, mergeHandoff, need, needShip, pasteQuickInput,
   readHandoff, seen, sleep, within, type LiveContext} from './live-ship-support';
 
 // Live acceptance on the OWNER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
-// invite | share | revoke | members | share-session | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
+// invite | share | revoke | members | share-session | share-session-limited | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
 // screen's own single submission; an unknown outcome is recorded and fails the phase, and nothing is sent twice.
 
 /** What an owner does first: connect coding to the ship already signed in, then choose the project. Reads only. */
@@ -195,6 +196,37 @@ async function sessionChange(c: LiveContext, operation: 'share' | 'unshare'): Pr
   if (after.sessions.find(row => row.id === session)?.shared !== shared) throw new LiveFailure(shared ? 'session-not-shared' : 'session-still-shared');
 }
 
+/**
+ * A share with a time limit, through the screen: the tree offers it for this session, the one list (how long) is
+ * answered with its first entry, and the standing a fresh read shows then names the moment the share ends.
+ */
+async function sessionLimit(c: LiveContext): Promise<void> {
+  const peer = needShip('READYMADE_PEER_SHIP'), session = need('READYMADE_SESSION');
+  if (!/^0x[1-9a-f][0-9a-f]{0,3}(?:\.[0-9a-f]{4})*$/.test(session)) throw new LiveFailure('invalid-READYMADE_SESSION');
+  await ownProject(c); c.record.peer = peer; c.record.session = session;
+  const before = await standing(c, peer, 'sharing-before');
+  if (!before.sessions.some(row => row.id === session)) throw new LiveFailure('session-not-listed');
+  c.record.timeLimits = before.timeLimits;
+  if (!before.timeLimits) throw new LiveFailure('ship-keeps-no-time-limits');
+  const offered = (c.api.projectSharing.rows()[0].children ?? []).some(item => item.children?.some(action => action.command?.command === 'readymade.shareSessionUntil' && action.command.arguments?.[0] === session));
+  c.record.offeredInTree = offered;
+  if (!offered) throw new LiveFailure('share-until-not-offered');
+  const started = Date.now();
+  const after = await sessionCommand(c, peer, 'share-until', async () => {
+    const sharing = c.api.projectSharing.sessionSharing('share-until', session);
+    void sharing.then(() => {}, () => {});
+    await acceptQuickInput(); // "How long…": the first entry, one hour.
+    await sharing;
+  });
+  const row = after.sessions.find(row => row.id === session); c.record.until = row?.until ?? null;
+  if (!row?.shared || !row.until) throw new LiveFailure('share-has-no-limit');
+  const ahead = dateAtomMillis(row.until) - started; c.record.limitMinutesAhead = Math.round(ahead / 60000);
+  if (ahead < 59 * 60000 || ahead > 62 * 60000) throw new LiveFailure('limit-is-not-one-hour');
+  const shown = (c.api.projectSharing.rows()[0].children ?? []).find(item => item.children?.some(action => action.command?.arguments?.[0] === session));
+  c.record.rowShows = shown?.description;
+  if (!/shared until /.test(String(shown?.description))) throw new LiveFailure('row-does-not-show-the-limit');
+}
+
 async function projectSetting(c: LiveContext): Promise<void> {
   const peer = needShip('READYMADE_PEER_SHIP'), setting = need('READYMADE_SETTING'), project = await ownProject(c);
   if (setting !== 'on' && setting !== 'off') throw new LiveFailure('invalid-READYMADE_SETTING');
@@ -237,5 +269,5 @@ async function remove(c: LiveContext): Promise<void> {
 }
 
 export function run(): Promise<void> {
-  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
+  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
 }

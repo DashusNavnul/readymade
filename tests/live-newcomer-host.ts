@@ -11,6 +11,8 @@ import {joinProjectLink, type GuestServiceSteps} from '../src/project-invitation
 //                   collaboration service on it if it is missing (one confirmation), and joins
 //   leave           leave the project that join joined (same profile: READYMADE_TEST_USER_DIR)
 //   remove-service  remove the collaboration service from the ship (READYMADE_NEWCOMER_SHIP)
+//   notices         reopen the same profile and do nothing: the app reconnects the ship and says by itself what
+//                   owners told it while it was closed (a share stopped, a time limit ran out)
 // Modal confirmations cannot be clicked by a test, so a stand-in answers yes and records the exact text shown.
 class Done extends Error {}
 
@@ -31,7 +33,7 @@ async function phase(): Promise<void> {
   const started = Date.now();
   try {
     const phase = process.env.READYMADE_NEWCOMER_PHASE, ship = process.env.READYMADE_NEWCOMER_SHIP;
-    assert.ok(ship && ['join', 'leave', 'remove-service'].includes(String(phase)), 'configuration');
+    assert.ok(ship && ['join', 'leave', 'remove-service', 'notices'].includes(String(phase)), 'configuration');
     const extension = vscode.extensions.getExtension<ReadymadeWorkspace>('pataphor.readymade-ship-workspace'); assert.ok(extension);
     const builtin = !!process.env.READYMADE_BUILTIN_EXTENSION;
     if (builtin) assert.equal(realpathSync(extension.extensionPath), realpathSync(process.env.READYMADE_BUILTIN_EXTENSION!));
@@ -39,6 +41,8 @@ async function phase(): Promise<void> {
     const api = await extension.activate();
     const prompts: string[] = [], confirmations: string[] = [];
     const window = vscode.window as unknown as Record<string, unknown>;
+    const warnings: string[] = [], warn = vscode.window.showWarningMessage.bind(vscode.window) as (...args: unknown[]) => Thenable<unknown>;
+    window.showWarningMessage = (...args: unknown[]) => {warnings.push(String(args[0]).slice(0, 300)); return warn(...args);};
     // In the packaged app this stand-in cannot see the extension's own prompts (separate API objects): there the
     // guard is the phase limit above, since an app waiting for a person never finishes by itself.
     for (const name of ['showInputBox', 'showQuickPick']) window[name] = async (...args: unknown[]) => {prompts.push(name + ': ' + JSON.stringify((args[1] ?? args[0] ?? {}) as object).slice(0, 80)); return undefined;};
@@ -91,6 +95,18 @@ async function phase(): Promise<void> {
         let refusal = ''; try {await vscode.commands.executeCommand('readymade.leaveProject');} catch (error) {refusal = error instanceof Error ? error.message : String(error);}
         record.secondLeave = refusal; assert.match(refusal, /has not joined a project it can leave/);
       }
+      finish();
+    }
+    if (phase === 'notices') {
+      // Nothing is clicked. The app asks the reconnected ship once; what it holds and what it said are recorded.
+      const held = () => (api as unknown as {heldShareNotices?: {notices: readonly {owner: string; project: string; session: string; kind: string; at: string}[]}}).heldShareNotices;
+      const until = Date.now() + 30000;
+      while (!held() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 200));
+      const list = held(); assert.ok(list, 'the app read what owners told this ship without being asked');
+      record.notices = list.notices.slice(0, 6); record.said = warnings;
+      assert.ok(list.notices.length > 0, 'an owner ended a share, so the ship holds a notice');
+      // The packaged app's own messages cannot be seen from here; in a development window the sentence itself is checked.
+      if (!builtin && process.env.READYMADE_EXPECT_NEW === '1') assert.ok(warnings.some(text => /stopped sharing|time limit ran out|removed you|turned off session sharing/.test(text)), 'the new notice was said in plain words');
       finish();
     }
     record.serviceBefore = await client.guestServiceDeskRead();

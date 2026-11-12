@@ -179,7 +179,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.reviewPolicy = new ReviewPolicyView(() => this.selectedProject, () => this.render(), new ReviewPolicyJournal(join(context.globalStorageUri.fsPath, 'review-policies')));
     this.projectSharing = new ProjectSharingView(() => this.selectedProject, () => this.render(), new SharingJournal(join(context.globalStorageUri.fsPath, 'project-sharing')));
     this.files = new DirectoryView(this.pageJournal, () => this.selectedProject, () => this.render());
-    this.media = new MediaWorkbench(context, () => this.client, () => this.render());
+    // A newly connected ship (a collaborator's included) is asked once what owners told it while the app was closed.
+    this.media = new MediaWorkbench(context, () => this.client, () => {this.render(); void this.checkShareNotices();});
     this.documents = new NoltbookDocumentsView(new NoltbookDocumentStore(join(context.globalStorageUri.fsPath, 'noltbook-documents')), () => this.media.connectedClient, () => this.render(),
       (client, peer, url) => this.media.open('noltbook', url, {client, peer}));
     this.remoteDrafts = new RemoteDraftStore(join(context.globalStorageUri.fsPath, 'remote-drafts'));
@@ -379,6 +380,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('recoverProjectAccess', request => this.projectSharing.recover(String(request)));
     command('shareSession', session => this.projectSharing.sessionSharing('share', typeof session === 'string' ? session : undefined));
     command('unshareSession', session => this.projectSharing.sessionSharing('unshare', typeof session === 'string' ? session : undefined));
+    command('showShareNotices', () => this.showShareNotices());
     command('shareSessionUntil', session => this.projectSharing.sessionSharing('share-until', typeof session === 'string' ? session : undefined));
     command('removeCollaborator', () => this.projectSharing.removeCollaborator());
     command('projectSessionSharing', setting => this.projectSharing.projectSessionSharing(setting === 'on' ? true : setting === 'off' ? false : undefined));
@@ -505,14 +507,16 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   private checkingWaiting = false;
   private heldShareNotices?: ShareNotices;
   private shareNoticesChecked = 0;
+  private shareNoticesFor?: ShipClient;
   /**
    * Reads what owners of other projects told this ship about shares they ended, and says what is new, once.
-   * A read only. Without `force` it reads at most once a minute. An older collaboration service keeps no list.
+   * A read only. Without `force` it reads once for a newly connected ship and then at most once a minute.
+   * An older collaboration service keeps no list.
    */
   private async checkShareNotices(force = false): Promise<void> {
     const client = this.media.connectedClient;
-    if (!client || !force && Date.now() - this.shareNoticesChecked < 60_000) return;
-    this.shareNoticesChecked = Date.now();
+    if (!client || !force && client === this.shareNoticesFor && Date.now() - this.shareNoticesChecked < 60_000) return;
+    this.shareNoticesFor = client; this.shareNoticesChecked = Date.now();
     let list: ShareNotices | null;
     try {list = await client.shareNotices();} catch {return;}
     if (!list || this.media.connectedClient !== client) return;
@@ -520,8 +524,21 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const key = `readymade.shareNoticesSeen:${client.origin}:${list.peer}`, fresh = shareNoticesUnseen(list, this.context.globalState.get(key));
     if (!fresh.length) return;
     await this.context.globalState.update(key, fresh[0].at);
-    void vscode.window.showWarningMessage(fresh.length === 1 ? shareNoticeText(fresh[0]) :
-      `${shareNoticeText(fresh[0])} ${fresh.length - 1} more ${fresh.length === 2 ? 'notice like this is' : 'notices like this are'} listed in Catch Me Up.`);
+    const more = fresh.length - 1, all = 'Show All';
+    void vscode.window.showWarningMessage(more ? `${shareNoticeText(fresh[0])} There ${more === 1 ? 'is 1 more notice' : `are ${more} more notices`} like this.` : shareNoticeText(fresh[0]),
+      ...(more ? [all] : [])).then(choice => {if (choice === all) void this.showShareNotices(false);});
+  }
+  /** Everything owners told this ship about shares they ended, newest first, on one page. A read only. */
+  private async showShareNotices(read = true): Promise<void> {
+    if (read) await this.checkShareNotices(true);
+    const client = this.media.connectedClient, list = this.heldShareNotices;
+    if (!client) throw new Error('Connect your ship first.');
+    if (!list || this.shareNoticesFor !== client) throw new Error('Your ship keeps no list of ended shares. Its collaboration service may be older; update it, then try again.');
+    const lines = shareNoticeLines(list).map(row => `- ${row.day}: ${row.text}`);
+    const page = await vscode.workspace.openTextDocument({language: 'markdown', content: [`# Shares that owners ended: ${list.peer}`, '',
+      'Each line is what the owner’s ship told your ship. It changes nothing by itself; the Shared view shows what you can open now.', '',
+      ...(lines.length ? lines : ['No owner has ended a share with your ship.']), ''].join('\n')});
+    await vscode.window.showTextDocument(page, {preview: true});
   }
   /**
    * The owner inbox: ask each existing screen for its own current state, then count what needs the owner.
