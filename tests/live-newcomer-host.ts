@@ -103,10 +103,19 @@ async function phase(): Promise<void> {
       const until = Date.now() + 30000;
       while (!held() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 200));
       const list = held(); assert.ok(list, 'the app read what owners told this ship without being asked');
-      record.notices = list.notices.slice(0, 6); record.said = warnings;
+      const sentence = /stopped sharing|time limit ran out|removed you|turned off session sharing/, said = () => warnings.filter(text => sentence.test(text));
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      record.notices = list.notices.slice(0, 6); record.said = said();
       assert.ok(list.notices.length > 0, 'an owner ended a share, so the ship holds a notice');
       // The packaged app's own messages cannot be seen from here; in a development window the sentence itself is checked.
-      if (!builtin && process.env.READYMADE_EXPECT_NEW === '1') assert.ok(warnings.some(text => /stopped sharing|time limit ran out|removed you|turned off session sharing/.test(text)), 'the new notice was said in plain words');
+      // (A test window keeps its storage in memory, so "already said" is checked inside this one launch: the app
+      // reads the ship again, finds nothing newer than what it said, and says nothing.)
+      if (!builtin) {
+        assert.equal(said().length, 1, 'what is new was said once, in plain words');
+        await (api as unknown as {checkShareNotices(force: boolean): Promise<void>}).checkShareNotices(true);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        record.saidAfterSecondRead = said().length; assert.equal(said().length, 1, 'nothing newer, so nothing was said again');
+      }
       finish();
     }
     record.serviceBefore = await client.guestServiceDeskRead();
