@@ -6,7 +6,7 @@ import {remoteShip} from './remote-project-view';
 import {invitationCommand, invitationResult, type InvitationCommand} from './project-invitations';
 import type {ShipClient} from './ship-client';
 
-type Client = Pick<ShipClient, 'origin' | 'projectInvitation' | 'browserCookies'>;
+type Client = Pick<ShipClient, 'origin' | 'projectInvitation' | 'browserCookies'> & {assertIdle?(): void};
 export interface InvitationIntent {version: 1; origin: string; actor: string; command: InvitationCommand}
 function validate(value: unknown): InvitationIntent {
   const r = asRecord(value);
@@ -52,6 +52,8 @@ export class InvitationJournal {
   async submit(client: Client, supplied: InvitationIntent, consent: boolean) {
     const intent = validate(supplied); this.context(client, intent);
     if (consent !== true) throw new Error('Confirm the invitation action first.');
+    // Before anything is recorded: a client that could not send now would leave an intent that was never sent and is never sent again.
+    client.assertIdle?.();
     this.entries();
     const lock = join(this.directory, '.write.lock'), fd = fs.openSync(lock, 'wx', 0o600);
     try {

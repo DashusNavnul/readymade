@@ -34,7 +34,7 @@ async function run(dropped: boolean): Promise<void> {
     else await client.acceptCompletion(context, '0x2', 'Reviewed', true);
     assert.deepEqual(bodies, [{kind: 'completion-accept', session: '0x1', proposal: '0x2', consent: true, reason: 'Reviewed', nonce: '0v1'}]);
     await client.codingState('0x1');
-    await assert.rejects(client.acceptCompletion(context, '0x2', 'Reviewed', true), /commandBusy/);
+    await assert.rejects(client.acceptCompletion(context, '0x2', 'Reviewed', true), /still finishing another request to your ship\. Try again in a moment; nothing was sent\./);
     assert.equal(bodies.length, 1);
   } finally {client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
 }

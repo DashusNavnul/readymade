@@ -13,7 +13,7 @@ import {RemoteSourceView} from './remote-source-view';
 import { EditingActivityView } from './editing-activity-view';
 import { existsSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
-import { ShipClient, ShipClientError } from './ship-client';
+import { OutcomeUnknownError, ShipClient, ShipClientError } from './ship-client';
 import { restoredSession, sessionSelection, sessionSelectionKey, projectSessionSelectionKey, sourceSessionChoice } from './session-selection';
 import { JsonObject, asRecord } from './protocol';
 import { SourceStore, SourceDescriptor, sourceBasis, sameBasis, validPath, type SourceBasis } from './source-store';
@@ -445,7 +445,13 @@ export class ReadymadeWorkspace implements vscode.Disposable {
    * Make an installed full backend follow its published source, so updates arrive by themselves. Asks first and
    * says what following costs; sends one kiln request and then only reads until the ship reports the source.
    */
+  private followingUpdates = false;
   private async followBackendUpdates(): Promise<void> {
+    if (this.followingUpdates) throw new Error('Readymade is already asking your ship to follow updates.');
+    this.followingUpdates = true;
+    try {await this.followUpdatesOnce();} finally {this.followingUpdates = false;}
+  }
+  private async followUpdatesOnce(): Promise<void> {
     const client = this.media.connectedClient;
     if (!client) throw new Error('Connect the ship first.');
     const local = await client.backendDeskRead();
@@ -456,7 +462,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const detail = `Your ship will take each update ${FULL_SOURCE.ship} publishes, without being asked again. An update makes the ship rebuild what changed; a large one can keep it busy for several minutes, and it answers nothing while it builds.` +
       (local.source ? ` It currently follows ${local.source.ship} %${local.source.desk}; that is replaced.` : '');
     if ((await vscode.window.showWarningMessage('Follow Pataphor updates?', {modal: true, detail}, 'Follow updates')) !== 'Follow updates') return;
-    await client.backendFollow();
+    // Sent once. An unanswered request is followed by reading the ship, never by sending again.
+    try {await client.backendFollow();} catch (error) {if (!(error instanceof OutcomeUnknownError)) throw error;}
     await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Asking your ship to follow Pataphor updates'}, async () => {
       for (let n = 0; n < 40; n++) {
         await new Promise(resolve => setTimeout(resolve, 3000));

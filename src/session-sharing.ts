@@ -183,6 +183,7 @@ export function sessionSharingMessage(command: SessionSharingCommand, outcome: S
           [`${peer} was removed from ${project}.`, `${peer} was already out of ${project}.`];
   if (outcome.status === 'confirmed') return done[0];
   if (outcome.status === 'unchanged') return done[1];
+  if (!outcome.snapshot && !outcome.holds && (outcome.status === 'not-confirmed' || outcome.status === 'unknown')) return 'Your ship could not be read afterwards, so the result is not known. Check again; nothing was resent.';
   if (outcome.status === 'not-confirmed') return 'Not confirmed yet. Your ship took the request but does not show the change. Check again; nothing was resent.';
   return `The request may not have reached your ship. ${outcome.holds ? 'Your ship shows the requested state.' : 'Your ship does not show the change.'} Check again; nothing was resent.`;
 }

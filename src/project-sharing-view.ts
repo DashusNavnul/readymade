@@ -201,7 +201,7 @@ export class ProjectSharingView implements vscode.Disposable {
       description: `${row.phase} · ${row.shared ? 'shared' : 'not shared'}`, tooltip: `${row.desk} @ ${row.revision}\nSession ${row.id}\nObserved ${v.observedAt}`,
       children: [row.shared ? {label: 'Stop sharing this session', command: {command: 'readymade.unshareSession', title: 'Stop sharing this session', arguments: [row.id]}} :
         {label: 'Share this session', command: {command: 'readymade.shareSession', title: 'Share this session', arguments: [row.id]}}]});
-    if (v.truncated) rows.push({label: 'Showing the first 128 sessions'});
+    if (v.truncated) rows.push({label: 'Showing the newest 128 sessions', tooltip: 'A ship with the current collaboration service lists the newest; an older one lists the first 128.'});
     if (v.member || v.viewGrant === 'live' || v.sessions.some(row => row.shared)) rows.push({label: `Remove ${v.peer} from this project…`,
       command: {command: 'readymade.removeCollaborator', title: 'Remove collaborator'}});
     return rows;
@@ -215,6 +215,8 @@ export class ProjectSharingView implements vscode.Disposable {
         this.sync(); if (client !== this.client || context !== this.context) throw new Error('Project changed. Choose the collaborator again to see the result; nothing was resent.');
         s.snapshot = snapshot;
       });
+      // No read came back: what the ship holds now is not known, so nothing is offered from the old picture except Check again.
+      if ((outcome.status === 'unknown' || outcome.status === 'not-confirmed') && !outcome.snapshot) s.snapshot = undefined;
       s.last = {command, outcome}; s.note = sessionSharingMessage(command, outcome, label);
       s.check = outcome.status === 'not-confirmed' || outcome.status === 'unknown' ? command : undefined;
       if (outcome.status === 'confirmed' || outcome.status === 'unchanged') void vscode.window.showInformationMessage(s.note);

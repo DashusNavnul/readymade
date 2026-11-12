@@ -127,6 +127,13 @@ export class ProjectInvitationsView implements vscode.Disposable {
     if (['prepared', 'submitted'].includes(String(result.status)) && !this.closed && this.current() === client) this.follow(client, intent);
     return result;
   }
+  /** One submission, then reads. When no answer comes back the intent stays retained, is read in the background, and is never sent again. */
+  private async submitOnce(client: ShipClient, intent: InvitationIntent): Promise<Outcome> {
+    let first: Outcome;
+    try {first = await this.journal.submit(client, intent, true);}
+    catch (error) {if (error instanceof OutcomeUnknownError && !this.closed && this.current() === client) this.follow(client, intent); throw error;}
+    return this.settle(client, intent, first);
+  }
   /**
    * A busy or distant ship can settle after settle() stops waiting (measured: a join that took longer than its
    * eight reads). Keep reading for two more minutes so the row changes by itself. Reads only; nothing is sent again.
@@ -281,7 +288,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const nonce = '0x' + (BigInt('0x' + randomBytes(16).toString('hex')) || 1n).toString(16).replace(/\B(?=(?:[0-9a-f]{4})+$)/g, '.');
       const command = invitationCommand({request: randomUUID(), authority: actor, project, operation: 'invite-member', target: recipient, role, expiresAt: page.inviteUntil, nonce});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
+      const result = await this.submitOnce(client, intent);
       if (!this.active(client, actor, project)) throw new Error('Project changed; check the retained invitation result.');
       this.observed.set(this.key(intent), result);
       return {request: command.request, status: result.status};
@@ -303,7 +310,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (!this.active(client, actor)) throw new Error('Connection changed before joining.');
       const command = invitationCommand({request: randomUUID(), authority: link.authority, project: link.project, operation: 'join', invitation: link.invitation});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
+      const result = await this.submitOnce(client, intent);
       if (!this.active(client, actor)) throw new Error('Connection changed; check the retained join result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
@@ -339,12 +346,14 @@ export class ProjectInvitationsView implements vscode.Disposable {
     const open = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.operation === 'leave' && row.command.authority === authority &&
       row.command.project === project && !['accepted', 'refused'].includes(this.observed.get(this.key(row))?.status ?? ''));
     if (open) throw new Error('Check the retained leave result before leaving again.');
-    if (!await this.guest.confirm(`Leave ${project} on ${authority}? You lose access to its shared files and sessions. The owner can invite you again.`, 'Leave Project?', 'Leave')) return;
+    // Busy from before the question: a second Leave started while this one waits for its answer is refused, not sent as well.
     this.busy = true; this.changed();
     try {
+      if (!await this.guest.confirm(`Leave ${project} on ${authority}? You lose access to its shared files and sessions. The owner can invite you again.`, 'Leave Project?', 'Leave')) return;
+      if (!this.active(client, actor)) throw new Error('Connection changed; nothing was sent.');
       const command = invitationCommand({request: randomUUID(), authority, project, operation: 'leave'});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
+      const result = await this.submitOnce(client, intent);
       if (!this.active(client, actor)) throw new Error('Connection changed; check the retained leave result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
@@ -434,7 +443,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (!row || expire && !row.expired) throw new Error('Refresh pending invitations before closing this one.');
       const command: InvitationCommand = {request: randomUUID(), authority: actor, project, operation: expire ? 'expire-invitation' : 'revoke-invitation', invitation: id};
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
-      const result = await this.settle(client, intent, await this.journal.submit(client, intent, true));
+      const result = await this.submitOnce(client, intent);
       if (!this.active(client, actor, project)) throw new Error('Project changed; check the retained invitation result.');
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}

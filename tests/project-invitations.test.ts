@@ -7,7 +7,7 @@ import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {invitationCommand, leavableJoins, invitationResult, invitationMembers, invitationCatalog, type InvitationCommand, eventSentence, type EventRow} from '../src/project-invitations';
 import {InvitationJournal, type InvitationIntent} from '../src/project-invitation-journal';
-import {ShipClient} from '../src/ship-client';
+import {OutcomeUnknownError, ShipClient, ShipClientError} from '../src/ship-client';
 const command: InvitationCommand = {request: '01234567-89ab-4cde-8fab-0123456789ab', authority: '~wes', project: 'demo', operation: 'join', invitation: '0x123'};
 const result = {schema: 'readymade-project-invitation-result-v1', request: command.request, authority: command.authority, project: command.project, operation: command.operation,
   digest: '0x456', status: 'accepted', permissionGranted: false, outcome: 'project-joined'};
@@ -134,4 +134,14 @@ test('the journal can be read oldest first', async t => {
   }
   assert.deepEqual(journal.ordered().map(row => row.command.request), written);
   assert.deepEqual(journal.entries().map(row => row.command.request).sort(), [...written].sort());
+});
+
+test('an invitation command with no usable answer is an unknown outcome, and a busy client records nothing', async t => {
+  const directory = fs.mkdtempSync(join(tmpdir(), 'readymade-invitation-unknown-')); t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const intent: InvitationIntent = {version: 1, origin: 'https://nec.example', actor: '~nec', command};
+  const busy = {origin: intent.origin, browserCookies: () => [{name: 'urbauth-~nec', value: 'fixture'}], assertIdle: () => {throw new ShipClientError('commandBusy');}, projectInvitation: async () => {throw new Error('must not be reached');}};
+  const journal = new InvitationJournal(directory);
+  await assert.rejects(journal.submit(busy, intent, true), /still finishing another request to your ship\. Try again in a moment; nothing was sent\./);
+  assert.equal(journal.entries().length, 0, 'nothing is recorded for a command that could not be sent');
+  assert.equal(new OutcomeUnknownError().message, 'No answer came back from your ship, so the outcome is not known. Nothing was sent again. Check the result before trying again.');
 });

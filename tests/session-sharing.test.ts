@@ -144,8 +144,10 @@ test('outcomes read as plain sentences that never claim more than a read showed'
   assert.equal(sessionSharingMessage(share, {status: 'unchanged', holds: true}), 'Session 0x5e55.2002 was already shared with ~nec.');
   assert.equal(sessionSharingMessage(unshare, {status: 'confirmed', holds: true}), 'Session 0x5e55.2002 is no longer shared with ~nec.');
   assert.equal(sessionSharingMessage(remove, {status: 'confirmed', holds: true}), '~nec was removed from café-共同.');
-  assert.match(sessionSharingMessage(share, {status: 'not-confirmed', holds: false}), /^Not confirmed yet\..*nothing was resent\.$/);
-  assert.match(sessionSharingMessage(remove, {status: 'unknown', holds: false}), /may not have reached your ship\. Your ship does not show the change\..*nothing was resent\.$/);
+  assert.match(sessionSharingMessage(share, {status: 'not-confirmed', holds: false, snapshot: seen}), /^Not confirmed yet\..*nothing was resent\.$/);
+  assert.match(sessionSharingMessage(remove, {status: 'unknown', holds: false, snapshot: seen}), /may not have reached your ship\. Your ship does not show the change\..*nothing was resent\.$/);
+  // No read came back at all: the message says the ship could not be read, never that it 'does not show the change'.
+  for (const status of ['not-confirmed', 'unknown'] as const) assert.equal(sessionSharingMessage(share, {status, holds: false}), 'Your ship could not be read afterwards, so the result is not known. Check again; nothing was resent.');
   assert.match(sessionSharingMessage(remove, {status: 'unknown', holds: true}), /Your ship shows the requested state\./);
   for (const reason of [...SESSION_SHARING_REASONS, 'session-sharing-unavailable']) {
     const text = sessionSharingMessage(share, {status: 'refused', reason});

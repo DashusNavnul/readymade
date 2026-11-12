@@ -33,7 +33,9 @@ export class ShipClientError extends Error {
       : code === 'certificateUntrusted'
         ? 'The HTTPS certificate cannot be verified. Ask the host to provide a certificate trusted by this computer and its complete certificate chain.'
         : undefined;
-    super(certificateMessage ?? `Ship request failed: ${code}${status === undefined ? '' : ` (HTTP ${status})`}.`); this.name = 'ShipClientError';
+    const plain = code === 'commandBusy' ? 'Readymade is still finishing another request to your ship. Try again in a moment; nothing was sent.'
+      : code === 'outcomeUnknown' ? 'No answer came back from your ship, so the outcome is not known. Nothing was sent again. Check the result before trying again.' : undefined;
+    super(certificateMessage ?? plain ?? `Ship request failed: ${code}${status === undefined ? '' : ` (HTTP ${status})`}.`); this.name = 'ShipClientError';
   }
 }
 export class OutcomeUnknownError extends ShipClientError {
@@ -626,7 +628,9 @@ export class ShipClient {
       const reply = await this.wire(channel, 'PUT', body, {'Content-Type': 'application/json'}, {timeoutMs: 15000}, 65536);
       if (this.closed || epoch !== this.generation || this.projectViewPeer() !== actor) throw new OutcomeUnknownError();
       if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
-      if (![200, 204].includes(reply.status)) failure('refused', reply.status);
+      // Only the ship's own 4xx is a refusal; a 5xx or a proxy's error says nothing about what the ship did.
+      if (reply.status >= 400 && reply.status < 500) failure('refused', reply.status);
+      if (![200, 204].includes(reply.status)) throw new OutcomeUnknownError();
     } catch (error) {
       if (error instanceof ShipClientError && ['refused', 'authenticationRequired'].includes(error.code)) throw error;
       throw new OutcomeUnknownError();
@@ -783,8 +787,15 @@ export class ShipClient {
         else invitationMembers(json, String(p.project), actor, p.kind as 'members' | 'invitations' | 'events', Number(p.offset ?? 0), p.catalog as string | undefined);
       }
       return {status: reply.status, body: json};
+    } catch (error) {
+      // A command that was sent and got no usable answer: its outcome is unknown, never a plain failure.
+      const known = ['authenticationRequired', 'refused', 'cancelledBeforeSend', 'requestTooLarge', 'invalidOrigin', 'secureTransportRequired', 'redirectRefused', 'consentRequired'];
+      if (operation !== 'submit' || error instanceof ShipClientError && known.includes(error.code)) throw error;
+      throw new OutcomeUnknownError();
     } finally {this.busy = false;}
   }
+  /** Refuses now, before a caller records an intent, when a request could not be sent anyway. Nothing is sent. */
+  assertIdle(): void {if (this.closed) failure('closed'); if (this.busy) failure('commandBusy');}
   private projectViewPeer(): string {
     const active = this.cookies.filter(cookie => cookie.expires > Date.now());
     if (active.length !== 1) return failure('authenticationRequired');
