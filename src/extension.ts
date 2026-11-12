@@ -468,17 +468,18 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     });
     void vscode.window.showInformationMessage(`This ship now follows ${FULL_SOURCE.ship} for Pataphor updates.`);
   }
-  private feed?: {project: string; entries: ActivityEntry[]; partial: boolean};
+  private feed?: {project: string; entries: ActivityEntry[]; partial: boolean; older: boolean};
   /** The project's activity feed: its own history and the suggestions received, read fresh and merged by time. */
   private async readActivity(): Promise<void> {
     const project = this.selectedProject; this.requireClient();
     if (!project) throw new Error('Choose a project first.');
     let partial = false;
-    await this.invitations.observe('events');
-    const history = this.invitations.history ?? [];
+    // Its own read of the newest history page: the members or invitations shown in the tree stay as they are.
+    const history = await this.invitations.historyPage();
     try {await this.inbox.observe();} catch {partial = true;}
     if (this.selectedProject !== project) return;
-    this.feed = {project, entries: projectActivity(history, this.inbox.receipts ?? []), partial}; this.render();
+    const suggestions = this.inbox.receipts ?? [], entries = projectActivity(history.rows, suggestions);
+    this.feed = {project, entries, partial, older: history.older || history.rows.length + suggestions.length > entries.length}; this.render();
   }
   private activityRows(): MediaTreeRow[] {
     const feed = this.feed?.project === this.selectedProject ? this.feed : undefined;
@@ -486,6 +487,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     for (const entry of feed?.entries ?? []) children.push({label: entry.text, description: entry.day, icon: entry.kind === 'suggestion' ? 'lightbulb' : 'organization'});
     if (feed && !feed.entries.length) children.push({label: 'Nothing recorded yet'});
     if (feed?.partial) children.push({label: 'Suggestions could not be read; showing membership only'});
+    if (feed?.older) children.push({label: 'Older activity is in Project History', command: {command: 'readymade.projectHistory', title: 'Project History'}});
     return [{id: 'project-activity', label: 'Project Activity', icon: 'history', children}];
   }
   private waiting?: WaitingReport;
@@ -530,7 +532,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const quiet = async (work: () => Promise<unknown>) => {try {await work();} catch { /* reported as not checked */ }};
     try {
       const project = this.selectedProject, session = this.selectedSession;
-      await quiet(() => this.workspaceRequests.store?.load() ?? Promise.reject(new Error('no store')));
+      await quiet(() => this.workspaceRequests.loadAll());
       if (project) {
         await quiet(() => this.inbox.observe());
         if (session && session !== '0x0') await quiet(() => this.codeReview.observe(session));

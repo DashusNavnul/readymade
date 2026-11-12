@@ -440,6 +440,18 @@ export class ProjectInvitationsView implements vscode.Disposable {
     } finally {this.busy = false; this.changed();}
   }
   /** The first page of the project's history when that is what was last read, else undefined. */
+  /** The newest page of the project's history, read on its own: whatever page the tree is showing stays as it is. */
+  async historyPage(): Promise<{rows: EventRow[]; older: boolean}> {
+    await this.quiet();
+    this.sync(); const {client, actor, project} = this.owner();
+    if (this.busy || this.closed) throw new Error('An invitation operation is already running.');
+    this.busy = true; this.changed();
+    try {
+      const page = await this.members(client, actor, project, 'events');
+      if (!this.active(client, actor, project)) throw new Error('Project changed while reading its history. Refresh explicitly.');
+      return {rows: page.rows as EventRow[], older: page.next !== null};
+    } finally {this.busy = false; this.changed();}
+  }
   get history(): EventRow[] | undefined {this.sync(); return this.page?.kind === 'events' && this.page.offset === 0 ? this.page.rows as EventRow[] : undefined;}
   /** Expired invitations in the last read pending list, or undefined when that list is not what is held. */
   get expiredInvitations(): number | undefined {

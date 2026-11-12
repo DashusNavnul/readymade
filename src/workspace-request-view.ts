@@ -60,6 +60,13 @@ export class WorkspaceRequestView implements vscode.Disposable {
     this.model?.dispose(); this.model = undefined; this.selectionKey = undefined;
     this.snapshot = 'Disconnected. No current native request observation.'; this.changedDocument.fire(this.uri); this.changed();
   }
+  /** Every page of the request catalog, so that a count over it is a count of all of them, not of the first page. */
+  async loadAll(): Promise<void> {
+    const model = this.model; if (!model) throw new Error('Connect Readymade before reading shared requests.');
+    await model.load(); this.current(model);
+    while (model.catalog?.next !== null && model.catalog?.next !== undefined) {await model.load(true); this.current(model);}
+    this.changed();
+  }
   /** Loaded requests of this project still waiting for the owner's permission review; undefined before any were loaded. */
   waiting(project?: string): number | undefined {
     if (!this.model || !this.model.catalog) return undefined;
