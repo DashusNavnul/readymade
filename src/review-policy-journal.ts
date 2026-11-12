@@ -5,7 +5,7 @@ import { digest, originOf } from './source-store';
 import { reviewGeneration, reviewPolicy, reviewPolicyCommand, reviewProvider, type ReviewPolicyChange } from './review-policy';
 import type { ShipClient } from './ship-client';
 
-type Client = Pick<ShipClient, 'origin' | 'codingState' | 'configureReviewPolicy'>;
+type Client = Pick<ShipClient, 'origin' | 'codingState' | 'configureReviewPolicy'> & {assertIdle?(): void};
 export interface ReviewPolicyIntent {
   version: 1; origin: string; owner: string; session: string; project: string; change: ReviewPolicyChange;
 }
@@ -52,6 +52,8 @@ export class ReviewPolicyJournal {
     reviewPolicyCommand(state, intent.session, intent.project, intent.change, true);
     const data = JSON.stringify(intent);
     if (Buffer.byteLength(data) > 32768) throw new Error('Review policy intent exceeds its limit.');
+    // A client that could not send now would leave a recorded intent that was never sent and is never sent again.
+    client.assertIdle?.();
     const fd = fs.openSync(join(this.directory, this.key(intent) + '.intent.json'), 'wx', 0o600);
     try {fs.writeFileSync(fd, data); fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
     const directory = fs.openSync(this.directory, fs.constants.O_RDONLY);

@@ -14,7 +14,7 @@ export interface CandidateIntent {
 export interface DraftRecord { id: string; uri: string; snapshot: SourceSnapshot; text: string; updatedAt: number; pending?: CandidateIntent }
 export type DraftReconciliation = {kind: 'merged'; draft: DraftRecord} | Extract<DraftMerge, {kind: 'conflict'}>;
 interface Saved extends DraftRecord { version: 1 }
-type CandidateClient = Pick<ShipClient, 'origin' | 'snapshot' | 'codingTool'>;
+type CandidateClient = Pick<ShipClient, 'origin' | 'snapshot' | 'codingTool'> & {assertIdle?(): void};
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function editable(text: string): boolean { return validUnicode(text) && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(text); }
 function uid(): number | undefined { return process.getuid?.(); }
@@ -149,6 +149,8 @@ export class DraftStore {
     const input = candidateCommand(snapshot, row.text);
     if (Buffer.byteLength(input) > 65_536) throw new Error('Candidate command exceeds the native byte limit.');
     const pending: CandidateIntent = { nonce: current.nonce, input, text: row.text, phase: 'issued' };
+    // A client that could not send now would leave a recorded intent that was never sent and is never sent again.
+    client.assertIdle?.();
     this.commit({ ...row, pending, updatedAt: Date.now() });
     try {
       const reply = await client.codingTool(snapshot.session, snapshot.source.id, input);

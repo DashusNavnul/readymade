@@ -6,7 +6,7 @@ import {codingHistory} from './coding-history';
 import {readCheck} from './check-store';
 import type {ShipClient} from './ship-client';
 
-type Client = Pick<ShipClient, 'origin' | 'codingState' | 'codingTool'>;
+type Client = Pick<ShipClient, 'origin' | 'codingState' | 'codingTool'> & {assertIdle?(): void};
 export interface EvaluationIntent {version: 1; id: string; snapshot: SourceSnapshot; project: string; expression: string; fuel: 300000; nonce: string; after: number}
 export interface EvaluationRecord extends EvaluationIntent {request?: string; result?: JsonObject; phase: 'unknown' | 'pending' | 'complete'; output?: string}
 const clone = <T>(value: T): T => structuredClone(value);
@@ -103,6 +103,8 @@ export class EvaluationStore {
     this.ensure(); const lock = join(this.directory, '.claim.lock'), fd = fs.openSync(lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600), own = fs.fstatSync(fd);
     try {
       const held = this.list(); if (held.length >= 64 || held.some(r => r.snapshot.origin === snapshot.origin && r.snapshot.ship === snapshot.ship && r.snapshot.session === snapshot.session && r.phase !== 'complete')) throw new Error('Observe the retained evaluation first. Unknown requests are never resent.');
+      // A client that could not send now would leave a recorded intent that was never sent and is never sent again.
+      client.assertIdle?.();
       this.write(this.file(id, 'intent'), i);
     } finally {fs.closeSync(fd); const current = fs.lstatSync(lock); if (current.ino === own.ino && current.dev === own.dev) fs.unlinkSync(lock);}
     // The immutable intent is durable before the only POST. No automatic retry.

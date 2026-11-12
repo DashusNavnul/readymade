@@ -6,7 +6,7 @@ import { digest, originOf } from './source-store';
 import { observeCompletion, readCompletion, type CompletionContext, type CompletionProposal } from './completion-store';
 import { ShipClientError, type ShipClient } from './ship-client';
 
-type Client = Pick<ShipClient, 'origin' | 'codingState' | 'requestJSON' | 'acceptCompletion'>;
+type Client = Pick<ShipClient, 'origin' | 'codingState' | 'requestJSON' | 'acceptCompletion'> & {assertIdle?(): void};
 export interface CompletionIntent {
   version: 1; attempt: string; origin: string; context: CompletionContext; proposal: CompletionProposal; reason: string;
 }
@@ -107,6 +107,8 @@ export class CompletionJournal {
     if (freshEntries.length >= 4096 || sessionEntries.some(e => !e.receipt && !e.refusal || e.receipt && e.intent.proposal.digest === intent.proposal.digest)) throw new Error('Observe the retained completion intent; it will not be submitted again.');
     // Every proposal for this session competes for the same next immutable slot.
     // Exclusive creation remains atomic across processes; settled slots are never deleted or reused.
+    // A client that could not send now would leave a recorded intent that was never sent and is never sent again.
+    client.assertIdle?.();
     this.create(join(this.directory, `${this.sessionKey(intent)}.${sessionEntries.length}.intent.json`), intent);
     // A failed send leaves the intent intact. Only exact canonical recovery can settle it.
     try {await client.acceptCompletion(intent.context, intent.proposal.digest, intent.reason, true);}

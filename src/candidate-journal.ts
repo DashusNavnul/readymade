@@ -6,7 +6,7 @@ import { observeCandidates, readCandidate, type CandidateReview } from './candid
 import { candidateCampaigns, type CandidateCampaigns } from './candidate-campaign';
 import type { ShipClient } from './ship-client';
 
-type Client = Pick<ShipClient, 'origin' | 'codingState' | 'startCandidateReview'>;
+type Client = Pick<ShipClient, 'origin' | 'codingState' | 'startCandidateReview'> & {assertIdle?(): void};
 export interface CandidateIntent {
   version: 1; origin: string; owner: string; project: string; session: string;
   candidate: CandidateReview; scope: NonNullable<CandidateCampaigns['scope']>;
@@ -58,6 +58,8 @@ export class CandidateJournal {
         fresh.review.campaigns.some(c => c.candidate === intent.candidate.id)) throw new Error('Candidate or review scope changed. Review it again.');
     const data = JSON.stringify(intent);
     if (Buffer.byteLength(data) > 4194304) throw new Error('Candidate intent exceeds its size limit.');
+    // A client that could not send now would leave a recorded intent that was never sent and is never sent again.
+    client.assertIdle?.();
     const fd = fs.openSync(join(this.directory, this.key(intent) + '.intent.json'), 'wx', 0o600);
     try {fs.writeFileSync(fd, data); fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
     const directory = fs.openSync(this.directory, fs.constants.O_RDONLY);
@@ -79,7 +81,7 @@ export class CandidateJournal {
 }
 
 export type CandidateDecisionIntent = Omit<CandidateIntent, 'scope'>;
-type DecisionClient = Pick<ShipClient, 'origin' | 'codingState' | 'applyReviewedCandidate'>;
+type DecisionClient = Pick<ShipClient, 'origin' | 'codingState' | 'applyReviewedCandidate'> & {assertIdle?(): void};
 function decisionIntent(value: unknown): CandidateDecisionIntent {
   const r = asRecord(value), c = asRecord(r.candidate), basis = asRecord(c.basis);
   if (r.version !== 1 || typeof r.origin !== 'string' || originOf(r.origin) !== r.origin ||
@@ -128,6 +130,8 @@ export class CandidateDecisionJournal {
     if (fresh.owner !== intent.owner || JSON.stringify(fresh.candidates.find(c => c.id === intent.candidate.id)) !== JSON.stringify(intent.candidate)) throw new Error('Candidate approval changed. Review it again.');
     const data = JSON.stringify(intent);
     if (Buffer.byteLength(data) > 4194304) throw new Error('Apply intent exceeds its size limit.');
+    // A client that could not send now would leave a recorded intent that was never sent and is never sent again.
+    client.assertIdle?.();
     const fd = fs.openSync(join(this.directory, this.key(intent) + '.intent.json'), 'wx', 0o600);
     try {fs.writeFileSync(fd, data); fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
     const directory = fs.openSync(this.directory, fs.constants.O_RDONLY);
