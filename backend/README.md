@@ -19,8 +19,8 @@ a replacement for a live desk.
 The [native receiver check](install/README.md) reports identity, runtime and
 installation conflicts without writing to a ship. The current candidate contains
 ten apps, including editing activity, shared-file access, suggestion recovery,
-the owner inbox and explicit full-report completion replies (943 application
-files; 1,490 assembled desk files). The matching result and sharing code passes
+the owner inbox and explicit full-report completion replies (945 application
+files; 1,492 assembled desk files). The matching result and sharing code passes
 native compilation, its original proofs and a read-only rehearsal against the
 existing app's complete captured DATA. Previous summary-only attempts retain
 their original check-only endpoints. Source extraction and offline installer

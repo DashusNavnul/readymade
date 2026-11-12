@@ -184,7 +184,7 @@ operations governed by the ship.
 ### Backend distribution gates
 
 The [complete source assembly](../backend/README.md) reconstructs the current
-1,490-file backend from included application source and pinned public inputs:
+1,492-file backend from included application source and pinned public inputs:
 943 application files, 543 inherited or derived Urbit files, four browser assets,
 and six accompanying notice files. The ten-app installation bill is distinct
 from historical development/staging bills. Use the shipped receiver tools and

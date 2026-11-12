@@ -5,7 +5,7 @@ stage the pinned backend source, and compile the apps and prepare activation.
 Each result keeps `ready: false`; none claims a working Pataphor session merely
 because a process started or a desk was created. The staging controller has
 passed its complete native sequence on a fresh owned fake ship using the earlier
-1,463-file bundle. Fresh installation of the current 1,490-file bundle through this controller remains
+1,463-file bundle. Fresh installation of the current 1,492-file bundle through this controller remains
 unqualified. Purchased-planet installation work remains paused; real-planet boot
 and the complete first-task path remain release gates.
 

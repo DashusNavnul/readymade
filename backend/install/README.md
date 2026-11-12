@@ -85,7 +85,7 @@ See [Local planet installation](../../docs/LOCAL_PLANET_INSTALL.md) for exact
 arguments, approval-digest handling and purchase/private-delivery boundaries.
 Success is `source-staged-not-activated` with `ready: false`: this controller's
 complete native run passed on a fresh owned fake ship with the earlier 1,463-file
-bundle. Fresh installation of the current 1,490-file bundle through this controller remains unqualified;
+bundle. Fresh installation of the current 1,492-file bundle through this controller remains unqualified;
 purchased-planet installation work remains paused. This controller does not itself
 perform purchase, boot, app activation or a first Pataphor task.
 
