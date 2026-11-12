@@ -17,6 +17,7 @@ import {remoteProjectSessionsTarget, remoteProjectSessionsSelector, remoteProjec
   type RemoteProjectSessionsReply} from './remote-project-sessions';
 import {sessionSharingTarget, sessionSharingCommand, sessionSharingHeaders, sessionSharingRefusal, sessionSharingSnapshot, sessionSharingReceipt,
   type SessionSharingCommand, type SessionSharingSnapshot, type SessionSharingReceipt} from './session-sharing';
+import {shareNotices, type ShareNotices} from './share-notices';
 import {remoteSuggestionIntent, remoteSuggestionBody, remoteSuggestionHeaders, remoteSuggestionReply, remoteSuggestionRefused, remoteSuggestionRecoveryBody, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
 import {FULL_SOURCE, GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, fullDesk, fullFollowActions, guestDeskReceipt, guestDeskStatus, guestInstallActions, guestRemoveActions,
@@ -540,6 +541,17 @@ export class ShipClient {
     if (reason) throw new SessionSharingRefusedError(reply.status, reason);
     if (reply.status !== 200) failure('unavailable', reply.status);
     try {return sessionSharingSnapshot(json, target);} catch {return failure('malformed');}
+  }
+  /** What owners told this ship about shares they ended. A read only. An older collaboration service keeps no such list: null. */
+  async shareNotices(): Promise<ShareNotices | null> {
+    if (this.closed) failure('closed');
+    const peer = this.projectViewPeer(), epoch = this.generation;
+    const reply = await this.wire('/apps/readymade-collab/share-notices', 'GET', undefined, {}, {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) failure('contextChanged');
+    if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+    if (reply.status === 404) return null;
+    if (reply.status !== 200) failure('unavailable', reply.status);
+    try {return shareNotices(this.projectViewJSON(reply), peer);} catch {return failure('malformed');}
   }
   /** One explicit command, sent once and never held or replayed here. Its receipt confirms nothing: read the standing again. */
   async sessionSharingSubmit(value: SessionSharingCommand): Promise<SessionSharingReceipt> {

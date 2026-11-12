@@ -156,6 +156,7 @@
       { "command": "readymade.recoverProjectAccess", "title": "Readymade: Check Sharing Request" },
       { "command": "readymade.shareSession", "title": "Readymade: Share Agent Session" },
       { "command": "readymade.unshareSession", "title": "Readymade: Stop Sharing Agent Session" },
+      { "command": "readymade.shareSessionUntil", "title": "Readymade: Share Agent Session for a Limited Time" },
       { "command": "readymade.removeCollaborator", "title": "Readymade: Remove Collaborator from Project" },
       { "command": "readymade.projectSessionSharing", "title": "Readymade: Turn Session Sharing On or Off for This Project" },
       { "command": "readymade.configureReviewer", "title": "Readymade: Choose Project Reviewer" },

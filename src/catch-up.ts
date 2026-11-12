@@ -11,6 +11,8 @@ export interface CatchUpInput {
   readonly activity: readonly {readonly day: string; readonly text: string}[];
   readonly activityPartial: boolean;
   readonly waiting?: {readonly items: readonly string[]; readonly unchecked: readonly string[]};
+  /** What owners of other projects told this ship about shares they ended; undefined when it could not be read. */
+  readonly notices?: readonly {readonly day: string; readonly text: string}[];
   readonly conversation: readonly CatchUpEntry[];
   readonly candidates: readonly {readonly id: string; readonly project: string; readonly stage: string}[];
   readonly sessions: readonly {readonly id: string; readonly project: string}[];
@@ -29,6 +31,7 @@ export function catchUpDigest(input: CatchUpInput): string {
     `Workspace of ${input.ship}${input.project ? `, project ${input.project}` : ', no project chosen'}${input.session ? `, task ${input.session}` : ''}.`, '',
     ...(input.waiting ? section('Waiting on the owner:', [...input.waiting.items, ...(input.waiting.unchecked.length ? [`not checked: ${input.waiting.unchecked.join(', ')}`] : [])], 'nothing') : ['Waiting on the owner: not checked.', '']),
     ...section(`Project activity${input.activityPartial ? ' (suggestions could not be read)' : ''}:`, input.activity.map(row => `${row.day}: ${oneLine(row.text, 240)}`), input.project ? 'none recorded' : 'no project chosen'),
+    ...(input.notices?.length ? section('Shares that other owners ended:', input.notices.slice(0, 16).map(row => `${row.day}: ${oneLine(row.text, 240)}`), 'none') : []),
     ...section(`Requests and results${cut > 0 ? ` (the newest ${recent.length} of ${input.conversation.length})` : ''}:`,
       recent.map(row => `[${oneLine(row.id, 40)} · ${oneLine(row.status, 40)}] ${oneLine(row.request, 400)}${row.output ? ` => ${oneLine(row.output, CATCH_UP_OUTPUT)}${row.truncated ? ' [result cut short by the ship]' : ''}` : ' => no result yet'}`), 'none'),
     ...section('Proposed changes:', input.candidates.map(row => `${oneLine(row.id, 40)} in ${oneLine(row.project, 64)}: ${oneLine(row.stage, 64)}`), 'none'),

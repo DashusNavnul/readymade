@@ -6,7 +6,9 @@ import { SharingJournal } from './project-sharing-journal';
 import {sharedProjectLink} from './remote-source-view';
 import { sharingView, type SharingView } from './project-sharing';
 import {remoteSessionShortId} from './remote-project-sessions';
-import {sessionSharingSettle, sessionSharingHolds, sessionSharingMessage, type SessionSharingCommand, type SessionSharingOutcome, type SessionSharingSnapshot} from './session-sharing';
+import {sessionSharingSettle, sessionSharingHolds, sessionSharingMessage, sessionSharingWhen, SESSION_SHARING_LIMITS,
+  type SessionSharingCommand, type SessionSharingOutcome, type SessionSharingSnapshot} from './session-sharing';
+import {dateAtomText} from './editing-activity';
 
 /** One collaborator's agent-session standing, in memory only. `check` is a command whose result a later read may still show. */
 interface SessionStanding {
@@ -197,10 +199,17 @@ export class ProjectSharingView implements vscode.Disposable {
       {label: `Sessions cannot be shared: ${v.peer} is not a member of this project`, tooltip: 'Invite this ship and let it join first.'});
     else if (!v.sessions.length) rows.push({label: 'This project has no agent sessions to share'});
     // Stopping must stay reachable, so a session still shared is listed even when new sharing is not allowed.
-    for (const row of v.inspectable ? v.sessions : v.sessions.filter(row => row.shared)) rows.push({label: remoteSessionShortId(row.id),
-      description: `${row.phase} · ${row.shared ? 'shared' : 'not shared'}`, tooltip: `${row.desk} @ ${row.revision}\nSession ${row.id}\nObserved ${v.observedAt}`,
-      children: [row.shared ? {label: 'Stop sharing this session', command: {command: 'readymade.unshareSession', title: 'Stop sharing this session', arguments: [row.id]}} :
-        {label: 'Share this session', command: {command: 'readymade.shareSession', title: 'Share this session', arguments: [row.id]}}]});
+    for (const row of v.inspectable ? v.sessions : v.sessions.filter(row => row.shared)) {
+      const children: MediaTreeRow[] = [row.shared ? {label: 'Stop sharing this session', command: {command: 'readymade.unshareSession', title: 'Stop sharing this session', arguments: [row.id]}} :
+        {label: 'Share this session', command: {command: 'readymade.shareSession', title: 'Share this session', arguments: [row.id]}}];
+      // A time limit is the owner's ship ending the share by itself; an older collaboration service has none.
+      if (v.timeLimits && v.inspectable) children.push({label: !row.shared ? 'Share for a limited time…' : row.until ? 'Change the time limit…' : 'Set a time limit…',
+        command: {command: 'readymade.shareSessionUntil', title: 'Share for a limited time', arguments: [row.id]}});
+      if (row.until && v.inspectable) children.push({label: 'Remove the time limit', command: {command: 'readymade.shareSession', title: 'Remove the time limit', arguments: [row.id]}});
+      rows.push({label: remoteSessionShortId(row.id),
+        description: `${row.phase} · ${!row.shared ? 'not shared' : row.until ? `shared until ${sessionSharingWhen(row.until)}` : 'shared'}`,
+        tooltip: `${row.desk} @ ${row.revision}\nSession ${row.id}\nObserved ${v.observedAt}`, children});
+    }
     if (v.truncated) rows.push({label: 'Showing the newest 128 sessions', tooltip: 'A ship with the current collaboration service lists the newest; an older one lists the first 128.'});
     if (v.member || v.viewGrant === 'live' || v.sessions.some(row => row.shared)) rows.push({label: `Remove ${v.peer} from this project…`,
       command: {command: 'readymade.removeCollaborator', title: 'Remove collaborator'}});
@@ -224,18 +233,28 @@ export class ProjectSharingView implements vscode.Disposable {
       return outcome;
     } finally {this.settling = false;}
   }
-  async sessionSharing(operation: 'share' | 'unshare', id?: string): Promise<void> {
+  /** `share-until` asks how long, then shares (or keeps sharing) with that limit; a plain `share` has none and removes one. */
+  async sessionSharing(operation: 'share' | 'unshare' | 'share-until', id?: string): Promise<void> {
     this.sync(); const client = this.client, context = this.context, s = this.standing(), v = s?.snapshot;
     if (!client || !s || !v || this.busy) throw new Error('Choose a collaborator and read their agent sessions first.');
     this.busy = true;
     try {
-      const stop = operation === 'unshare';
-      const session = id ?? (await vscode.window.showQuickPick(v.sessions.filter(row => row.shared === stop).map(row => ({label: remoteSessionShortId(row.id),
-        description: row.phase, detail: `${row.desk} @ ${row.revision}`, id: row.id})), {title: stop ? `Stop sharing a session with ${v.peer}` : `Share a session with ${v.peer}`}))?.id;
+      const stop = operation === 'unshare', timed = operation === 'share-until';
+      if (timed && !v.timeLimits) throw new Error('The collaboration service on your ship is too old to set a time limit. Update it, then try again.');
+      const session = id ?? (await vscode.window.showQuickPick(v.sessions.filter(row => timed || row.shared === stop).map(row => ({label: remoteSessionShortId(row.id),
+        description: row.phase, detail: `${row.desk} @ ${row.revision}`, id: row.id})),
+      {title: stop ? `Stop sharing a session with ${v.peer}` : timed ? `Share a session with ${v.peer} for a limited time` : `Share a session with ${v.peer}`}))?.id;
       if (!session) return;
       if (!v.sessions.some(row => row.id === session)) throw new Error('This session is not in the list. Check again first.');
       if (!stop && !v.inspectable) throw new Error(`Sessions cannot be shared with ${v.peer} right now.`);
-      await this.settle(client, context, s, {owner: v.owner, project: v.project, peer: v.peer, operation, session}, remoteSessionShortId(session));
+      let until: string | undefined;
+      if (timed) {
+        const picked = await vscode.window.showQuickPick(SESSION_SHARING_LIMITS.map(([label, ms]) => ({label, ms})),
+          {title: `How long may ${v.peer} see this session?`, placeHolder: 'Your ship stops the share by itself when the time is up'});
+        if (!picked) return;
+        until = dateAtomText(Date.now() + picked.ms);
+      }
+      await this.settle(client, context, s, {owner: v.owner, project: v.project, peer: v.peer, operation, session, ...(until ? {until} : {})}, remoteSessionShortId(session));
     } finally {this.busy = false; this.changed();}
   }
   /** The whole project's setting, through the same one-send-then-read path. Turning it off stops every shared session at once. */

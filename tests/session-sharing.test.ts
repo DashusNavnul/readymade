@@ -4,8 +4,9 @@ import * as http from 'node:http';
 import {once} from 'node:events';
 import type {AddressInfo} from 'node:net';
 import {ShipClient, ShipClientError, OutcomeUnknownError, SessionSharingRefusedError} from '../src/ship-client';
+import {dateAtom, dateAtomMillis, dateAtomText} from '../src/editing-activity';
 import {sessionSharingSnapshot, sessionSharingReceipt, sessionSharingCommand, sessionSharingTarget, sessionSharingHeaders, sessionSharingRefusal, sessionSharingHolds,
-  sessionSharingConfirm, sessionSharingSettle, sessionSharingMessage, SESSION_SHARING_PHASES, SESSION_SHARING_REASONS, SESSION_SHARING_ROLES,
+  sessionSharingConfirm, sessionSharingSettle, sessionSharingMessage, sessionSharingWhen, SESSION_SHARING_LIMITS, SESSION_SHARING_PHASES, SESSION_SHARING_REASONS, SESSION_SHARING_ROLES,
   type SessionSharingClient, type SessionSharingCommand, type SessionSharingReceipt} from '../src/session-sharing';
 
 const target = {owner: '~zod', project: 'café-共同', peer: '~nec'}, id = '0x5e55.2002';
@@ -21,7 +22,8 @@ const many = (count: number) => Array.from({length: count}, (_, i) => row('0x' +
 
 test('a standing decodes to an immutable snapshot for every role, phase and grant state', () => {
   const source = state(SESSION_SHARING_PHASES.map((phase, i) => row('0x' + (i + 1).toString(16), i % 2 === 0, {phase}))), seen = decode(source);
-  assert.deepEqual(seen.sessions.map(s => s.phase), [...SESSION_SHARING_PHASES]); assert.deepEqual(seen.sessions[0], {id: '0x1', phase: 'idle', desk: 'pataphor-native-work', revision: '1', shared: true, inspection: '0x595.9100'});
+  assert.deepEqual(seen.sessions.map(s => s.phase), [...SESSION_SHARING_PHASES]); assert.deepEqual(seen.sessions[0], {id: '0x1', phase: 'idle', desk: 'pataphor-native-work', revision: '1', shared: true, inspection: '0x595.9100', until: null});
+  assert.equal(seen.timeLimits, false);
   assert.equal(seen.sessions[1].inspection, null); assert.equal(seen.owner, '~zod'); assert.equal(seen.peer, '~nec'); assert.equal(seen.project, target.project);
   assert.ok(Object.isFrozen(seen) && Object.isFrozen(seen.sessions) && Object.isFrozen(seen.sessions[0]));
   (source.sessions[0] as {shared: boolean}).shared = false; assert.equal(seen.sessions[0].shared, true);
@@ -55,7 +57,7 @@ test('commands carry exactly a colon-free target, an operation and the right ses
   for (const session of [id, '0x1', '']) assert.throws(() => sessionSharingCommand({...remove, session}));
   const partial: Record<string, unknown> = {...share}; delete partial.session; assert.throws(() => sessionSharingCommand(partial));
   const headers = sessionSharingHeaders(target);
-  assert.deepEqual(Object.keys(headers), ['x-readymade-project', 'x-readymade-project-peer']); assert.equal(headers['x-readymade-project-peer'], '~nec');
+  assert.deepEqual(Object.keys(headers), ['x-readymade-project', 'x-readymade-project-peer', 'x-readymade-session-sharing-terms']); assert.equal(headers['x-readymade-session-sharing-terms'], 'v1'); assert.equal(headers['x-readymade-project-peer'], '~nec');
   assert.equal(Buffer.from(headers['x-readymade-project'], 'latin1').toString('utf8'), target.project);
 });
 
@@ -273,4 +275,48 @@ test('the project-wide setting decodes, commands name no session, holds reads th
   assert.match(sessionSharingMessage(off, {status: 'refused', reason: 'session-sharing-project-not-private'}), /readable by other ships/);
   assert.equal(decode(state([], {sessionSharingBlocked: 'project-not-private'})).sessionSharingBlocked, 'project-not-private');
   assert.throws(() => decode(state([], {inspectable: false, sessionSharing: 'unregistered', sessionSharingBlocked: 'work-not-isolated'})));
+});
+
+test('a ship-printed moment and a clock time convert both ways, exactly as the ship prints them', () => {
+  // Measured on a ship: (scot %da ~2027.1.9) is '~2027.01.09', and its seconds are 0x8000000d39df8600.
+  assert.equal(dateAtom('~2027.01.09') >> 64n, 0x8000000d39df8600n);
+  assert.equal(dateAtomMillis('~2027.01.09'), Date.UTC(2027, 0, 9));
+  assert.equal(dateAtomText(Date.UTC(2027, 0, 9)), '~2027.01.09'); // Midnight has no time part.
+  assert.equal(dateAtomText(Date.UTC(2026, 11, 1, 1, 2, 3)), '~2026.12.01..01.02.03');
+  assert.equal(dateAtomText(Date.UTC(2026, 10, 12, 23, 59, 59) + 1), '~2026.11.13'); // Rounds up to the next whole second.
+  assert.equal(dateAtomMillis('~2026.11.12..02.00.20..8000'), Date.UTC(2026, 10, 12, 2, 0, 20) + 500);
+  for (const ms of [Date.UTC(2026, 10, 12, 2, 0, 20), Date.UTC(2028, 1, 29, 0, 0, 1), Date.UTC(2030, 5, 30, 12, 0, 0)]) assert.equal(dateAtomMillis(dateAtomText(ms)), ms);
+  for (const bad of [NaN, -1, Infinity]) assert.throws(() => dateAtomText(bad));
+});
+
+test('a ship that keeps time limits says when each share ends; an older ship says nothing and is still read', () => {
+  const until = '~2026.11.12..03.00.00', v2 = (sessions: unknown[], patch: object = {}) => state(sessions, {schema: 'readymade-session-sharing-v2', ...patch});
+  const seen = decode(v2([row('0x1', true, {until}), row('0x2', true, {until: null}), row('0x3', false, {until: null})]));
+  assert.equal(seen.timeLimits, true); assert.deepEqual(seen.sessions.map(s => s.until), [until, null, null]);
+  // A limit on a session that is not shared, a malformed moment, a missing key, or the key in the first shape are all refused.
+  for (const bad of [v2([row('0x1', false, {until})]), v2([row('0x1', true, {until: '2026-11-12'})]), v2([row('0x1', true, {until: 5})]), v2([row('0x1', true)]),
+    state([row('0x1', true, {until: null})]), state([row('0x1', true)], {schema: 'readymade-session-sharing-v3'})]) assert.throws(() => decode(bad));
+  const timed: SessionSharingCommand = {...share, operation: 'share-until', until};
+  assert.deepEqual(sessionSharingCommand(timed), timed);
+  for (const bad of [{...timed, until: 'tomorrow'}, {...timed, until: undefined}, {...share, until}, {...timed, session: '0x0'}, {...remove, operation: 'share-until', until}])
+    assert.throws(() => sessionSharingCommand(bad));
+  const partial: Record<string, unknown> = {...timed}; delete partial.until; assert.throws(() => sessionSharingCommand(partial));
+  // The ship names a timed share "share" in its receipt; any other name is not this command's receipt.
+  assert.equal(sessionSharingReceipt(202, receipt('share'), timed).operation, 'share-until');
+  assert.throws(() => sessionSharingReceipt(202, receipt('share-until'), timed)); assert.throws(() => sessionSharingReceipt(202, receipt('unshare'), timed));
+  // Held only when the ship shows that very moment; a plain share is held only with no limit.
+  const at = (value: string | null) => decode(v2([row(id, true, {until: value})]));
+  assert.equal(sessionSharingHolds(timed, at(until)), true); assert.equal(sessionSharingHolds(timed, at(null)), false); assert.equal(sessionSharingHolds(timed, at('~2026.11.12..04.00.00')), false);
+  assert.equal(sessionSharingHolds(share, at(null)), true); assert.equal(sessionSharingHolds(share, at(until)), false);
+  assert.equal(sessionSharingHolds(unshare, at(until)), false); assert.equal(sessionSharingHolds(unshare, decode(v2([row(id, false, {until: null})]))), true);
+  assert.equal(sessionSharingHolds(share, decode(state([row(id, true)]))), true); // An older ship: shared is all there is to show.
+  const when = sessionSharingWhen(until);
+  assert.equal(sessionSharingMessage(timed, {status: 'confirmed', holds: true, snapshot: at(until)}, 'S'), `Session S is shared with ~nec until ${when}.`);
+  assert.equal(sessionSharingMessage(timed, {status: 'unchanged', holds: true, snapshot: at(until)}, 'S'), `Session S is shared with ~nec until ${when}.`);
+  assert.equal(sessionSharingMessage(share, {status: 'unchanged', holds: true, snapshot: at(null)}, 'S'), 'Session S is shared with ~nec, with no time limit.');
+  assert.equal(sessionSharingMessage(share, {status: 'unchanged', holds: true, snapshot: decode(state([row(id, true)]))}, 'S'), 'Session S was already shared with ~nec.');
+  assert.match(sessionSharingMessage(timed, {status: 'refused', reason: 'share-limit-out-of-range'}), /between one minute and 366 days.*Nothing was changed/);
+  assert.match(sessionSharingMessage(timed, {status: 'refused', reason: 'session-sharing-command-required'}), /too old/);
+  assert.equal(sessionSharingRefusal(409, {status: 'refused', message: 'share-limit-capacity'}, true), 'share-limit-capacity');
+  assert.ok(SESSION_SHARING_LIMITS.every(([label, ms]) => label && ms >= 60_000 && ms <= 366 * 86_400_000));
 });

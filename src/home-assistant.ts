@@ -50,6 +50,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   spec('readymade.revokeProjectAccess', 'Revoke Project Access', 'Stop a collaborator reading project files.'),
   spec('readymade.shareSession', 'Share Agent Session', 'Let collaborators watch a coding session.'),
   spec('readymade.unshareSession', 'Stop Sharing Agent Session', 'Stop sharing a coding session.'),
+  spec('readymade.shareSessionUntil', 'Share Agent Session for a Limited Time', 'Share a coding session that stops being shared by itself after a chosen time.'),
   spec('readymade.projectSessionSharing', 'Turn Session Sharing On or Off', 'Turn session sharing on or off for the whole project.'),
   spec('readymade.shareActivity', 'Share Activity', 'Show collaborators which file you have open.'),
   spec('readymade.stopActivity', 'Stop Sharing Activity', 'Stop showing collaborators which file you have open.'),

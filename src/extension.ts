@@ -60,6 +60,7 @@ import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
 import { askAssistant, askAssistantSummary } from './home-assistant';
 import { CATCH_UP_SYSTEM, catchUpDigest, catchUpDocument, type CatchUpInput } from './catch-up';
+import { shareNoticeLines, shareNoticeText, shareNoticesUnseen, type ShareNotices } from './share-notices';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -187,6 +188,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       vscode.workspace.registerFileSystemProvider('readymade-remote-draft', remoteProvider, {isCaseSensitive: true}),
       vscode.workspace.registerFileSystemProvider('readymade-remote-original', remoteProvider, {isCaseSensitive: true, isReadonly: true}));
     const draftErrors = new Set<string>();
+    // Coming back to the window is when a person wants to know what an owner ended meanwhile. An event, never a timer.
+    this.registrations.push(vscode.window.onDidChangeWindowState(state => {if (state.focused) void this.checkShareNotices();}));
     this.registrations.push(vscode.workspace.onDidChangeTextDocument(event => {
       if (event.document.uri.scheme !== 'readymade-remote-draft' || !event.contentChanges.length) return;
       const uri = event.document.uri.toString();
@@ -277,7 +280,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('refreshSharedProject', () => this.remoteSource.refresh());
     command('checkSharedProject', () => this.remoteSource.check());
     command('refreshSharedActivity', () => this.remoteSource.refreshActivity());
-    command('refreshSharedSessions', (owner, project) => this.remoteSource.refreshSessions(owner, project));
+    command('refreshSharedSessions', async (owner, project) => {await this.remoteSource.refreshSessions(owner, project); void this.checkShareNotices(true);});
     command('openSharedActivityFile', ship => this.remoteSource.openActivityFile(String(ship)));
     command('openSharedSource', uri => this.remoteSource.openFile(uri));
     command('editSharedDraft', path => this.remoteSource.editDraft(typeof path === 'string' ? path : undefined));
@@ -376,6 +379,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('recoverProjectAccess', request => this.projectSharing.recover(String(request)));
     command('shareSession', session => this.projectSharing.sessionSharing('share', typeof session === 'string' ? session : undefined));
     command('unshareSession', session => this.projectSharing.sessionSharing('unshare', typeof session === 'string' ? session : undefined));
+    command('shareSessionUntil', session => this.projectSharing.sessionSharing('share-until', typeof session === 'string' ? session : undefined));
     command('removeCollaborator', () => this.projectSharing.removeCollaborator());
     command('projectSessionSharing', setting => this.projectSharing.projectSessionSharing(setting === 'on' ? true : setting === 'off' ? false : undefined));
     command('reviewAnswer', session => this.answerReview.observe(typeof session === 'string' ? session : undefined));
@@ -499,6 +503,26 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   }
   private waiting?: WaitingReport;
   private checkingWaiting = false;
+  private heldShareNotices?: ShareNotices;
+  private shareNoticesChecked = 0;
+  /**
+   * Reads what owners of other projects told this ship about shares they ended, and says what is new, once.
+   * A read only. Without `force` it reads at most once a minute. An older collaboration service keeps no list.
+   */
+  private async checkShareNotices(force = false): Promise<void> {
+    const client = this.media.connectedClient;
+    if (!client || !force && Date.now() - this.shareNoticesChecked < 60_000) return;
+    this.shareNoticesChecked = Date.now();
+    let list: ShareNotices | null;
+    try {list = await client.shareNotices();} catch {return;}
+    if (!list || this.media.connectedClient !== client) return;
+    this.heldShareNotices = list;
+    const key = `readymade.shareNoticesSeen:${client.origin}:${list.peer}`, fresh = shareNoticesUnseen(list, this.context.globalState.get(key));
+    if (!fresh.length) return;
+    await this.context.globalState.update(key, fresh[0].at);
+    void vscode.window.showWarningMessage(fresh.length === 1 ? shareNoticeText(fresh[0]) :
+      `${shareNoticeText(fresh[0])} ${fresh.length - 1} more ${fresh.length === 2 ? 'notice like this is' : 'notices like this are'} listed in Catch Me Up.`);
+  }
   /**
    * The owner inbox: ask each existing screen for its own current state, then count what needs the owner.
    * Each source is read on its own; one that cannot be read (no project, a busy ship) is named as not checked.
@@ -512,6 +536,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const client = this.requireClient(), project = this.selectedProject;
     this.snapshot = await client.workspaceState();
     if (project) {try {await this.readActivity();} catch { /* shown as none recorded */ } try {await this.checkWaiting();} catch { /* shown as not checked */ }}
+    await this.checkShareNotices(true);
     if (this.requireClient() !== client || this.selectedProject !== project) throw new Error('The connection or project changed; ask again.');
     const rows = (value: unknown) => Array.isArray(value) ? value as JsonObject[] : [], text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
     const feed = this.feed && this.feed.project === project ? this.feed : undefined;
@@ -519,6 +544,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       ship: text(this.snapshot.ship) || client.origin, project, session: this.selectedSession && this.selectedSession !== '0x0' ? this.selectedSession : undefined,
       activity: feed?.entries ?? [], activityPartial: feed?.partial ?? false,
       waiting: project && this.waiting ? {items: this.waiting.items.map(item => item.label), unchecked: this.waiting.unchecked} : undefined,
+      notices: this.heldShareNotices && this.heldShareNotices.peer === this.snapshot.ship ? shareNoticeLines(this.heldShareNotices) : undefined,
       conversation: rows((this.snapshot.conversation as JsonObject | undefined)?.entries).map(row => ({id: text(row.id), status: text(row.status), request: text(row.request),
         output: typeof row.output === 'string' && row.output ? row.output : undefined, truncated: Number(row.outputBytes) > Buffer.byteLength(text(row.output))})),
       candidates: rows(this.snapshot.candidates).map(row => ({id: text(row.id), project: text(row.project), stage: text(row.stage)})),
@@ -657,6 +683,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (preference) await this.context.workspaceState.update(projectSessionSelectionKey(client.origin, snapshot.ship, preference.project), preference);
       for (const draft of this.drafts.list()) if (draft.pending && draft.snapshot.origin === client.origin && draft.snapshot.session === selectedSession) this.drafts.observe(draft.id, client.snapshot!);
       this.status.text = `$(remote) ${snapshot.ship}`; this.status.command = 'readymade.refresh'; this.render();
+      void this.checkShareNotices(true);
     } finally { this.connecting = false; }
   }
   async refresh(session = this.selectedSession): Promise<void> {

@@ -64,6 +64,22 @@ export function dateAtom(v: unknown): bigint {
   return atom;
 }
 
+/** Seconds from the @da epoch to 1970-01-01, as Urbit counts them. */
+const UNIX_EPOCH_SECONDS = 0x8000000cce9e0d80n;
+/** The moment a ship-printed date names, in milliseconds since 1970. */
+export function dateAtomMillis(v: unknown): number {
+  const atom = dateAtom(v);
+  return Number(((atom >> 64n) - UNIX_EPOCH_SECONDS) * 1000n + (((atom & ((1n << 64n) - 1n)) * 1000n) >> 64n));
+}
+/** A whole second exactly as a ship prints it (`~2026.11.12..01.00.00`; midnight has no time part). Rounds up. */
+export function dateAtomText(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0 || ms > 8.64e15) return invalid();
+  const d = new Date(Math.ceil(ms / 1000) * 1000), two = (n: number) => String(n).padStart(2, '0');
+  const day = `~${d.getUTCFullYear()}.${two(d.getUTCMonth() + 1)}.${two(d.getUTCDate())}`;
+  const time = [d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()];
+  return time.some(Boolean) ? `${day}..${time.map(two).join('.')}` : day;
+}
+
 /** Validation constructs a fresh command; it never posts, grants, or retries. */
 export function activityCommand(value: unknown): ActivityCommand {
   const r = record(value), base = target(r), common = ['owner', 'project', 'operation'];

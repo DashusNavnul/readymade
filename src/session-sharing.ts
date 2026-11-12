@@ -1,4 +1,4 @@
-import {dateAtom} from './editing-activity';
+import {dateAtom, dateAtomMillis} from './editing-activity';
 import {asRecord, validUnicode, type JsonObject} from './protocol';
 import {remoteShip} from './remote-project-view';
 
@@ -7,18 +7,28 @@ export const SESSION_SHARING_ROLES = ['operator', 'maintainer', 'contributor', '
 export const SESSION_SHARING_REASONS = ['session-sharing-owner-required', 'session-sharing-native-unavailable', 'session-sharing-project-missing',
   'session-sharing-foreign-project', 'session-sharing-sessions-invalid', 'session-sharing-self', 'session-sharing-project-unregistered',
   'session-sharing-not-inspectable', 'session-sharing-session-missing', 'session-sharing-grant-invalid', 'session-sharing-grant-collision',
-  'session-sharing-policy-invalid', 'session-sharing-project-not-private', 'session-sharing-project-desk-missing', 'session-sharing-work-not-isolated'] as const;
+  'session-sharing-policy-invalid', 'session-sharing-project-not-private', 'session-sharing-project-desk-missing', 'session-sharing-work-not-isolated',
+  'share-limit-out-of-range', 'share-limit-capacity'] as const;
 export const SESSION_SHARING_BLOCKERS = ['project-not-private', 'project-desk-missing', 'work-not-isolated'] as const;
 export const SESSION_SHARING_MAX = 128;
-/** `sharing-on` / `sharing-off` set the whole project's policy; like `remove` they name no session (0x0). */
-export type SessionSharingOperation = 'share' | 'unshare' | 'remove' | 'sharing-on' | 'sharing-off';
+/** `sharing-on` / `sharing-off` set the whole project's policy; like `remove` they name no session (0x0).
+ *  `share-until` shares a session (or keeps it shared) and sets the moment the share ends by itself; a plain `share` has no limit. */
+export type SessionSharingOperation = 'share' | 'share-until' | 'unshare' | 'remove' | 'sharing-on' | 'sharing-off';
+/** The time limits offered. The ship accepts any moment from one minute to 366 days ahead. */
+export const SESSION_SHARING_LIMITS = [['1 hour', 3_600_000], ['8 hours', 28_800_000], ['1 day', 86_400_000], ['1 week', 604_800_000], ['30 days', 2_592_000_000]] as const;
 const PROJECT_WIDE = ['remove', 'sharing-on', 'sharing-off'];
 export interface SessionSharingTarget {readonly owner: string; readonly project: string; readonly peer: string}
 /** `session` is the id exactly as a read returned it; removal names no session and carries the literal 0x0. */
-export interface SessionSharingCommand extends SessionSharingTarget {readonly operation: SessionSharingOperation; readonly session: string}
+export interface SessionSharingCommand extends SessionSharingTarget {
+  readonly operation: SessionSharingOperation; readonly session: string;
+  /** Only with `share-until`: the moment the share ends, exactly as a ship prints a date. */
+  readonly until?: string;
+}
 export interface SessionSharingRow {
   readonly id: string; readonly phase: typeof SESSION_SHARING_PHASES[number]; readonly desk: string; readonly revision: string;
   readonly shared: boolean; readonly inspection: string | null;
+  /** When this share ends by itself. Null when it has no limit, is not shared, or the ship does not say. */
+  readonly until: string | null;
 }
 export interface SessionSharingSnapshot extends SessionSharingTarget {
   readonly observedAt: string; readonly member: boolean; readonly role: typeof SESSION_SHARING_ROLES[number] | null; readonly inspectable: boolean;
@@ -27,6 +37,8 @@ export interface SessionSharingSnapshot extends SessionSharingTarget {
   readonly sessionSharing: 'unregistered' | 'off' | 'on';
   /** Why the owner's ship would refuse to change that setting now, if it would. */
   readonly sessionSharingBlocked: typeof SESSION_SHARING_BLOCKERS[number] | null;
+  /** Does this ship's collaboration service understand time limits on shares? An older one does not. */
+  readonly timeLimits: boolean;
 }
 /** What was sent, never what happened. */
 export interface SessionSharingReceipt {readonly status: 'submitted' | 'unchanged'; readonly operation: SessionSharingOperation; readonly pokes: number; readonly confirmed: false}
@@ -58,14 +70,17 @@ export function sessionSharingTarget(value: unknown): SessionSharingTarget {
   return Object.freeze({owner: r.owner, project: r.project, peer: r.peer});
 }
 export function sessionSharingCommand(value: unknown): SessionSharingCommand {
-  const r = exact(value, ['owner', 'project', 'peer', 'operation', 'session']);
+  const timed = asRecord(value).operation === 'share-until';
+  const r = exact(value, ['owner', 'project', 'peer', 'operation', 'session', ...(timed ? ['until'] : [])]);
   const target = sessionSharingTarget({owner: r.owner, project: r.project, peer: r.peer});
-  if (PROJECT_WIDE.includes(String(r.operation)) ? r.session !== '0x0' : !(r.operation === 'share' || r.operation === 'unshare') || !ux(r.session)) invalid();
-  return Object.freeze({...target, operation: r.operation as SessionSharingOperation, session: r.session as string});
+  if (PROJECT_WIDE.includes(String(r.operation)) ? r.session !== '0x0' : !['share', 'share-until', 'unshare'].includes(String(r.operation)) || !ux(r.session)) invalid();
+  if (timed) try {dateAtom(r.until);} catch {invalid();}
+  return Object.freeze({...target, operation: r.operation as SessionSharingOperation, session: r.session as string, ...(timed ? {until: r.until as string} : {})});
 }
+/** The last header asks for time limits; a ship that does not know it answers in the first shape. */
 export function sessionSharingHeaders(value: unknown): Record<string, string> {
   const t = sessionSharingTarget(value);
-  return {'x-readymade-project': Buffer.from(t.project, 'utf8').toString('latin1'), 'x-readymade-project-peer': t.peer};
+  return {'x-readymade-project': Buffer.from(t.project, 'utf8').toString('latin1'), 'x-readymade-project-peer': t.peer, 'x-readymade-session-sharing-terms': 'v1'};
 }
 /** The exact refusals the owner's ship issues. Each one means nothing was changed by this request. */
 export function sessionSharingRefusal(status: number, value: unknown, post: boolean): string | undefined {
@@ -83,7 +98,8 @@ export function sessionSharingRefusal(status: number, value: unknown, post: bool
 export function sessionSharingSnapshot(value: unknown, expected: SessionSharingTarget): SessionSharingSnapshot {
   const wanted = sessionSharingTarget(expected);
   const r = exact(value, ['schema', 'owner', 'project', 'peer', 'observedAt', 'member', 'role', 'inspectable', 'viewGrant', 'truncated', 'sessionSharing', 'sessionSharingBlocked', 'sessions']);
-  if (r.schema !== 'readymade-session-sharing-v1' || r.owner !== wanted.owner || r.project !== wanted.project || r.peer !== wanted.peer ||
+  const timeLimits = r.schema === 'readymade-session-sharing-v2';
+  if (!timeLimits && r.schema !== 'readymade-session-sharing-v1' || r.owner !== wanted.owner || r.project !== wanted.project || r.peer !== wanted.peer ||
       typeof r.member !== 'boolean' || typeof r.inspectable !== 'boolean' || typeof r.truncated !== 'boolean' ||
       (r.member ? typeof r.role !== 'string' || !(SESSION_SHARING_ROLES as readonly string[]).includes(r.role) : r.role !== null) ||
       typeof r.viewGrant !== 'string' || !['none', 'live', 'revoked'].includes(r.viewGrant) ||
@@ -93,25 +109,30 @@ export function sessionSharingSnapshot(value: unknown, expected: SessionSharingT
   dateAtom(r.observedAt);
   let prior = 0n;
   const sessions = r.sessions.map(value => {
-    const s = exact(value, ['id', 'phase', 'desk', 'revision', 'shared', 'inspection']);
+    const s = exact(value, ['id', 'phase', 'desk', 'revision', 'shared', 'inspection', ...(timeLimits ? ['until'] : [])]);
+    const until = timeLimits ? s.until : null;
+    if (until !== null) {if (!s.shared) invalid(); try {dateAtom(until);} catch {invalid();}}
     if (!ux(s.id) || typeof s.phase !== 'string' || !(SESSION_SHARING_PHASES as readonly string[]).includes(s.phase) ||
         typeof s.desk !== 'string' || !/^[a-z][a-z0-9-]{0,127}$/.test(s.desk) || !ud(s.revision) || typeof s.shared !== 'boolean' ||
         (s.shared ? !ux(s.inspection) : s.inspection !== null)) invalid();
     const id = BigInt(s.id.replaceAll('.', ''));
     if (id <= prior) invalid(); prior = id; // Ascending, so an id can appear only once.
-    return Object.freeze({id: s.id, phase: s.phase as SessionSharingRow['phase'], desk: s.desk, revision: s.revision, shared: s.shared, inspection: s.inspection as string | null});
+    return Object.freeze({id: s.id, phase: s.phase as SessionSharingRow['phase'], desk: s.desk, revision: s.revision, shared: s.shared, inspection: s.inspection as string | null,
+      until: until as string | null});
   });
   return Object.freeze({...wanted, observedAt: r.observedAt as string, member: r.member, role: r.role as SessionSharingSnapshot['role'], inspectable: r.inspectable,
     viewGrant: r.viewGrant as SessionSharingSnapshot['viewGrant'], truncated: r.truncated, sessionSharing: r.sessionSharing as SessionSharingSnapshot['sessionSharing'],
-    sessionSharingBlocked: r.sessionSharingBlocked as SessionSharingSnapshot['sessionSharingBlocked'],
+    sessionSharingBlocked: r.sessionSharingBlocked as SessionSharingSnapshot['sessionSharingBlocked'], timeLimits,
     sessions: Object.freeze(sessions)});
 }
 export function sessionSharingReceipt(status: number, value: unknown, command: SessionSharingCommand): SessionSharingReceipt {
   const r = exact(value, ['schema', 'status', 'operation', 'pokes', 'confirmed']);
-  if (status !== 202 || r.schema !== 'readymade-session-sharing-receipt-v1' || r.operation !== sessionSharingCommand(command).operation || r.confirmed !== false ||
+  // The ship names a timed share by what it does to the grant: "share".
+  const sent = sessionSharingCommand(command).operation, named = sent === 'share-until' ? 'share' : sent;
+  if (status !== 202 || r.schema !== 'readymade-session-sharing-receipt-v1' || r.operation !== named || r.confirmed !== false ||
       !(r.status === 'submitted' || r.status === 'unchanged') || typeof r.pokes !== 'number' || !Number.isSafeInteger(r.pokes) || r.pokes < 0 || r.pokes > 256 ||
       (r.status === 'unchanged') !== (r.pokes === 0)) invalid();
-  return Object.freeze({status: r.status, operation: r.operation as SessionSharingOperation, pokes: r.pokes, confirmed: false});
+  return Object.freeze({status: r.status, operation: sent, pokes: r.pokes, confirmed: false});
 }
 /** Does this read show what the command asked for? A session that is not listed proves nothing. */
 export function sessionSharingHolds(command: SessionSharingCommand, snapshot: SessionSharingSnapshot): boolean {
@@ -119,7 +140,14 @@ export function sessionSharingHolds(command: SessionSharingCommand, snapshot: Se
   if (command.operation === 'sharing-on') return snapshot.sessionSharing === 'on';
   if (command.operation === 'sharing-off') return snapshot.sessionSharing === 'off';
   const row = snapshot.sessions.find(row => row.id === command.session);
-  return row !== undefined && row.shared === (command.operation === 'share');
+  if (row === undefined) return false;
+  if (command.operation === 'unshare') return !row.shared;
+  // A timed share holds when the ship shows that very moment; a plain share when it shows no limit.
+  return row.shared && row.until === (command.operation === 'share-until' ? command.until : null);
+}
+/** A ship-printed moment in the reader's own time zone. */
+export function sessionSharingWhen(until: string): string {
+  return new Date(dateAtomMillis(until)).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
 }
 /** Reads until the requested state shows or about ten seconds pass. It never sends anything. */
 export async function sessionSharingConfirm(client: SessionSharingClient, command: SessionSharingCommand, seen: (snapshot: SessionSharingSnapshot) => void = () => {},
@@ -173,10 +201,17 @@ export function sessionSharingMessage(command: SessionSharingCommand, outcome: S
       'session-sharing-policy-invalid': 'Your ship could not change this project\'s policy.',
       'session-sharing-project-not-private': 'This project\'s source desk is readable by other ships, and your ship only changes coding policy for private projects.',
       'session-sharing-project-desk-missing': 'One of this project\'s desks is missing on your ship.',
-      'session-sharing-work-not-isolated': 'This project\'s work desk is running or claimed, so its policy cannot be changed now.'};
+      'session-sharing-work-not-isolated': 'This project\'s work desk is running or claimed, so its policy cannot be changed now.',
+      'session-sharing-command-required': 'Your ship did not accept the request. If you set a time limit, its collaboration service may be too old for one.',
+      'share-limit-out-of-range': 'A time limit must be between one minute and 366 days from now.',
+      'share-limit-capacity': 'Your ship already holds as many time limits as it can. Stop a limited share first.'};
     return `Your ship refused. ${why[outcome.reason] ?? `Reason: ${outcome.reason}.`} Nothing was changed.`;
   }
-  const done = operation === 'share' ? [`Session ${session} is now shared with ${peer}.`, `Session ${session} was already shared with ${peer}.`] :
+  const limit = operation === 'share-until' && command.until ? `Session ${session} is shared with ${peer} until ${sessionSharingWhen(command.until)}.` : '';
+  const done = operation === 'share-until' ? [limit, limit] :
+    operation === 'share' ? [`Session ${session} is now shared with ${peer}.`,
+      // A ship that keeps time limits may just have removed one, so "already shared" would be wrong there.
+      'snapshot' in outcome && outcome.snapshot?.timeLimits ? `Session ${session} is shared with ${peer}, with no time limit.` : `Session ${session} was already shared with ${peer}.`] :
     operation === 'unshare' ? [`Session ${session} is no longer shared with ${peer}.`, `Session ${session} was not shared with ${peer}.`] :
       operation === 'sharing-on' ? [`Sessions of ${project} can now be shared with its members.`, `Sessions of ${project} could already be shared.`] :
         operation === 'sharing-off' ? [`Session sharing is off for ${project}; every shared session stopped at once.`, `Session sharing was already off for ${project}.`] :
