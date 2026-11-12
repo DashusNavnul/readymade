@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {ShipClient, ShipClientError} from '../src/ship-client';
+import {ShipClient, ShipClientError, OutcomeUnknownError} from '../src/ship-client';
 import {projectInbox, inboxBasisMatches, importInboxSuggestion, mergeInboxSuggestion, ExistingInboxDraftError, type InboxDetail} from '../src/project-inbox';
 import {remoteSourceHash} from '../src/remote-project-view';
 import {snapshotFrom} from '../src/source-store';
@@ -127,4 +127,45 @@ test('owner inbox transport binds authenticated owner and exact UTF-8 project, a
     mode = 'close'; await assert.rejects(client.projectInbox(selected), e => e instanceof ShipClientError && ['contextChanged', 'transport'].includes(e.code));
     assert.ok(seen.every(row => row.method === 'GET'));
   } finally {client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
+});
+
+test('an answer to a suggestion is one exact request; a refusal or an unknown outcome never becomes "told"', async () => {
+  const selected = 'café-共同', receipt = '0x5e55.2002', posts: {headers: Record<string, unknown>; body: string}[] = [];
+  let reply: (res: import('node:http').ServerResponse) => void = res => res.end('{}');
+  const server = createServer((req, res) => {
+    if (req.url === '/~/login') {res.setHeader('set-cookie', 'urbauth-~zod=fixture; Path=/'); res.end('{}'); return;}
+    let body = ''; req.on('data', chunk => {body += chunk;}); req.on('end', () => {
+      assert.equal(req.url, '/apps/readymade-collab/suggestion-answer'); assert.equal(req.method, 'POST');
+      posts.push({headers: req.headers, body}); res.setHeader('content-type', 'application/json'); reply(res);
+    });
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const client = new ShipClient(`http://127.0.0.1:${address.port}`, async () => 'fixture');
+  const sent = (answer: string) => (res: import('node:http').ServerResponse) => {res.statusCode = 202; res.end(JSON.stringify({schema: 'readymade-suggestion-answer-receipt-v1', status: 'sent', answer, confirmed: false}));};
+  try {
+    await client.signIn();
+    // Nothing leaves this computer for a malformed receipt or answer.
+    for (const bad of ['0x0', '0x05', 'abc']) await assert.rejects(client.suggestionAnswer(selected, bad, 'taken'));
+    await assert.rejects(client.suggestionAnswer(selected, receipt, 'maybe' as 'taken')); assert.equal(posts.length, 0);
+    reply = sent('taken'); await client.suggestionAnswer(selected, receipt, 'taken');
+    assert.deepEqual(JSON.parse(posts[0].body), {schema: 'readymade-suggestion-answer-v1', owner: '~zod', project: selected, receipt, answer: 'taken'});
+    assert.equal(posts[0].headers['x-readymade-suggestion-answer'], 'v1'); assert.equal(posts[0].headers.origin, client.origin);
+    reply = sent('declined'); await client.suggestionAnswer(selected, receipt, 'declined');
+    // The ship's own refusals mean nothing was sent on.
+    reply = res => {res.statusCode = 404; res.end(JSON.stringify({status: 'refused', message: 'receipt-missing'}));};
+    await assert.rejects(client.suggestionAnswer(selected, receipt, 'taken'), e => e instanceof ShipClientError && e.code === 'receiptMissing');
+    for (const [status, message] of [[400, 'Explicit owner-origin suggestion answer required.'], [404, 'Unknown collaboration route.'], [409, 'cantrip-not-live']] as const) {
+      reply = res => {res.statusCode = status; res.end(JSON.stringify({status: 'refused', message}));};
+      await assert.rejects(client.suggestionAnswer(selected, receipt, 'taken'), e => e instanceof ShipClientError && e.code === 'refused' && e.status === status);
+    }
+    // Anything else is an unknown outcome: a receipt for the other answer, a wrong shape, a server error, a dropped connection.
+    for (const odd of [sent('declined'), (res: import('node:http').ServerResponse) => {res.statusCode = 200; res.end('{}');},
+      (res: import('node:http').ServerResponse) => {res.statusCode = 202; res.end(JSON.stringify({schema: 'readymade-suggestion-answer-receipt-v1', status: 'sent', answer: 'taken', confirmed: true}));},
+      (res: import('node:http').ServerResponse) => {res.statusCode = 500; res.end('{}');}, (res: import('node:http').ServerResponse) => {res.destroy();}]) {
+      reply = odd; await assert.rejects(client.suggestionAnswer(selected, receipt, 'taken'), OutcomeUnknownError);
+    }
+    const before = posts.length; reply = sent('taken');
+    await client.suggestionAnswer(selected, receipt, 'taken'); assert.equal(posts.length, before + 1); // The client stays usable and sends exactly once per call.
+  } finally {client.close(); server.close();}
 });

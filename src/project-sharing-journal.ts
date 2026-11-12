@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { asRecord } from './protocol';
 import { digest, originOf } from './source-store';
-import { sharingCommand, sharingResult, sharingView } from './project-sharing';
+import { sharingCommand, sharingRefusal, sharingResult, sharingView } from './project-sharing';
 import type { ProjectSharingCommand, ShipClient } from './ship-client';
 
 type Client = Pick<ShipClient, 'origin' | 'projectSharing'>;
@@ -50,6 +50,15 @@ export class SharingJournal {
     const directory = fs.openSync(this.directory, fs.constants.O_RDONLY);
     try {fs.fsyncSync(directory);} finally {fs.closeSync(directory);}
     const submitted = await client.projectSharing('submit', c);
+    // The ship checks the desk and the files before it records anything, so these refusals are final:
+    // nothing is held there, and the intent kept here would only ever read as "not observed".
+    const refusal = sharingRefusal(submitted.status, submitted.body);
+    if (refusal) {
+      fs.rmSync(join(this.directory, this.key(intent) + '.intent.json'), {force: true});
+      const held = fs.openSync(this.directory, fs.constants.O_RDONLY);
+      try {fs.fsyncSync(held);} finally {fs.closeSync(held);}
+      throw new Error(refusal);
+    }
     if (submitted.status !== 200 && submitted.status !== 202) return {intent, status: 'unconfirmed', reason: 'Observe the retained request; no retry was sent.'};
     return {intent, ...sharingResult(submitted.body, c)};
   }

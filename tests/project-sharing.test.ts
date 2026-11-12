@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SharingJournal, type SharingIntent } from '../src/project-sharing-journal';
-import { sharingCommand, sharingResult, sharingView } from '../src/project-sharing';
+import { sharingCommand, sharingRefusal, sharingResult, sharingView, SHARING_UNREADABLE } from '../src/project-sharing';
 import type { JsonObject } from '../src/protocol';
 import type { ProjectSharingParameters } from '../src/ship-client';
 
@@ -74,4 +74,20 @@ test('sharing decoders reject malformed grants, unknown outcomes and foreign res
   for (const change of [{status: 'done'}, {peer: '~bud'}, {operation: 'revoke'}, {intent: '0x0'}, {extra: true}]) assert.throws(() => sharingResult({...f.result, ...change}, f.intent.command));
   assert.throws(() => sharingView({...f.view, grant: {generation: '1', desk: 'demo-work', paths: ['/lib/example/hoon', '/lib/example/hoon'], view: true, suggest: false, revoked: false}}));
   assert.throws(() => sharingCommand({...f.intent.command, paths: '/lib/../hoon'}));
+}));
+
+test('a ship that will not share an unreadable desk or file says why, keeps nothing, and the dead request is dropped', () => temporary(async directory => {
+  const refusing = (f: ReturnType<typeof fixture>, message: string) => ({origin: f.client.origin, projectSharing: async (operation: keyof ProjectSharingParameters) =>
+    operation === 'submit' ? {status: 409, body: {status: 'refused', message} as JsonObject} : f.client.projectSharing(operation)});
+  for (const [message, sentence] of Object.entries(SHARING_UNREADABLE)) {
+    const f = fixture(directory), journal = new SharingJournal(directory);
+    await assert.rejects(journal.submit(refusing(f, message), f.intent, true), error => error instanceof Error && error.message === sentence && /Nothing was shared\.$/.test(sentence));
+    assert.equal(journal.entries().length, 0); // The same collaborator can be offered a readable desk at once.
+  }
+  // Any other refusal is not one of these: the request stays retained and is only ever observed.
+  const f = fixture(directory), journal = new SharingJournal(directory);
+  assert.equal((await journal.submit(refusing(f, 'sharing-journal-full'), f.intent, true)).status, 'unconfirmed'); assert.equal(journal.entries().length, 1);
+  assert.equal(sharingRefusal(200, {status: 'refused', message: 'sharing-desk-not-private'}), undefined);
+  assert.equal(sharingRefusal(409, {status: 'refused', message: 'sharing-desk-not-private', extra: 1}), undefined);
+  assert.equal(sharingRefusal(409, null), undefined);
 }));

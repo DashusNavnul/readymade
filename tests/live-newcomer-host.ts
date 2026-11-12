@@ -103,7 +103,7 @@ async function phase(): Promise<void> {
       const until = Date.now() + 30000;
       while (!held() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 200));
       const list = held(); assert.ok(list, 'the app read what owners told this ship without being asked');
-      const sentence = /stopped sharing|time limit ran out|removed you|turned off session sharing/, said = () => warnings.filter(text => sentence.test(text));
+      const sentence = /stopped sharing|time limit ran out|removed you|turned off session sharing|took your suggestion|did not take your suggestion/, said = () => warnings.filter(text => sentence.test(text));
       await new Promise(resolve => setTimeout(resolve, 1500));
       record.notices = list.notices.slice(0, 6); record.said = said();
       assert.ok(list.notices.length > 0, 'an owner ended a share, so the ship holds a notice');

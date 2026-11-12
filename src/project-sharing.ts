@@ -45,3 +45,16 @@ export function sharingResult(value: unknown, command: ProjectSharingCommand) {
       !['unconfirmed', 'confirmed', 'revoked', 'superseded', 'unavailable'].includes(String(r.status))) throw new Error('Sharing result does not match the retained request.');
   return {request: command.request, digest: r.intent, status: String(r.status)};
 }
+
+/** Refusals the owner's ship issues before it records a grant: nobody could ever read the desk or a file through it. */
+export const SHARING_UNREADABLE: Readonly<Record<string, string>> = Object.freeze({
+  'sharing-desk-not-private': 'Other ships can already read that desk, so your ship does not share its files privately. Choose the project’s private work desk. Nothing was shared.',
+  'sharing-desk-missing': 'That desk is not on your ship. Nothing was shared.',
+  'sharing-file-missing': 'One of those files is not on that desk. Check each path (for example /lib/example/hoon). Nothing was shared.',
+  'sharing-path-not-private': 'Other ships can already read one of those files, so your ship does not share it privately. Nothing was shared.'});
+/** The plain sentence for one of those refusals, exactly as the ship words it; anything else is not one. */
+export function sharingRefusal(status: number, body: unknown): string | undefined {
+  if (status !== 409 || body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const r = body as Record<string, unknown>;
+  return Object.keys(r).length === 2 && r.status === 'refused' && typeof r.message === 'string' && Object.hasOwn(SHARING_UNREADABLE, r.message) ? SHARING_UNREADABLE[r.message] : undefined;
+}

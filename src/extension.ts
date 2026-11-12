@@ -3,7 +3,7 @@ import { delimiter, join } from 'node:path';
 import { homedir } from 'node:os';
 import {ProjectInvitationsView} from './project-invitations-view';
 import {InvitationJournal} from './project-invitation-journal';
-import {ProjectInboxView} from './project-inbox-view';
+import {ProjectInboxView, type InboxAnswer} from './project-inbox-view';
 import {NoltbookDocumentsView} from './noltbook-documents-view';
 import {NoltbookDocumentStore} from './noltbook-document-store';
 import {RemoteSuggestionJournal} from './remote-suggestion-journal';
@@ -60,7 +60,7 @@ import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
 import { askAssistant, askAssistantSummary } from './home-assistant';
 import { CATCH_UP_SYSTEM, catchUpDigest, catchUpDocument, type CatchUpInput } from './catch-up';
-import { shareNoticeLines, shareNoticeText, shareNoticesUnseen, type ShareNotices } from './share-notices';
+import { shareNoticeLines, shareNoticeText, shareNoticesUnseen, type ShareNotice, type ShareNotices } from './share-notices';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -201,7 +201,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (this.media.connectedClient) return this.media.connectedClient;
       // No address to type: a ship on this computer connects by itself, anything else through the Connect list.
       return this.media.connectClient(retainedOrigin);
-    }, () => {if (!this.disposed) this.render();}, this.remoteDrafts, new RemoteSuggestionJournal(join(context.globalStorageUri.fsPath, 'remote-suggestions')));
+    }, () => {if (!this.disposed) this.render();}, this.remoteDrafts, this.remoteSuggestions = new RemoteSuggestionJournal(join(context.globalStorageUri.fsPath, 'remote-suggestions')));
     this.invitations = new ProjectInvitationsView(context.extension.id, () => this.media.connectedClient, () => this.selectedProject, async wanted => {
       if (this.media.connectedClient) return this.media.connectedClient;
       // A join link names the ship it is for: if that ship runs on this computer it connects and signs in by itself.
@@ -215,7 +215,13 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       () => {if (!this.disposed) this.render();}, join(homedir(), '.cache', 'readymade', 'activity-publishers'));
     this.inbox = new ProjectInboxView(() => this.client && this.selectedProject && this.sources && this.loader ?
       {client: this.client, project: this.selectedProject, sources: this.sources, loader: this.loader, drafts: this.drafts} : undefined,
-    (client, project, receipt) => client.projectInbox(project, receipt), () => this.activity.contextChanged(), () => {if (!this.disposed) this.render();});
+    (client, project, receipt) => client.projectInbox(project, receipt), () => this.activity.contextChanged(), () => {if (!this.disposed) this.render();}, undefined, {
+      // What this computer told collaborators, newest 256. The ship keeps no record of it.
+      get: key => (context.globalState.get<Record<string, InboxAnswer>>('readymade.suggestionAnswers') ?? {})[key],
+      set: (key, answer) => {
+        const held = Object.entries(context.globalState.get<Record<string, InboxAnswer>>('readymade.suggestionAnswers') ?? {}).filter(([k]) => k !== key);
+        return context.globalState.update('readymade.suggestionAnswers', Object.fromEntries([...held, [key, answer]].slice(-256)));
+      }});
     const retainedReview = readDraftReviewContext(context.workspaceState.get('readymade.reviewContext'));
     if (retainedReview) this.changes.refresh(retainedReview);
     const connection = () => {
@@ -318,6 +324,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('openDocumentInNoltbook', id => this.documents.openInNoltbook(typeof id === 'string' ? id : undefined));
     command('restoreDocumentVersion', id => this.documents.restore(typeof id === 'string' ? id : undefined));
     command('importInboxSuggestion', receipt => this.inbox.import(String(receipt)));
+    command('answerInboxSuggestion', (receipt, answer) => this.inbox.answer(String(receipt), answer === 'taken' ? 'taken' : 'declined'));
     command('savedChecks', () => this.checks.openSaved());
     this.setup = new SetupView(async () => {
       if (!await this.connectApps()) return undefined;
@@ -506,6 +513,13 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   private waiting?: WaitingReport;
   private checkingWaiting = false;
   private heldShareNotices?: ShareNotices;
+  private remoteSuggestions?: RemoteSuggestionJournal;
+  /** The file of a suggestion this computer sent, if its journal still holds the request an owner answered. */
+  private readonly suggestionFile = (n: ShareNotice): string | undefined => {
+    try {
+      return this.remoteSuggestions?.list().find(row => row.request === n.session && row.intent.observation.owner === n.owner && row.intent.observation.project === n.project)?.intent.path;
+    } catch {return undefined;}
+  };
   private shareNoticesChecked = 0;
   private shareNoticesFor?: ShipClient;
   /**
@@ -525,7 +539,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     if (!fresh.length) return;
     await this.context.globalState.update(key, fresh[0].at);
     const more = fresh.length - 1, all = 'Show All';
-    void vscode.window.showWarningMessage(more ? `${shareNoticeText(fresh[0])} There ${more === 1 ? 'is 1 more notice' : `are ${more} more notices`} like this.` : shareNoticeText(fresh[0]),
+    const first = shareNoticeText(fresh[0], this.suggestionFile);
+    void vscode.window.showWarningMessage(more ? `${first} There ${more === 1 ? 'is 1 more notice' : `are ${more} more notices`} from owners.` : first,
       ...(more ? [all] : [])).then(choice => {if (choice === all) void this.showShareNotices(false);});
   }
   /** Everything owners told this ship about shares they ended, newest first, on one page. A read only. */
@@ -534,10 +549,10 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const client = this.media.connectedClient, list = this.heldShareNotices;
     if (!client) throw new Error('Connect your ship first.');
     if (!list || this.shareNoticesFor !== client) throw new Error('Your ship keeps no list of ended shares. Its collaboration service may be older; update it, then try again.');
-    const lines = shareNoticeLines(list).map(row => `- ${row.day}: ${row.text}`);
-    const page = await vscode.workspace.openTextDocument({language: 'markdown', content: [`# Shares that owners ended: ${list.peer}`, '',
-      'Each line is what the owner’s ship told your ship. It changes nothing by itself; the Shared view shows what you can open now.', '',
-      ...(lines.length ? lines : ['No owner has ended a share with your ship.']), ''].join('\n')});
+    const lines = shareNoticeLines(list, this.suggestionFile).map(row => `- ${row.day}: ${row.text}`);
+    const page = await vscode.workspace.openTextDocument({language: 'markdown', content: [`# What owners told your ship: ${list.peer}`, '',
+      'Each line is what an owner’s ship told your ship: a share it ended, or what it did with a suggestion you sent. It changes nothing by itself; the Shared view shows what you can open now.', '',
+      ...(lines.length ? lines : ['No owner has told your ship anything yet.']), ''].join('\n')});
     await vscode.window.showTextDocument(page, {preview: true});
   }
   /**
@@ -561,7 +576,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       ship: text(this.snapshot.ship) || client.origin, project, session: this.selectedSession && this.selectedSession !== '0x0' ? this.selectedSession : undefined,
       activity: feed?.entries ?? [], activityPartial: feed?.partial ?? false,
       waiting: project && this.waiting ? {items: this.waiting.items.map(item => item.label), unchecked: this.waiting.unchecked} : undefined,
-      notices: this.heldShareNotices && this.heldShareNotices.peer === this.snapshot.ship ? shareNoticeLines(this.heldShareNotices) : undefined,
+      notices: this.heldShareNotices && this.heldShareNotices.peer === this.snapshot.ship ? shareNoticeLines(this.heldShareNotices, this.suggestionFile) : undefined,
       conversation: rows((this.snapshot.conversation as JsonObject | undefined)?.entries).map(row => ({id: text(row.id), status: text(row.status), request: text(row.request),
         output: typeof row.output === 'string' && row.output ? row.output : undefined, truncated: Number(row.outputBytes) > Buffer.byteLength(text(row.output))})),
       candidates: rows(this.snapshot.candidates).map(row => ({id: text(row.id), project: text(row.project), stage: text(row.stage)})),

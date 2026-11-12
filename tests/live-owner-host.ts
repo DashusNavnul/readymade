@@ -10,7 +10,7 @@ import {LiveFailure, LiveTimeout, acceptQuickInput, copied, errorInfo, invitatio
   readHandoff, seen, sleep, within, type LiveContext} from './live-ship-support';
 
 // Live acceptance on the OWNER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
-// invite | share | revoke | members | share-session | share-session-limited | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
+// invite | share | revoke | members | answer-suggestion | share-session | share-session-limited | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
 // screen's own single submission; an unknown outcome is recorded and fails the phase, and nothing is sent twice.
 
 /** What an owner does first: connect coding to the ship already signed in, then choose the project. Reads only. */
@@ -111,12 +111,14 @@ async function share(c: LiveContext): Promise<void> {
   const desks = [...new Set([before.workingDesk, before.baseDesk].filter((desk): desk is string => desk !== null))], desk = wanted ?? desks[0];
   c.record.desksOffered = desks; c.record.desk = desk;
   if (!desks.includes(desk)) throw new LiveFailure('desk-not-offered');
-  // The three real pickers, in the screen's order: desk, files, permission ("Read files" is listed first).
+  // The three real pickers, in the screen's order: desk, files, permission ("Read files" is listed first,
+  // "Read and suggest changes" second; READYMADE_SHARE_PERMISSION=view-suggest chooses the second).
+  const suggesting = process.env.READYMADE_SHARE_PERMISSION === 'view-suggest'; c.record.permission = suggesting ? 'view-suggest' : 'view';
   await changeSharing(c, peer, false,
-    `Share with ${peer}\nProject: ${project}\nDesk: ${desk}\n${path}\n\nRead files. Access lasts until revoked. Suggestions do not automatically apply changes.`,
-    [() => acceptQuickInput(desks.indexOf(desk)), () => pasteQuickInput(path), () => acceptQuickInput(0)]);
+    `Share with ${peer}\nProject: ${project}\nDesk: ${desk}\n${path}\n\n${suggesting ? 'Read and suggest changes' : 'Read files'}. Access lasts until revoked. Suggestions do not automatically apply changes.`,
+    [() => acceptQuickInput(desks.indexOf(desk)), () => pasteQuickInput(path), () => acceptQuickInput(suggesting ? 1 : 0)]);
   const after = await observeSharing(c, peer, 'sharing-after');
-  if (!after.grant || after.grant.revoked || !after.grant.view || after.grant.desk !== desk || !after.grant.paths.includes(path)) throw new LiveFailure('grant-not-current');
+  if (!after.grant || after.grant.revoked || !after.grant.view || after.grant.suggest !== suggesting || after.grant.desk !== desk || !after.grant.paths.includes(path)) throw new LiveFailure('grant-not-current');
   const text = await c.timed('copy-shared-project-link', () => copied(() => c.api.projectSharing.copyLink(c.extension.id)), 60000);
   const link = sharedProjectLink(vscode.Uri.parse(text, true), c.extension.id);
   assert.deepEqual({owner: link.owner, project: link.project, peer: link.peer, file: link.file}, {owner: c.ship, project, peer, file: undefined});
@@ -227,6 +229,31 @@ async function sessionLimit(c: LiveContext): Promise<void> {
   if (!/shared until /.test(String(shown?.description))) throw new LiveFailure('row-does-not-show-the-limit');
 }
 
+/**
+ * The owner reads its inbox, finds the suggestion the collaborator's phase sent (its request id is in the
+ * handoff), and tells the collaborator what became of it (READYMADE_ANSWER=taken|declined) from the row's own action.
+ */
+async function answerSuggestion(c: LiveContext): Promise<void> {
+  const peer = needShip('READYMADE_PEER_SHIP'), answer = need('READYMADE_ANSWER'), request = readHandoff(need('READYMADE_HANDOFF')).suggestionRequest;
+  if (answer !== 'taken' && answer !== 'declined') throw new LiveFailure('invalid-READYMADE_ANSWER');
+  if (!request) throw new LiveFailure('handoff-without-suggestion');
+  await ownProject(c); c.record.peer = peer; c.record.request = request;
+  await c.timed('read-inbox', () => c.api.inbox.observe(), 60000);
+  const receipts = c.api.inbox.receipts ?? [], row = receipts.find(row => row.request === request && row.peer === peer);
+  c.record.inbox = receipts.map(row => ({peer: row.peer, path: row.path, request: row.request})).slice(0, 8); c.record.waitingBefore = c.api.inbox.waiting;
+  if (!row) throw new LiveFailure('suggestion-not-in-inbox');
+  c.record.path = row.path;
+  const tree = () => (c.api.inbox.rows()[0].children ?? []).find(item => item.children?.some(action => action.command?.arguments?.[0] === row.receiptHash));
+  const offered = tree()?.children?.find(action => action.command?.command === 'readymade.answerInboxSuggestion' && action.command.arguments?.[1] === answer);
+  c.record.offeredInTree = offered?.label;
+  if (!offered) throw new LiveFailure('answer-not-offered');
+  c.mark('answer-submit');
+  try {await c.timed('answer', () => c.api.inbox.answer(row.receiptHash, answer), 60000); c.record.write = 'submitted';}
+  catch (error) {c.record.write = 'unknown'; c.record.writeError = errorInfo(error, true); throw new LiveFailure('answer-not-sent');}
+  c.record.rowAfter = tree()?.description; c.record.waitingAfter = c.api.inbox.waiting;
+  if (!String(tree()?.description).includes(answer === 'taken' ? 'told: taken' : 'told: not taken')) throw new LiveFailure('row-does-not-show-the-answer');
+}
+
 async function projectSetting(c: LiveContext): Promise<void> {
   const peer = needShip('READYMADE_PEER_SHIP'), setting = need('READYMADE_SETTING'), project = await ownProject(c);
   if (setting !== 'on' && setting !== 'off') throw new LiveFailure('invalid-READYMADE_SETTING');
@@ -269,5 +296,5 @@ async function remove(c: LiveContext): Promise<void> {
 }
 
 export function run(): Promise<void> {
-  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
+  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'answer-suggestion': answerSuggestion, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
 }

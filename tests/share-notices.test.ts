@@ -8,12 +8,13 @@ const notice = (patch: object = {}) => ({at: '~2026.11.12..02.00.00', owner: '~z
 const list = (notices: unknown[] = [notice()], patch: object = {}) => ({schema: 'readymade-share-notices-v1', peer, observedAt: '~2026.11.12..03.00.00', notices, ...patch});
 
 test('share notices decode strictly: this ship’s own list, from other ships, bounded', () => {
-  const seen = shareNotices(list(SHARE_NOTICE_KINDS.map((kind, i) => notice({kind, at: `~2026.11.12..02.00.0${i + 1}`, session: i > 1 ? '0x0' : '0x11'}))), peer);
+  const seen = shareNotices(list(SHARE_NOTICE_KINDS.map((kind, i) => notice({kind, at: `~2026.11.12..02.00.0${i + 1}`, session: i === 2 || i === 3 ? '0x0' : '0x11'}))), peer);
   assert.deepEqual(seen.notices.map(n => n.kind), [...SHARE_NOTICE_KINDS]); assert.equal(seen.peer, peer);
   assert.ok(Object.isFrozen(seen) && Object.isFrozen(seen.notices) && Object.isFrozen(seen.notices[0]));
   assert.equal(shareNotices(list([]), peer).notices.length, 0);
   for (const bad of [list([notice()], {schema: 'readymade-share-notices-v2'}), list([notice()], {peer: '~bud'}), list([notice({owner: peer})]), list([notice({owner: 'zod'})]),
-    list([notice({kind: 'granted'})]), list([notice({session: '0x05'})]), list([notice({session: 5})]), list([notice({project: 'bad:project'})]), list([notice({project: ''})]),
+    list([notice({kind: 'Granted'})]), list([notice({kind: 7})]), list([notice({kind: 'suggestion-taken', session: '0x0'})]),
+    list([notice({kind: 'suggestion-declined', session: '0x1.0000.0000.0000.0000.0000.0000.0000.0000'})]), list([notice({session: '0x05'})]), list([notice({session: 5})]), list([notice({project: 'bad:project'})]), list([notice({project: ''})]),
     list([notice({at: 'yesterday'})]), list([notice({extra: 1})]), list([notice()], {extra: 1}), list([notice()], {observedAt: 0}), list('none' as unknown as unknown[]),
     list(Array.from({length: SHARE_NOTICES_MAX + 1}, () => notice()))]) assert.throws(() => shareNotices(bad, peer));
   assert.throws(() => shareNotices(list(), 'nec'));
@@ -26,6 +27,14 @@ test('each notice is one plain sentence that names the owner and the project', (
   assert.equal(text({kind: 'removed', session: '0x0'}), '~zod removed you from shared. Its shared files and sessions are closed to you.');
   assert.equal(text({kind: 'sharing-off', session: '0x0'}), '~zod turned off session sharing for shared. None of its sessions is shared with you now.');
   assert.equal(text({session: '0x0'}), '~zod stopped sharing a session of shared with you.');
+  // An answer to a suggestion names the file only when this computer still remembers the request.
+  assert.equal(text({kind: 'suggestion-taken', session: '0xabc'}), '~zod took your suggestion in shared.');
+  assert.equal(text({kind: 'suggestion-declined', session: '0xabc'}), '~zod did not take your suggestion in shared.');
+  const answered = shareNotices(list([notice({kind: 'suggestion-taken', session: '0xabc'})]), peer).notices[0];
+  assert.equal(shareNoticeText(answered, n => n.session === '0xabc' ? '/lib/example/hoon' : undefined), '~zod took your suggestion for /lib/example/hoon in shared.');
+  assert.deepEqual(shareNoticeLines(shareNotices(list([notice({kind: 'suggestion-taken', session: '0xabc'})]), peer), () => '/lib/a/hoon'), [{day: '2026-11-12', text: '~zod took your suggestion for /lib/a/hoon in shared.'}]);
+  // A kind from a newer ship is left out; the notices this app does know are still shown.
+  assert.deepEqual(shareNotices(list([notice({kind: 'something-newer'}), notice({kind: 'expired'})]), peer).notices.map(n => n.kind), ['expired']);
 });
 
 test('only notices newer than the last one shown are new, and an unreadable mark shows everything', () => {
@@ -40,6 +49,6 @@ test('Catch Me Up lists the shares other owners ended, and omits the section whe
   assert.deepEqual(lines, [{day: '2026-11-12', text: 'The time limit ran out on session 0x5e55.2002 of shared, shared by ~zod. It is no longer shared with you.'}]);
   const base = {ship: peer, activity: [], activityPartial: false, conversation: [], candidates: [], sessions: []};
   const withNotices = catchUpDigest({...base, notices: lines});
-  assert.match(withNotices, /Shares that other owners ended:\n- 2026-11-12: The time limit ran out on session 0x5e55\.2002 of shared/);
-  assert.doesNotMatch(catchUpDigest({...base, notices: []}), /Shares that other owners ended/); assert.doesNotMatch(catchUpDigest(base), /Shares that other owners ended/);
+  assert.match(withNotices, /What owners of other projects told this ship:\n- 2026-11-12: The time limit ran out on session 0x5e55\.2002 of shared/);
+  assert.doesNotMatch(catchUpDigest({...base, notices: []}), /What owners of other projects told/); assert.doesNotMatch(catchUpDigest(base), /What owners of other projects told/);
 });

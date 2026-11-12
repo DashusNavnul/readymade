@@ -10,6 +10,9 @@ import type {MediaTreeRow} from './media-workbench';
 import {ExistingInboxDraftError, importInboxSuggestion, mergeInboxSuggestion, inboxBasisMatches, projectInbox, type InboxDetail, type InboxImportContext, type ProjectInbox} from './project-inbox';
 
 export interface InboxContext {client: ShipClient; project: string; sources: SourceStore; loader: SourceLoader; drafts: DraftStore}
+export type InboxAnswer = 'taken' | 'declined';
+/** What this computer remembers having told a collaborator about a suggestion. Not kept on the ship. */
+export interface InboxAnswerMemory {get(key: string): InboxAnswer | undefined; set(key: string, answer: InboxAnswer): Thenable<void>}
 /** Owner presentation. Import creates a local draft; existing candidate/review authority remains unchanged. */
 export class ProjectInboxView implements vscode.Disposable {
   private held?: ProjectInbox;
@@ -23,7 +26,35 @@ export class ProjectInboxView implements vscode.Disposable {
   constructor(private readonly current: () => InboxContext | undefined,
     private readonly fetch: (client: ShipClient, project: string, receipt?: string) => Promise<unknown>,
     private readonly beforeRead: () => Promise<unknown>, private readonly changed: () => void,
-    private readonly confirmMerge: () => Promise<boolean> = async () => (await vscode.window.showInformationMessage('Review the proposed merge. Apply it to your draft as one undoable edit?', 'Apply Merge')) === 'Apply Merge') {}
+    private readonly confirmMerge: () => Promise<boolean> = async () => (await vscode.window.showInformationMessage('Review the proposed merge. Apply it to your draft as one undoable edit?', 'Apply Merge')) === 'Apply Merge',
+    private readonly told?: InboxAnswerMemory) {}
+  private toldKey(c: InboxContext, owner: string, receipt: string): string {return JSON.stringify([c.client.origin, owner, c.project, receipt]);}
+  private toldAbout(receipt: string): InboxAnswer | undefined {
+    const c = this.current(); return c && this.held && this.told ? this.told.get(this.toldKey(c, this.held.owner, receipt)) : undefined;
+  }
+  /**
+   * Tells the collaborator what became of one suggestion: taken, or not taken. One request to the owner's ship,
+   * which sends the word on once. It changes nothing in the project; taking a suggestion is still Import, then review.
+   */
+  async answer(receipt: string, answer: InboxAnswer): Promise<void> {
+    this.sync(); const c = this.context(); if (this.busy) throw new Error('An inbox operation is already running.');
+    const row = this.held?.receipts.find(row => row.receiptHash === receipt), owner = this.held?.owner;
+    if (!row || !owner) throw new Error('Refresh the owner inbox before answering this suggestion.');
+    if (answer !== 'taken' && answer !== 'declined') throw new Error('Choose taken or not taken.');
+    this.busy = true; this.changed();
+    try {
+      try {await c.client.suggestionAnswer(c.project, receipt, answer);}
+      catch (error) {
+        const code = (error as {code?: unknown} | null)?.code, status = (error as {status?: unknown} | null)?.status;
+        if (code === 'receiptMissing') throw new Error('Your ship no longer holds this suggestion. Refresh the inbox; nothing was sent.');
+        if (code === 'refused') throw new Error(status === 409 ? 'Your ship could not read its suggestions just now. Nothing was sent; try again.' :
+          'Your ship did not accept this. Its collaboration service may be older; update it and try again. Nothing was sent.');
+        throw error;
+      }
+      await this.told?.set(this.toldKey(c, owner, receipt), answer);
+      void vscode.window.showInformationMessage(`${row.peer} is being told its suggestion for ${row.path} was ${answer === 'taken' ? 'taken' : 'not taken'}. It reads this the next time its Readymade looks.`);
+    } finally {this.busy = false; this.changed();}
+  }
   private context(): InboxContext {const c = this.current(); if (!c || this.closed) throw new Error('Connect and select an owner project first.'); return c;}
   private active(c: InboxContext): boolean {
     const now = this.current(); return !this.closed && now?.client === c.client && now.project === c.project && now.sources === c.sources && now.loader === c.loader;
@@ -134,14 +165,21 @@ export class ProjectInboxView implements vscode.Disposable {
   }
   /** The suggestion receipts held from the last read (peer, path, time), or undefined when not read for this project. */
   get receipts(): ProjectInbox['receipts'] | undefined {this.sync(); return this.held?.receipts;}
-  /** Suggestions held from the last read, or undefined when the inbox has not been read for this project. */
-  get waiting(): number | undefined {this.sync(); return this.held?.receipts.length;}
+  /** Suggestions from the last read that this computer has not answered, or undefined when the inbox has not been read for this project. */
+  get waiting(): number | undefined {this.sync(); return this.held?.receipts.filter(row => !this.toldAbout(row.receiptHash)).length;}
   rows(): MediaTreeRow[] {
     this.sync(); const children: MediaTreeRow[] = [{label: this.busy ? 'Reading owner inbox…' : 'Refresh Inbox',
       ...(!this.busy ? {command: {command: 'readymade.projectInbox', title: 'Refresh Inbox'}} : {})}];
-    for (const row of this.held?.receipts ?? []) children.push({label: row.path, description: row.peer, tooltip: `${row.desk} · revision ${row.revision}\nHistorical suggestion — not committed`,
-      children: [{label: 'Open Suggestion', command: {command: 'readymade.openInboxSuggestion', title: 'Open Suggestion', arguments: [row.receiptHash]}},
-        {label: 'Import or Merge into My Draft', command: {command: 'readymade.importInboxSuggestion', title: 'Import or Merge into My Draft', arguments: [row.receiptHash]}}]});
+    for (const row of this.held?.receipts ?? []) {
+      const told = this.toldAbout(row.receiptHash), said = told === 'taken' ? 'taken' : 'not taken';
+      children.push({label: row.path, description: told ? `${row.peer} · told: ${said}` : row.peer,
+        tooltip: `${row.desk} · revision ${row.revision}\nHistorical suggestion — not committed${told ? `\nYou told ${row.peer} it was ${said} (remembered on this computer)` : ''}`,
+        children: [{label: 'Open Suggestion', command: {command: 'readymade.openInboxSuggestion', title: 'Open Suggestion', arguments: [row.receiptHash]}},
+          {label: 'Import or Merge into My Draft', command: {command: 'readymade.importInboxSuggestion', title: 'Import or Merge into My Draft', arguments: [row.receiptHash]}},
+          {label: `Tell ${row.peer} It Was Taken`, tooltip: 'Sends word only. Taking a suggestion is still Import, then your own review.',
+            command: {command: 'readymade.answerInboxSuggestion', title: 'Tell It Was Taken', arguments: [row.receiptHash, 'taken']}},
+          {label: `Tell ${row.peer} It Was Not Taken`, command: {command: 'readymade.answerInboxSuggestion', title: 'Tell It Was Not Taken', arguments: [row.receiptHash, 'declined']}}]});
+    }
     if (this.held && !this.held.receipts.length) children.push({label: 'No recorded suggestions'});
     return [{id: 'owner-inbox', label: 'Inbox', icon: 'inbox', children}];
   }

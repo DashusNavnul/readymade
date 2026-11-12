@@ -3,11 +3,15 @@ import {asRecord, validUnicode, type JsonObject} from './protocol';
 import {remoteShip} from './remote-project-view';
 import {remoteSessionShortId} from './remote-project-sessions';
 
-/** What an owner told this ship when it ended a share. It grants nothing; the shared list itself is the truth. */
-export const SHARE_NOTICE_KINDS = ['stopped', 'expired', 'removed', 'sharing-off'] as const;
+/**
+ * What an owner told this ship: that it ended a share, or what it did with a suggestion this ship sent.
+ * A notice grants nothing; the shared list and the project itself are the truth.
+ */
+export const SHARE_NOTICE_KINDS = ['stopped', 'expired', 'removed', 'sharing-off', 'suggestion-taken', 'suggestion-declined'] as const;
+const ABOUT_A_SUGGESTION: readonly string[] = ['suggestion-taken', 'suggestion-declined'];
 export interface ShareNotice {
   readonly at: string; readonly owner: string; readonly project: string;
-  /** The session that was shared, or 0x0 when the notice is about the whole project. */
+  /** The session that was shared, or 0x0 when the notice is about the whole project. For an answer to a suggestion: this ship's own request id for it. */
   readonly session: string; readonly kind: typeof SHARE_NOTICE_KINDS[number];
 }
 export interface ShareNotices {readonly peer: string; readonly observedAt: string; readonly notices: readonly ShareNotice[]}
@@ -21,23 +25,32 @@ function exact(value: unknown, keys: readonly string[]): JsonObject {
 }
 const session = (value: unknown): value is string => typeof value === 'string' && value.length <= 82 &&
   (value === '0x0' || /^0x[1-9a-f][0-9a-f]{0,3}(?:\.[0-9a-f]{4})*$/.test(value) && BigInt(value.replaceAll('.', '')) < (1n << 256n));
-/** Strict: the list is this ship's own, newest first, and every notice comes from another ship. */
+/** Strict: the list is this ship's own, newest first, and every notice comes from another ship. A kind this app does not know yet (a newer ship) is left out, never guessed at. */
 export function shareNotices(value: unknown, peer: string): ShareNotices {
   const r = exact(value, ['schema', 'peer', 'observedAt', 'notices']);
   if (r.schema !== 'readymade-share-notices-v1' || !remoteShip(peer) || r.peer !== peer || !Array.isArray(r.notices) || r.notices.length > SHARE_NOTICES_MAX) invalid();
   try {dateAtom(r.observedAt);} catch {invalid();}
-  const notices = (r.notices as unknown[]).map(value => {
+  const notices = (r.notices as unknown[]).flatMap(value => {
     const n = exact(value, ['at', 'owner', 'project', 'session', 'kind']);
     if (!remoteShip(n.owner) || n.owner === peer || typeof n.project !== 'string' || !validUnicode(n.project) || !Buffer.byteLength(n.project) ||
         Buffer.byteLength(n.project) > 128 || /[\u0000-\u001f\u007f:]/u.test(n.project) || !session(n.session) ||
-        !(SHARE_NOTICE_KINDS as readonly unknown[]).includes(n.kind)) invalid();
+        typeof n.kind !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(n.kind)) invalid();
     try {dateAtom(n.at);} catch {invalid();}
-    return Object.freeze({at: n.at as string, owner: n.owner, project: n.project, session: n.session, kind: n.kind as ShareNotice['kind']});
+    if (!(SHARE_NOTICE_KINDS as readonly string[]).includes(n.kind)) return [];
+    if (ABOUT_A_SUGGESTION.includes(n.kind) && (n.session === '0x0' || BigInt(n.session.replaceAll('.', '')) >= (1n << 128n))) invalid();
+    return [Object.freeze({at: n.at as string, owner: n.owner, project: n.project, session: n.session, kind: n.kind as ShareNotice['kind']})];
   });
   return Object.freeze({peer, observedAt: r.observedAt as string, notices: Object.freeze(notices)});
 }
-/** One plain sentence. The owner's ship said this; nothing here was checked against the shared list. */
-export function shareNoticeText(n: ShareNotice): string {
+/**
+ * One plain sentence. The owner's ship said this; nothing here was checked against the shared list.
+ * `fileOf` names the file of a suggestion this computer sent, when it still remembers the request.
+ */
+export function shareNoticeText(n: ShareNotice, fileOf: (n: ShareNotice) => string | undefined = () => undefined): string {
+  if (ABOUT_A_SUGGESTION.includes(n.kind)) {
+    const file = fileOf(n), what = `your suggestion${file ? ` for ${file}` : ''} in ${n.project}`;
+    return n.kind === 'suggestion-taken' ? `${n.owner} took ${what}.` : `${n.owner} did not take ${what}.`;
+  }
   const one = n.session === '0x0' ? 'a session' : `session ${remoteSessionShortId(n.session)}`;
   if (n.kind === 'stopped') return `${n.owner} stopped sharing ${one} of ${n.project} with you.`;
   if (n.kind === 'expired') return `The time limit ran out on ${one} of ${n.project}, shared by ${n.owner}. It is no longer shared with you.`;
@@ -50,6 +63,6 @@ export function shareNoticesUnseen(list: ShareNotices, seen: unknown): ShareNoti
   return list.notices.filter(n => dateAtom(n.at) > mark);
 }
 /** Each notice as a dated line for a record a person reads later. */
-export function shareNoticeLines(list: ShareNotices): {readonly day: string; readonly text: string}[] {
-  return list.notices.map(n => ({day: new Date(dateAtomMillis(n.at)).toISOString().slice(0, 10), text: shareNoticeText(n)}));
+export function shareNoticeLines(list: ShareNotices, fileOf?: (n: ShareNotice) => string | undefined): {readonly day: string; readonly text: string}[] {
+  return list.notices.map(n => ({day: new Date(dateAtomMillis(n.at)).toISOString().slice(0, 10), text: shareNoticeText(n, fileOf)}));
 }

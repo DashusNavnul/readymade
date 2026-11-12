@@ -5,10 +5,10 @@ import {GUEST_SOURCE} from '../src/guest-service';
 import {sharedProjectLink} from '../src/remote-source-view';
 import type {RemoteSourceObservation} from '../src/remote-project-view';
 import type {RemoteProjectSessionsReply} from '../src/remote-project-sessions';
-import {LiveFailure, errorInfo, invitationAction, liveRun, need, needShip, readHandoff, seen, type LiveContext} from './live-ship-support';
+import {LiveFailure, errorInfo, invitationAction, liveRun, mergeHandoff, need, needShip, readHandoff, seen, type LiveContext} from './live-ship-support';
 
 // Live acceptance on the PEER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
-// join | sessions. The links come from the owner phases through the READYMADE_HANDOFF file. The peer
+// join | sessions | suggest. The links come from the owner phases through the READYMADE_HANDOFF file. The peer
 // never needs a coding connection: joining and reading shared work use only the app sign-in.
 
 async function join(c: LiveContext): Promise<void> {
@@ -97,4 +97,44 @@ async function sessions(c: LiveContext): Promise<void> {
   if (wantCount !== undefined && listed?.sessions.length !== Number(wantCount)) throw new LiveFailure('sessions-count-unexpected');
 }
 
-export function run(): Promise<void> {return liveRun('live-peer-host', {join, sessions});}
+/**
+ * The collaborator opens the shared project, edits one shared file as a local draft and sends it to the owner
+ * as a suggestion: one submission, then only reads of the retained request until the owner's ship has recorded it.
+ */
+async function suggest(c: LiveContext): Promise<void> {
+  const owner = needShip('READYMADE_OWNER_SHIP'), project = need('READYMADE_PROJECT'), handoff = need('READYMADE_HANDOFF'), text = readHandoff(handoff).sharedProjectLink;
+  if (!text) throw new LiveFailure('handoff-without-shared-project-link');
+  const link = sharedProjectLink(vscode.Uri.parse(text, true), c.extension.id);
+  assert.deepEqual({owner: link.owner, project: link.project, peer: link.peer}, {owner, project, peer: c.ship});
+  const source = c.api.remoteSource as unknown as SourceInternals & {suggestions: {list(): readonly {draftId: string; request: string; phase: string; recoveries?: readonly {phase: string}[]}[]}};
+  await c.timed('open-shared-project', () => c.api.remoteSource.open(text), 90000);
+  const observation = source.observation; c.record.sourceState = source.state;
+  if (source.state !== 'Read-only shared files' || !observation?.files.length) throw new LiveFailure('shared-source-not-readable');
+  const file = observation.files[0]; c.record.path = file.path; c.record.bytes = Buffer.byteLength(file.text);
+  await c.timed('edit-draft', () => c.api.remoteSource.editDraft(file.path), 30000);
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.getText() !== file.text) throw new LiveFailure('draft-did-not-open');
+  const line = `::  suggested in a live test ${Date.now().toString(36)}\n`, end = editor.document.positionAt(file.text.length);
+  if (!await editor.edit(edit => edit.insert(end, (file.text.endsWith('\n') ? '' : '\n') + line))) throw new LiveFailure('draft-edit-refused');
+  const draft = editor.document.uri.toString(), before = new Set(source.suggestions.list().map(row => row.request)); c.record.added = line.trim();
+  c.mark('suggestion-submit');
+  let failed: unknown;
+  try {await c.timed('send-suggestion', () => c.api.remoteSource.sendSuggestion(draft), 90000);} catch (error) {failed = error;}
+  // The journal names a draft by its own id, not its address: the retained suggestion is the one that was not there before.
+  const created = source.suggestions.list().find(row => !before.has(row.request)), held = () => source.suggestions.list().find(row => row.request === created?.request);
+  let record = held();
+  if (!record) {c.record.write = 'not-sent'; if (failed) c.record.writeError = errorInfo(failed, true); throw new LiveFailure('suggestion-not-sent');}
+  c.record.request = record.request; c.record.write = 'submitted'; c.observed('suggestion', record.phase);
+  if (failed) c.record.sendError = errorInfo(failed, true);
+  // Read the retained request until the owner's ship shows it recorded. Nothing is sent again.
+  for (let reads = 0; reads < 12 && record.phase !== 'recorded' && record.recoveries?.at(-1)?.phase !== 'recorded' && !/^refused/.test(record.phase); reads++) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    try {await c.timed('check-suggestion-' + reads, () => c.api.remoteSource.checkSuggestion(record!.request), 60000);} catch (error) {c.observed('check', 'unavailable', errorInfo(error).code);}
+    record = held() ?? record; c.observed('suggestion', record.recoveries?.at(-1)?.phase ?? record.phase);
+  }
+  const phase = record.recoveries?.at(-1)?.phase ?? record.phase; c.record.phase = phase;
+  if (phase !== 'recorded') throw new LiveFailure('suggestion-' + phase);
+  c.mark('handoff'); mergeHandoff(handoff, {suggestionRequest: record.request, suggestionPath: file.path});
+}
+
+export function run(): Promise<void> {return liveRun('live-peer-host', {join, sessions, suggest});}

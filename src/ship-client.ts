@@ -542,6 +542,35 @@ export class ShipClient {
     if (reply.status !== 200) failure('unavailable', reply.status);
     try {return sessionSharingSnapshot(json, target);} catch {return failure('malformed');}
   }
+  /**
+   * The owner's word to a collaborator about one retained suggestion: taken, or not taken. Sent once and never
+   * held or replayed here. The receipt says only that the word left this ship, not that the collaborator's ship took it.
+   */
+  async suggestionAnswer(project: string, receipt: string, answer: 'taken' | 'declined'): Promise<void> {
+    if (this.closed) failure('closed');
+    const owner = this.projectViewPeer();
+    remoteProjectViewTarget({owner, project, generation: '1'});
+    if (this.current && this.current.owner !== owner) failure('contextChanged');
+    if (!isUx(receipt) || receipt.startsWith('0x0') || BigInt(receipt.replaceAll('.', '')) >= (1n << 256n) || !['taken', 'declined'].includes(answer)) failure('contextChanged');
+    if (this.busy) failure('commandBusy');
+    const body = this.encode({schema: 'readymade-suggestion-answer-v1', owner, project, receipt, answer});
+    this.busy = true; const epoch = this.generation;
+    try {
+      const reply = await this.wire('/apps/readymade-collab/suggestion-answer', 'POST', body,
+        {'Content-Type': 'application/json', 'x-readymade-suggestion-answer': 'v1'}, {timeoutMs: 15000}, 4096);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== owner) throw new OutcomeUnknownError();
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      const json = this.projectViewJSON(reply);
+      // Each of these means nothing was sent: no such receipt, or a ship that does not know this request (an older service).
+      if (reply.status === 404 && json.message === 'receipt-missing') failure('receiptMissing', 404);
+      if ([400, 404, 405, 409].includes(reply.status) && json.status === 'refused') failure('refused', reply.status);
+      if (reply.status !== 202 || Object.keys(json).length !== 4 || json.schema !== 'readymade-suggestion-answer-receipt-v1' || json.status !== 'sent' ||
+          json.answer !== answer || json.confirmed !== false) throw new OutcomeUnknownError();
+    } catch (error) {
+      if (error instanceof ShipClientError && ['refused', 'authenticationRequired', 'receiptMissing'].includes(error.code)) throw error;
+      throw new OutcomeUnknownError();
+    } finally {this.busy = false;}
+  }
   /** What owners told this ship about shares they ended. A read only. An older collaboration service keeps no such list: null. */
   async shareNotices(): Promise<ShareNotices | null> {
     if (this.closed) failure('closed');
