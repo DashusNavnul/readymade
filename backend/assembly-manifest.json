@@ -4895,8 +4895,8 @@
     "lib/readymade-session-sharing.hoon": {
       "component": "application",
       "source": "lib/readymade-session-sharing.hoon",
-      "sha256": "f0723908ebb394a9605039af25aa3e3f926616786159bc234952b97b67537e0b",
-      "bytes": 7926
+      "sha256": "6e48ed2de2aabd13b224b67f4ce2380ccc06aa81f66960da56d92f7163303bc1",
+      "bytes": 8168
     },
     "lib/readymade-tlon.hoon": {
       "component": "application",
