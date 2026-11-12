@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "74cb4eaf03b10908946774d1189677ef6f31324a24ea759510ef496e624858e0",
-      "bytes": 77038
+      "sha256": "8bf1c9cbeb2f0bb04f7c0e87374243b9074f981eed47dcde19092fb2d8ece57c",
+      "bytes": 78600
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -1367,8 +1367,8 @@
     "gen/readymade-project-inbox-proof.hoon": {
       "component": "application",
       "source": "gen/readymade-project-inbox-proof.hoon",
-      "sha256": "b69e76be5072aaf75df58532b4f9f033a9491de4085ec5545975d8b6442b41c4",
-      "bytes": 2906
+      "sha256": "b4cb67576a7fdaf57497637e2021325bc9dbc39238809c5ae6e460a998c3392e",
+      "bytes": 5332
     },
     "gen/readymade-project-suggest-proof.hoon": {
       "component": "application",
@@ -4763,8 +4763,8 @@
     "lib/readymade-project-inbox-http.hoon": {
       "component": "application",
       "source": "lib/readymade-project-inbox-http.hoon",
-      "sha256": "13e6a96827f25a1c65817119d5b918d4a4e028896c827c3a4009b5c95e449ec5",
-      "bytes": 4097
+      "sha256": "ff4a8bbf7f443ccf17bad8569f9d8d7202b8ee00a1d1118d23b5094a5e6bc2c2",
+      "bytes": 6616
     },
     "lib/readymade-project-invitation-catalog.hoon": {
       "component": "application",
@@ -4829,8 +4829,8 @@
     "lib/readymade-project-sharing-transport.hoon": {
       "component": "application",
       "source": "lib/readymade-project-sharing-transport.hoon",
-      "sha256": "57c62d50f52e0a3f6f4d291420e1a44568a08543456b264ff23485d371c448c0",
-      "bytes": 2040
+      "sha256": "d7e2e472fafd5ab17c2d4d3ca0b2875c5b2f908a35d1672ffd4cd610b135104c",
+      "bytes": 2971
     },
     "lib/readymade-project-sharing.hoon": {
       "component": "application",
@@ -4907,8 +4907,8 @@
     "lib/readymade-share-terms.hoon": {
       "component": "application",
       "source": "lib/readymade-share-terms.hoon",
-      "sha256": "6c2b502beba2f5742fc015a1e6e5f440073116f5136af70418b9eda9ef7f5e24",
-      "bytes": 8677
+      "sha256": "855d2339534a85c2eb005d7395796a52e258fbcc6284887af2a106a649e81af7",
+      "bytes": 9913
     },
     "lib/readymade-tlon.hoon": {
       "component": "application",
