@@ -21,7 +21,7 @@ is made for one named ship.
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer) running macOS 12 or later**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.4).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.5).
 Quit any older Readymade first. Open the image, drag **Readymade Workspace** to
 **Applications** (choose Replace if asked), then open the app from Applications
 and eject the disk image. Running the download needs no
@@ -108,6 +108,24 @@ Invitations**: invite a ship, copy its join link,
 see each member's role and what is shared with them, offer another role, read
 the project's history, and remove a member together with every grant.
 
+**Sharing a coding session.** Under **Project Sharing**, choose a member and
+share a session with them, with no end or **for a limited time** (one hour to
+thirty days; your ship stops the share by itself). When you stop a share, a
+limit runs out, you remove someone or turn session sharing off, your ship tells
+theirs once, and their Readymade says so the next time it connects or they come
+back to its window (**Readymade: Show What Owners Told This Ship** lists it
+all). A host whose collaboration service is older is still read; it simply
+offers no time limits.
+
+**Sharing files and taking suggestions.** Share up to eight source files with a
+member, to read or to read and suggest changes. They must be on a desk only your
+ship can read: your ship refuses to share from a desk other ships can already
+read, a missing desk or a missing file, and says which. A member edits a private
+draft and sends it as a suggestion; it appears in your **Inbox**, where you can
+open it, import it into your own draft, and **tell them it was taken or not
+taken**. Taking a suggestion is always your own import and review; nothing a
+collaborator sends changes your project by itself.
+
 Shared file access uses a separate host-granted link through **Readymade: Open
 Shared Project**. See [Join a workspace](docs/JOIN_A_WORKSPACE.md). If a ship is
 slow or will not connect, run **Readymade: Ship Doctor**: it measures the ship
@@ -124,7 +142,12 @@ seconds where the service had been installed before, about 90 on the ship that
 never had it). After reopening, the guest left in 2 seconds and rejoined in 4.
 A role change was run the same way: the owner offered the moon another role, the
 moon accepted the new link, left with **Readymade: Leave Project**, was not
-offered Leave again, and rejoined. All the ships ran on one Mac: two people on separate computers have not yet
+offered Leave again, and rejoined. Between the planet and its moon these were
+also run live in real windows: a session shared for one hour and shown as such,
+a share that ended by itself when its limit ran out, the collaborator being told
+of a stopped share, and one real suggestion (file shared to read and suggest,
+edited, sent, shown in the owner's Inbox, answered "taken", collaborator told).
+Importing a suggestion and landing it through review has automated tests only. All the ships ran on one Mac: two people on separate computers have not yet
 run this release, so treat a first session with a new collaborator as that test
 and report what happens. Ships must be on Kelvin 408. A successful login alone
 does not establish shared coding readiness.

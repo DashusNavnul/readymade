@@ -73,7 +73,7 @@ retained Landscape tab. `groups` opens Tlon Groups; `lattice` opens Lattice's
 document workspace; `glurff` and `noltbook` open those apps. Each command
 accepts no arguments.
 
-The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.4) discovers every
+The [current preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.5) discovers every
 real ship class running on the Mac. A planet, a moon and comets have been
 connected live with the packaged app; the other classes have automated discovery
 and authentication coverage only. Ship class does not establish installed app

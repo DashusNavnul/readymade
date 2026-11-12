@@ -111,7 +111,7 @@ Activity** in the project view collect what needs you and what happened.
 
 ## Your own apps in Readymade
 
-Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.4),
+Download the `.dmg` from the [current Apple Silicon preview](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261111.5),
 quit any older Readymade, drag Readymade Workspace to Applications (Replace if
 asked) and open it. See [LLM setup](LLM_SETUP.md)
 for first-launch help or an optional source build; the download needs no development tools.
@@ -199,14 +199,26 @@ asks the owner's ship for its existing receipt. It does not resend the edit.
 Readymade retains the original outcome alongside the recovery result.
 
 On the owner's side, **Inbox** lists received suggestions for the
-selected project. Open a suggestion to inspect it, then **Import as Draft** to
-use the normal Changes, candidate and review flow. Import verifies the current
-project source and preserves existing owner edits. An outdated suggestion must
-be reconciled before it can be imported.
+selected project. Open a suggestion to inspect it, then **Import or Merge into
+My Draft** to use the normal Changes, candidate and review flow. Import verifies
+the current project source and preserves existing owner edits. An outdated
+suggestion must be reconciled before it can be imported. **Tell … It Was
+Taken** and **Tell … It Was Not Taken** send the collaborator your answer; their
+Readymade says it once, naming the file when that computer still remembers the
+suggestion. The answer is only word: it changes nothing in the project, and
+which answers you gave is remembered on your computer, not on the ship.
 
-This flow needs the new native shared-source and suggestion endpoints on the
-participating ships. The packaged desktop checks use a local fixture service;
-live two-ship suggestion review and acceptance remain unfinished. The current
+The owner can share files only from a desk that no other ship can read. Sharing
+from a publicly readable desk, a desk that is not there, or a file that is not
+there is refused by the owner's ship before anything is recorded, and the app
+says which it was.
+
+This flow needs the native shared-source and suggestion endpoints on the
+participating ships. One real suggestion has crossed two ships in real windows
+(shared to read and suggest, edited, sent, shown in the owner's Inbox, answered,
+collaborator told). Importing a suggestion and landing it through review has
+automated tests only; it has not been run live between two ships. An owner's
+ship keeps at most 64 suggestion receipts in all. The current
 remote source contract supports up to eight shared Hoon files, 32 KiB per file
 and 64 KiB total, with ASCII text, tabs and line endings. These limits apply to
 this remote protocol, not ordinary local files in the editor.
