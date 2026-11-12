@@ -43,6 +43,7 @@
       {"command": "readymade.joinProject", "title": "Readymade: Join Project"},
       {"command": "readymade.switchShip", "title": "Readymade: Switch Ship…"},
       {"command": "readymade.inviteAndCopyLink", "title": "Readymade: Invite Collaborator and Copy Join Link"},
+      {"command": "readymade.catchUp", "title": "Readymade: Catch Me Up"},
       {"command": "readymade.doctor", "title": "Readymade: Ship Doctor"},
       {"command": "readymade.ownerInbox", "title": "Readymade: Check What Is Waiting on Me"},
       {"command": "readymade.projectActivity", "title": "Readymade: Project Activity"},

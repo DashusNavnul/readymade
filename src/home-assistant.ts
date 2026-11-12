@@ -40,6 +40,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   spec('readymade.projectInvitations', 'Pending Project Invitations', 'List invitations that are still open; a link can be copied or an invitation withdrawn from there.'),
   spec('readymade.projectHistory', 'Project History', 'Show who joined, left, or changed role, and when.'),
   spec('readymade.projectActivity', 'Project Activity', 'Show recent activity in the chosen project.'),
+  spec('readymade.catchUp', 'Catch Me Up', 'Show what happened while the person was away: activity, what is waiting, recent requests and results, with an optional summary. Use this when asked what was missed, or for a summary.'),
   spec('readymade.ownerInbox', 'Check What Is Waiting on Me', 'Show everything waiting for the owner\'s decision.'),
   spec('readymade.leaveProject', 'Leave Project', 'Leave a project this ship joined. Asks which one when there are several, and asks to confirm.'),
   spec('readymade.removeCollaborator', 'Remove Collaborator from Project', 'Remove a member from the chosen project. Asks who and asks to confirm.'),
@@ -210,20 +211,34 @@ const runProgram: Runner = (path, args, stdin, options) => new Promise((resolve,
 });
 
 export interface AskOptions {readonly chosen?: string; readonly timeoutMs?: number; readonly run?: Runner; readonly find?: (chosen?: string) => Assistant | undefined}
-/** One question, one answer. Runs in an empty folder made for the call and removed after it. */
-export async function askAssistant(typed: unknown, state: AskState, options: AskOptions = {}): Promise<Plan & {assistant: string}> {
-  const instruction = instructionText(typed);
+/** One request to the assistant, one text answer. Runs in an empty folder made for the call and removed after it. */
+async function assistantText(system: string, input: string, options: AskOptions): Promise<{text: string; assistant: string}> {
   const assistant = (options.find ?? findAssistant)(options.chosen);
   if (!assistant) throw new AssistantError('No coding assistant was found on this computer. Install Claude Code or Codex and sign in, or set readymade.assistantPath to its full path.');
   const cwd = mkdtempSync(join(tmpdir(), 'readymade-ask-')), answerFile = join(cwd, 'answer.txt');
   try {
-    const call = assistantCall(assistant.kind, systemPrompt(state), instruction, answerFile);
+    const call = assistantCall(assistant.kind, system, input, answerFile);
     const env = {...process.env, PATH: searchDirs().join(delimiter)};
     let result: RunResult;
     try {result = await (options.run ?? runProgram)(assistant.path, call.args, call.stdin, {cwd, env, timeoutMs: options.timeoutMs ?? 90_000});}
     catch {throw new AssistantError(`${label[assistant.kind]} could not be started from ${assistant.path}.`);}
     if (result.timedOut) throw new AssistantError(`${label[assistant.kind]} did not answer in time. Nothing was run.`);
     let answer: string | undefined; try {answer = readFileSync(answerFile, 'utf8');} catch {answer = undefined;}
-    return {...parsePlan(assistantAnswer(assistant.kind, result.code, result.stdout, answer, result.stderr), instruction), assistant: label[assistant.kind]};
+    return {text: assistantAnswer(assistant.kind, result.code, result.stdout, answer, result.stderr), assistant: label[assistant.kind]};
   } finally {rmSync(cwd, {recursive: true, force: true});}
+}
+/** The Home command line: the typed instruction in, a checked plan of Readymade commands out. */
+export async function askAssistant(typed: unknown, state: AskState, options: AskOptions = {}): Promise<Plan & {assistant: string}> {
+  const instruction = instructionText(typed);
+  const {text, assistant} = await assistantText(systemPrompt(state), instruction, options);
+  return {...parsePlan(text, instruction), assistant};
+}
+export const MAX_SUMMARY_INPUT = 32_000;
+/** A summary: bounded text in, the assistant's text out (bounded, control characters removed). It is only ever shown to the person; nothing in it is run. */
+export async function askAssistantSummary(system: string, record: string, options: AskOptions = {}): Promise<{text: string; assistant: string}> {
+  if (!record.trim() || record.length > MAX_SUMMARY_INPUT) throw new AssistantError('There is nothing to summarize, or it is too long to send.');
+  const {text, assistant} = await assistantText(system, record, {timeoutMs: 120_000, ...options});
+  const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]+/g, ' ').trim().slice(0, 6000);
+  if (!clean) throw new AssistantError(`${assistant} returned an empty summary.`);
+  return {text: clean, assistant};
 }

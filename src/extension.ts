@@ -58,7 +58,8 @@ import { waitingReport, waitingSummary, type WaitingReport } from './owner-inbox
 import { projectActivity, type ActivityEntry } from './project-activity';
 import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
-import { askAssistant } from './home-assistant';
+import { askAssistant, askAssistantSummary } from './home-assistant';
+import { CATCH_UP_SYSTEM, catchUpDigest, catchUpDocument, type CatchUpInput } from './catch-up';
 
 type Row = MediaTreeRow;
 class WorkspaceTree implements vscode.TreeDataProvider<Row> {
@@ -267,6 +268,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
     command('doctor', () => this.doctor.show());
     command('ownerInbox', () => this.checkWaiting());
+    command('catchUp', () => this.catchUp());
     command('projectActivity', () => this.readActivity());
     command('followBackendUpdates', () => this.followBackendUpdates());
     command('switchShip', async () => {if (await this.media.switchShip() && !this.media.connectedClient) await this.resumeSwitch();});
@@ -492,6 +494,36 @@ export class ReadymadeWorkspace implements vscode.Disposable {
    * The owner inbox: ask each existing screen for its own current state, then count what needs the owner.
    * Each source is read on its own; one that cannot be read (no project, a busy ship) is named as not checked.
    */
+  /**
+   * What happened while the person was away: the activity, what is waiting and the recent requests and results
+   * the app already reads, on one page. A summary by the assistant on this computer is offered, never assumed:
+   * the page says how much text would be sent and to what. Nothing is sent to the ship.
+   */
+  private async catchUp(): Promise<void> {
+    const client = this.requireClient(), project = this.selectedProject;
+    this.snapshot = await client.workspaceState();
+    if (project) {try {await this.readActivity();} catch { /* shown as none recorded */ } try {await this.checkWaiting();} catch { /* shown as not checked */ }}
+    if (this.requireClient() !== client || this.selectedProject !== project) throw new Error('The connection or project changed; ask again.');
+    const rows = (value: unknown) => Array.isArray(value) ? value as JsonObject[] : [], text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+    const feed = this.feed && this.feed.project === project ? this.feed : undefined;
+    const input: CatchUpInput = {
+      ship: text(this.snapshot.ship) || client.origin, project, session: this.selectedSession && this.selectedSession !== '0x0' ? this.selectedSession : undefined,
+      activity: feed?.entries ?? [], activityPartial: feed?.partial ?? false,
+      waiting: project && this.waiting ? {items: this.waiting.items.map(item => item.label), unchecked: this.waiting.unchecked} : undefined,
+      conversation: rows((this.snapshot.conversation as JsonObject | undefined)?.entries).map(row => ({id: text(row.id), status: text(row.status), request: text(row.request),
+        output: typeof row.output === 'string' && row.output ? row.output : undefined, truncated: Number(row.outputBytes) > Buffer.byteLength(text(row.output))})),
+      candidates: rows(this.snapshot.candidates).map(row => ({id: text(row.id), project: text(row.project), stage: text(row.stage)})),
+      sessions: (client.snapshot?.sessions ?? []).map(row => ({id: text(row.id), project: text(row.project)})),
+    };
+    const digest = catchUpDigest(input), summarize = 'Summarize', plain = 'Show Without a Summary';
+    const choice = await vscode.window.showInformationMessage('Catch me up', {modal: true, detail: `Readymade read your ship's activity, what is waiting on you, and your recent requests and results (${digest.length.toLocaleString('en-US')} characters).\n\n` +
+      'Summarize sends that text to the coding assistant on this computer (Claude Code, or else Codex) under your own account, and shows its summary above the text. Show Without a Summary sends it nowhere. Nothing is sent to your ship either way.'}, summarize, plain);
+    if (!choice) return;
+    const chosen = vscode.workspace.getConfiguration('readymade').get<string>('assistantPath')?.trim() || undefined;
+    const summary = choice === summarize ? await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Asking the assistant for a summary…'}, () => askAssistantSummary(CATCH_UP_SYSTEM, digest, {chosen})) : undefined;
+    const page = await vscode.workspace.openTextDocument({language: 'markdown', content: catchUpDocument(input, digest, new Date().toLocaleString('en-US'), summary)});
+    await vscode.window.showTextDocument(page, {preview: false});
+  }
   private async checkWaiting(): Promise<void> {
     if (this.checkingWaiting) return;
     this.requireClient(); this.checkingWaiting = true; this.render();
