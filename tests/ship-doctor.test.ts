@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {doctorFindings, parseProcess, parseReading, parseSwap, recoveryRecipe, runtimeOf, type DoctorFacts} from '../src/ship-doctor';
-import {decodeDoctorReading, encodeDoctorRequest} from '../src/planet-discovery-wire';
+import {doctorFindings, parseFlowReading, parseProcess, parseReading, parseSwap, recoveryRecipe, runtimeOf, type DoctorFacts} from '../src/ship-doctor';
+import {decodeDoctorReading, decodeFlowsReading, encodeDoctorRequest, encodeFlowsRequest} from '../src/planet-discovery-wire';
 
 const GB = 1024 ** 3;
 const healthy: DoctorFacts = {ship: '~sampel-palnet', httpMs: 24, bundledKelvin: 408,
@@ -43,6 +43,37 @@ test('a healthy ship has no warnings; each measured fault raises exactly its own
   assert.equal(busy.find(f => f.id === 'busy')?.level, 'warning'); assert.match(busy.find(f => f.id === 'busy')!.detail, /75%.*viki ×40, portal ×6/);
   assert.equal(busy.find(f => f.id === 'timers')?.level, 'warning'); assert.match(busy.find(f => f.id === 'timers')!.detail, /^46 timers are due in the next minute \(900 pending/);
   assert.equal(level({...healthy, reading: {...healthy.reading!, kelvin: 409}}, 'kelvin'), 'warning');
+});
+test('the paused-connection count is refused whole unless it is consistent', () => {
+  assert.deepEqual(parseFlowReading('3.518 3.117 3.465 0'), {known: 3518, pausedShips: 3117, pausedFlows: 3465, heardCount: 0, heard: []});
+  assert.deepEqual(parseFlowReading('40 2 6 2 ~sampel-palnet ~zod'), {known: 40, pausedShips: 2, pausedFlows: 6, heardCount: 2, heard: ['~sampel-palnet', '~zod']});
+  assert.equal(parseFlowReading('9 0 0 0').pausedFlows, 0);
+  const comet = '~dasres-ragnep-lislel-nidbyr--bonzod-sitmul-livlet-rosnet';
+  assert.deepEqual(parseFlowReading(`9 1 1 1 ${comet}`).heard, [comet]);
+  const many = Array.from({length: 16}, () => '~zod').join(' ');
+  assert.equal(parseFlowReading(`900 30 40 20 ${many}`).heard.length, 16);
+  for (const bad of ['', '3 1 1', '3 1 1 1', '3 1 1 0 ~zod', '3 2 1 0', '3 0 1 0', '3 4 9 0', '3 1 1 2 ~zod ~nec', '3 1 1 1 zod', '3 1 1 1 ~Zod',
+    '3 1 1 1 ~zod;rm', '3,1 1 1 0', `900 30 40 20 ${many} ~nec`]) assert.throws(() => parseFlowReading(bad), /Unreadable/, bad);
+});
+test('the flows request is one read-only thread that rests between batches', () => {
+  const request = encodeFlowsRequest(9); assert.ok(request.length > 100 && request.length < 8192);
+  assert.throws(() => decodeFlowsReading(9, Buffer.from([0, 1, 0, 0, 0, 0])));
+});
+test('paused connections: counted when quiet, named when online, a warning only with a busy worker', () => {
+  // A planet measured 2026-11-13: 3,117 of 3,518 peers paused by the nightly dead-peer job, none heard within a day.
+  const quiet = doctorFindings({...healthy, flows: parseFlowReading('3.518 3.117 3.465 0')}).find(f => f.id === 'paused')!;
+  assert.equal(quiet.level, 'ok'); assert.match(quiet.detail, /^3,465 connections to 3,117 of 3,518 known ships are paused; none/);
+  assert.match(doctorFindings({...healthy, flows: parseFlowReading('12 0 0 0')}).find(f => f.id === 'paused')!.detail, /^No connection to any of 12/);
+  // 2026-11-12: one online ship with paused flows, kept the worker 57% busy.
+  const online = parseFlowReading('3.518 2 4 1 ~sampel-palnet');
+  const calm = doctorFindings({...healthy, flows: online}).find(f => f.id === 'paused')!;
+  assert.equal(calm.level, 'note'); assert.match(calm.detail, /^1 ship heard from in the last day has a paused connection: ~sampel-palnet\./); assert.doesNotMatch(calm.detail, /57%/);
+  const busy = doctorFindings({...healthy, cpuPercent: 57, flows: online}).find(f => f.id === 'paused')!;
+  assert.equal(busy.level, 'warning'); assert.match(busy.detail, /57% busy/);
+  const more = doctorFindings({...healthy, flows: parseFlowReading(`900 30 40 20 ${Array(16).fill('~zod').join(' ')}`)}).find(f => f.id === 'paused')!;
+  assert.match(more.detail, /^20 ships .* have a paused connection: .* and 4 more\./);
+  assert.equal(level({...healthy, flowsFailure: 'timeout'}, 'paused'), 'note'); assert.equal(level({...healthy, flowsFailure: 'unavailable'}, 'paused'), 'note');
+  assert.equal(level(healthy, 'paused'), undefined);
 });
 test('missing readings are said, never guessed', () => {
   const remote = doctorFindings({ship: '~sampel-palnet', httpMs: 80, bundledKelvin: 408});

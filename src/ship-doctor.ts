@@ -1,4 +1,5 @@
 import {FULL_INSTALL_LOOM, loomOf, shipRank} from './install-choice';
+import {FLOWS_TIMEOUT_MS} from './planet-discovery-wire';
 
 /**
  * The ship doctor: what a ship on this computer and the Mac under it measure right now, and what those
@@ -10,6 +11,8 @@ export type FindingLevel = 'ok' | 'note' | 'warning' | 'problem';
 export interface Finding {readonly id: string; readonly level: FindingLevel; readonly title: string; readonly detail: string}
 export interface TimerRow {readonly seconds: number; readonly owner: string}
 export interface ShipReading {readonly kelvin: number; readonly timers: number; readonly soon: readonly TimerRow[]}
+/** The ship's paused connections: known peers, peers with a paused flow, paused flows, and paused peers heard within a day. */
+export interface FlowReading {readonly known: number; readonly pausedShips: number; readonly pausedFlows: number; readonly heardCount: number; readonly heard: readonly string[]}
 export interface DoctorFacts {
   readonly ship: string;
   /** Milliseconds the ship took to answer one small web request, or null when it did not answer in time. */
@@ -20,6 +23,7 @@ export interface DoctorFacts {
   readonly swapUsedBytes?: number; readonly swapTotalBytes?: number; readonly memoryBytes?: number;
   /** What the ship itself reported over its owner-only socket, or the reason it could not. */
   readonly reading?: ShipReading; readonly readingFailure?: 'timeout' | 'unavailable';
+  readonly flows?: FlowReading; readonly flowsFailure?: 'timeout' | 'unavailable';
   /** The kelvin the bundled backend was built for. */
   readonly bundledKelvin: number;
 }
@@ -61,6 +65,23 @@ export function parseReading(text: string): ShipReading {
   });
   if (soon.length > timers) throw Error('Unreadable ship reading.');
   return Object.freeze({kelvin, timers, soon: Object.freeze(soon)});
+}
+const dotted = (word: string | undefined): number => {
+  if (!word || !/^[0-9]{1,3}(?:\.[0-9]{3})*$/.test(word)) throw Error('Unreadable flow reading.');
+  return Number(word.replaceAll('.', ''));
+};
+/**
+ * The paused-connection count as its strand prints it: "3.518 3.117 3.465 2 ~sampel-palnet ~zod".
+ * Four counts, then at most 16 ship names, all of them paused ships heard within a day. Anything else is refused whole.
+ */
+export function parseFlowReading(text: string): FlowReading {
+  if (typeof text !== 'string' || text.length > 4096) throw Error('Unreadable flow reading.');
+  const words = text.split(' ');
+  const [known, pausedShips, pausedFlows, heardCount] = words.slice(0, 4).map(dotted), heard = words.slice(4);
+  const consistent = heard.length === Math.min(16, heardCount) && heardCount <= pausedShips && pausedShips <= known &&
+    (pausedShips === 0 ? pausedFlows === 0 : pausedFlows >= pausedShips);
+  if (!consistent || !heard.every(name => /^~(?:[a-z]{3}|[a-z]{6}(?:--?[a-z]{6}){0,7})$/.test(name))) throw Error('Unreadable flow reading.');
+  return Object.freeze({known, pausedShips, pausedFlows, heardCount, heard: Object.freeze(heard)});
 }
 /** The runtime file name and flags a worker was started with. */
 export function runtimeOf(command: string): {binary: string; loom: number | undefined; toss: number | undefined} {
@@ -128,6 +149,25 @@ export function doctorFindings(facts: DoctorFacts): Finding[] {
     else add('kelvin', 'ok', 'System version', `Kelvin ${facts.reading.kelvin}, the one the bundled backend is built for.`);
   } else if (facts.readingFailure === 'timeout') add('reading', 'warning', 'The ship did not report on itself in time', 'Its own socket took over 5 seconds for a small read. It is busy; check again when it is quiet.');
   else add('reading', 'note', 'Timers and system version not read', 'Only a ship running on this computer can be asked for these.');
+  // Paused connections. Ames pauses a flow by itself when a peer asks for an app that is not running here, and
+  // an operator (or a dead-peer job) can pause one by hand; the two look the same from here, so a paused ship that
+  // is online is a warning only together with a busy worker, the signature measured on 2026-11-12.
+  const count = (n: number) => n.toLocaleString('en-US');
+  if (facts.flows) {
+    const f = facts.flows;
+    if (f.heardCount) {
+      const busy = facts.cpuPercent !== undefined && facts.cpuPercent >= 50;
+      const names = f.heard.join(', ') + (f.heardCount > f.heard.length ? ` and ${count(f.heardCount - f.heard.length)} more` : '');
+      add('paused', busy ? 'warning' : 'note', 'Paused connections to ships that are online',
+        `${count(f.heardCount)} ship${f.heardCount === 1 ? '' : 's'} heard from in the last day ${f.heardCount === 1 ? 'has' : 'have'} a paused connection: ${names}. ` +
+        'A paused connection throws away everything that ship sends, and the ship keeps sending it again. ' +
+        'The ship pauses one by itself when a peer asks for an app that is not running here, and resumes it when that app starts; a pause set by hand stays until it is resumed by hand.' +
+        (busy ? ' The worker is also busy at rest: one online ship with paused connections kept a planet\'s worker 57% busy until they were resumed (measured 2026-11-12).' : ''));
+    } else add('paused', 'ok', 'Paused connections', f.pausedFlows
+      ? `${count(f.pausedFlows)} connection${f.pausedFlows === 1 ? '' : 's'} to ${count(f.pausedShips)} of ${count(f.known)} known ships ${f.pausedFlows === 1 ? 'is' : 'are'} paused; none of those ships was heard from in the last day.`
+      : `No connection to any of ${count(f.known)} known ships is paused.`);
+  } else if (facts.flowsFailure === 'timeout') add('paused', 'note', 'Paused connections not counted', `The count did not finish in ${FLOWS_TIMEOUT_MS / 1000} seconds. The ship may be busy, or know a very large number of other ships.`);
+  else if (facts.flowsFailure) add('paused', 'note', 'Paused connections not counted', 'This ship\'s networking state could not be read; its system may be older than this check.');
   const order: Record<FindingLevel, number> = {problem: 0, warning: 1, note: 2, ok: 3};
   return out.sort((a, b) => order[a.level] - order[b.level]);
 }

@@ -3,9 +3,9 @@ import {readdir, readFile, stat, statfs} from 'node:fs/promises';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as path from 'node:path';
-import {NativeObservationFailure, queryDoctorReading} from './planet-discovery-wire';
+import {NativeObservationFailure, queryDoctorReading, queryFlowsReading} from './planet-discovery-wire';
 import type {LocalPlanet} from './planet-discovery';
-import {parseProcess, parseReading, parseSwap, type DoctorFacts} from './ship-doctor';
+import {parseFlowReading, parseProcess, parseReading, parseSwap, type DoctorFacts} from './ship-doctor';
 
 /** The kelvin the bundled backend was built for when its packaged desk is not there to read. */
 export const BUNDLED_KELVIN = 408;
@@ -54,12 +54,15 @@ export async function gatherFacts(planet: LocalPlanet, extensionPath: string): P
     attempt(async () => Number(await run('/usr/sbin/sysctl', ['-n', 'hw.memsize']))),
     bundledKelvin(extensionPath),
   ]);
-  let reading: DoctorFacts['reading'], readingFailure: DoctorFacts['readingFailure'];
-  try {reading = parseReading(await queryDoctorReading(path.join(planet.pier, '.urb/conn.sock')));}
-  catch (error) {readingFailure = error instanceof NativeObservationFailure && error.reason === 'timeout' ? 'timeout' : 'unavailable';}
+  const socket = path.join(planet.pier, '.urb/conn.sock');
+  const failure = (error: unknown) => error instanceof NativeObservationFailure && error.reason === 'timeout' ? 'timeout' as const : 'unavailable' as const;
+  const [readingResult, flowsResult] = await Promise.allSettled([
+    queryDoctorReading(socket).then(parseReading), queryFlowsReading(socket).then(parseFlowReading)]);
+  const reading = readingResult.status === 'fulfilled' ? readingResult.value : undefined, readingFailure = readingResult.status === 'rejected' ? failure(readingResult.reason) : undefined;
+  const flows = flowsResult.status === 'fulfilled' ? flowsResult.value : undefined, flowsFailure = flowsResult.status === 'rejected' ? failure(flowsResult.reason) : undefined;
   return {ship: planet.ship, httpMs, bundledKelvin: kelvin,
     ...(command ? {command} : {}), ...(usage ? usage : {}),
     ...(snapshot !== undefined ? {snapshotBytes: snapshot} : {}), ...(log !== undefined ? {eventLogBytes: log} : {}), ...(disk !== undefined ? {freeDiskBytes: disk} : {}),
     ...(swap ? {swapUsedBytes: swap.usedBytes, swapTotalBytes: swap.totalBytes} : {}), ...(memory && Number.isSafeInteger(memory) ? {memoryBytes: memory} : {}),
-    ...(reading ? {reading} : {}), ...(readingFailure ? {readingFailure} : {})};
+    ...(reading ? {reading} : {}), ...(readingFailure ? {readingFailure} : {}), ...(flows ? {flows} : {}), ...(flowsFailure ? {flowsFailure} : {})};
 }

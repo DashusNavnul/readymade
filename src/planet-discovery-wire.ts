@@ -132,11 +132,58 @@ const DOCTOR_STRAND = `=/  m  (strand ,vase)
   (rap 3 ~[(scot %ud (div (sub (max d now.b) now.b) ~s1)) ':' who])
 (pure:m !>((rap 3 (join ' ' \`(list @t)\`[(scot %ud zuse) (scot %ud (lent timers)) rows]))))
 `;
-export function encodeDoctorRequest(id: number): Buffer {
+export const encodeDoctorRequest = (id: number): Buffer => evalRequest(id, DOCTOR_STRAND);
+/**
+ * The doctor's count of paused connections (Ames flows in a peer's halt set), read-only. A paused flow drops
+ * everything its peer sends while the peer keeps resending (measured 2026-11-12: one live peer paused by a
+ * dead-peer job kept a planet's worker 57% busy). Prints "<known> <paused ships> <paused flows> <heard>" and up
+ * to 16 of the paused ships heard from within a day. Reading one peer costs about 3 ms, so the strand rests
+ * after every 24 peers: each batch is its own short event (measured: under 150 ms with 3,518 peers) and the
+ * ship answers other work in between. Old-protocol peers only; a kernel without halt sets fails to compile.
+ */
+const FLOWS_STRAND = `=/  m  (strand ,vase)
+;<  b=bowl  bind:m  get-bowl
+?>  =(our.b src.b)
+=/  pre=path  /(scot %p our.b)//(scot %da now.b)/peers
+=/  ps  ~(tap by .^((map ship ?(%alien %known)) %ax pre))
+=|  [n=@ud known=@ud paused=@ud flows=@ud heard=(list @p)]
+|-  ^-  form:m
+=*  loop  $
+?~  ps
+  %-  pure:m  !>
+  %+  rap  3
+  %+  join  ' '
+  ^-  (list @t)
+  :*  (scot %ud known)  (scot %ud paused)  (scot %ud flows)  (scot %ud (lent heard))
+      (turn (scag 16 heard) |=(s=@p (scot %p s)))
+  ==
+?:  =(23 (mod n 24))
+  ;<  ~  bind:m  (sleep ~s0)
+  ;<  c=bowl  bind:m  get-bowl
+  loop(n +(n), pre /(scot %p our.c)//(scot %da now.c)/peers)
+?.  ?=(%known q.i.ps)  loop(ps t.ps, n +(n))
+=/  s  .^(ship-state:ames %ax (weld pre /(scot %p p.i.ps)))
+?.  ?=(%known -.s)  loop(ps t.ps, n +(n))
+?:  =(~ halt.+.s)  loop(ps t.ps, n +(n), known +(known))
+=/  live=?  ?|(?=(%live -.qos.+.s) (gte last-contact.qos.+.s (sub now.b ~h24)))
+%=  loop
+  ps  t.ps
+  n  +(n)
+  known  +(known)
+  paused  +(paused)
+  flows  (add flows ~(wyt in halt.+.s))
+  heard  ?:(live [p.i.ps heard] heard)
+==
+`;
+/** The paused-connection count can take seconds on a ship with thousands of peers; it rests between batches. */
+export const FLOWS_TIMEOUT_MS = 60000;
+const evalRequest = (id: number, source: string): Buffer => {
   need(Number.isSafeInteger(id) && id >= 0 && id <= 0xffffffff);
-  return jam(tuple(BigInt(id), atom('fyrd'), atom('base'), atom('khan-eval'), atom('noun'), atom('ted-eval'), atom(DOCTOR_STRAND)));
-}
-export function decodeDoctorReading(id: number, frame: Buffer): string {
+  return jam(tuple(BigInt(id), atom('fyrd'), atom('base'), atom('khan-eval'), atom('noun'), atom('ted-eval'), atom(source)));
+};
+export const encodeFlowsRequest = (id: number): Buffer => evalRequest(id, FLOWS_STRAND);
+/** A strand's printed reading: one atom of text, refused whole unless every character fits `pattern`. */
+function decodeTextReading(id: number, frame: Buffer, pattern: RegExp): string {
   let reason: NativeObservationReason = 'frame-or-decode';
   try {
     const noun = cue(frame); reason = 'envelope';
@@ -144,11 +191,13 @@ export function decodeDoctorReading(id: number, frame: Buffer): string {
     need(rid === BigInt(id) && kind === atom('avow') && failed === 0n && mark === atom('noun'));
     need(typeof value === 'bigint' && value > 0n);
     let hex = value.toString(16); need(hex.length <= 32768); if (hex.length % 2) hex = '0' + hex;
-    const reading = Buffer.from(hex, 'hex').reverse().toString('latin1'); need(/^[0-9a-z.: -]+(?![\s\S])/.test(reading)); return reading;
+    const reading = Buffer.from(hex, 'hex').reverse().toString('latin1'); need(pattern.test(reading)); return reading;
   } catch {throw new NativeObservationFailure(reason);}
 }
+export const decodeDoctorReading = (id: number, frame: Buffer): string => decodeTextReading(id, frame, /^[0-9a-z.: -]+(?![\s\S])/);
+export const decodeFlowsReading = (id: number, frame: Buffer): string => decodeTextReading(id, frame, /^[0-9a-z.~ -]+(?![\s\S])/);
 /** One request, one bounded reply, no retry. */
-function exchange<T>(socket: string, request: Buffer, decode: (frame: Buffer) => T, signal?: AbortSignal): Promise<T> {
+function exchange<T>(socket: string, request: Buffer, decode: (frame: Buffer) => T, signal?: AbortSignal, timeoutMs = LOCAL_OBSERVATION_TIMEOUT_MS): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!(typeof socket === 'string' && socket.startsWith('/') && Buffer.byteLength(socket) < 104 && !/[\x00-\x1f\x7f]/.test(socket))) {reject(new NativeObservationFailure('connection')); return;}
     if (signal?.aborted) {reject(new NativeObservationFailure('connection')); return;}
@@ -159,7 +208,7 @@ function exchange<T>(socket: string, request: Buffer, decode: (frame: Buffer) =>
       if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener('abort', abort); connection.destroy();
       if (value !== undefined) resolve(value.value); else reject(new NativeObservationFailure(reason));
     };
-    const abort = () => finish(), timer = setTimeout(() => finish(undefined, 'timeout'), LOCAL_OBSERVATION_TIMEOUT_MS);
+    const abort = () => finish(), timer = setTimeout(() => finish(undefined, 'timeout'), timeoutMs);
     signal?.addEventListener('abort', abort, {once: true});
     connection.once('connect', () => {if (!settled) connection.write(request);});
     connection.on('error', abort); connection.once('end', () => finish(undefined, data.length ? 'frame-or-decode' : 'connection'));
@@ -186,6 +235,11 @@ export function queryLoginCode(socket: string, signal?: AbortSignal): Promise<st
 export function queryDoctorReading(socket: string, signal?: AbortSignal): Promise<string> {
   const id = randomInt(0x100000000);
   return Promise.resolve().then(() => exchange(socket, encodeDoctorRequest(id), frame => decodeDoctorReading(id, frame), signal));
+}
+/** Ask a ship running on this computer to count its paused connections over its owner-only socket. Read-only. */
+export function queryFlowsReading(socket: string, signal?: AbortSignal): Promise<string> {
+  const id = randomInt(0x100000000);
+  return Promise.resolve().then(() => exchange(socket, encodeFlowsRequest(id), frame => decodeFlowsReading(id, frame), signal, FLOWS_TIMEOUT_MS));
 }
 export function queryNative(socket: string, query: 'real', signal?: AbortSignal): Promise<NativeReality>;
 export function queryNative(socket: string, query: Exclude<NativeQuery, 'real'>, signal?: AbortSignal): Promise<bigint>;
