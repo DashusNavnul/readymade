@@ -63,8 +63,12 @@ Start** is on (the default), or the one a join link names:
   your macOS user can open that socket. If the read fails you are asked for the
   code in the private field instead.
 - **Ship Doctor and the install offer** read the runtime's command line to see
-  its `--loom` memory setting, and Ship Doctor runs one read-only thread for the
-  ship's system version and pending timers. Neither changes the ship.
+  its `--loom` memory setting. Ship Doctor runs two read-only threads, one for
+  the ship's system version and pending timers and one that counts paused peer
+  connections, and times the ship's events for ten seconds (two minutes on
+  request) with a small bundled helper, `bin/event-watch`, which opens the
+  label page the Urbit runtime keeps in shared memory read-only. Neither
+  changes the ship.
 - **Installing or updating** the collaboration service, or installing Pataphor,
   changes the ship and happens only after you confirm it in the app. The
   collaboration service comes from the ship the join link names and stays

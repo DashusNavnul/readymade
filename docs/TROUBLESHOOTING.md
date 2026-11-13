@@ -72,8 +72,11 @@ address instead, which asks for the login code once.
 Run **Readymade: Ship Doctor** from the command palette while connected. It
 reads, once, how fast the ship answers, the runtime and `--loom` it was started
 with, the snapshot against its memory arena, free disk, the Mac's swap, how busy
-the ship is at rest, which timers are due and who set them, and the ship's
-Kelvin against this app's backend. It changes nothing. Connection errors now
+the ship is at rest, which timers are due and who set them, which connections
+to other ships are paused (and whether any of those ships is online), how long
+the ship's events take (any over 200 ms is named with where its time went;
+**Watch events for 2 minutes** catches work that recurs every two minutes), and
+the ship's Kelvin against this app's backend. It changes nothing. Connection errors now
 say what was measured: the ship answered too slowly, nothing is listening at
 that address, the address was not found, the connection dropped, the login code
 was refused, or a ship on this Mac came back on another port (Readymade offers
