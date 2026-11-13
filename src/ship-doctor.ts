@@ -24,6 +24,8 @@ export interface DoctorFacts {
   /** What the ship itself reported over its owner-only socket, or the reason it could not. */
   readonly reading?: ShipReading; readonly readingFailure?: 'timeout' | 'unavailable';
   readonly flows?: FlowReading; readonly flowsFailure?: 'timeout' | 'unavailable';
+  /** How long the worker's events ran while the doctor watched, or why that could not be watched. */
+  readonly events?: EventWatch; readonly eventsFailure?: 'missing' | 'unavailable';
   /** The kelvin the bundled backend was built for. */
   readonly bundledKelvin: number;
 }
@@ -74,6 +76,29 @@ const dotted = (word: string | undefined): number => {
  * The paused-connection count as its strand prints it: "3.518 3.117 3.465 2 ~sampel-palnet ~zod".
  * Four counts, then at most 16 ship names, all of them paused ships heard within a day. Anything else is refused whole.
  */
+/** An event is the ship doing one thing; it answers nothing else meanwhile. Longer than this is a stall people notice. */
+export const EVENT_LIMIT_MS = 200;
+export interface SlowEvent {readonly startMs: number; readonly lengthMs: number; readonly labels: readonly string[]}
+export interface EventWatch {readonly watchedMs: number; readonly events: number; readonly busyMs: number; readonly longestMs: number; readonly over: number; readonly slow: readonly SlowEvent[]}
+/**
+ * The event watcher's report (packaging/event-watch.c), in microseconds:
+ * "watched 10000000 events 340 busy 1500000 longest 277706 over 1 unreadable 3" then one
+ * "slow <start ms> <length us> <label>><label>..." per event over the limit, at most 32. Anything else is refused whole.
+ */
+export function parseEventWatch(text: string): EventWatch {
+  if (typeof text !== 'string' || text.length > 32768) throw Error('Unreadable event watch.');
+  const [head, ...rest] = text.replace(/\n$/, '').split('\n');
+  const top = /^watched (\d{1,12}) events (\d{1,9}) busy (\d{1,12}) longest (\d{1,12}) over (\d{1,9}) unreadable \d{1,12}$/.exec(head ?? '');
+  if (!top) throw Error('Unreadable event watch.');
+  const [watched, events, busy, longest, over] = top.slice(1, 6).map(Number);
+  const slow = rest.map(line => {
+    const row = /^slow (\d{1,9}) (\d{1,12}) ([!-~]{1,600})$/.exec(line);
+    if (!row || Number(row[2]) > longest) throw Error('Unreadable event watch.');
+    return Object.freeze({startMs: Number(row[1]), lengthMs: Number(row[2]) / 1000, labels: Object.freeze(row[3].split('>'))});
+  });
+  if (slow.length !== Math.min(32, over) || over > events || busy > watched + longest || longest > watched) throw Error('Unreadable event watch.');
+  return Object.freeze({watchedMs: watched / 1000, events, busyMs: busy / 1000, longestMs: longest / 1000, over, slow: Object.freeze(slow)});
+}
 export function parseFlowReading(text: string): FlowReading {
   if (typeof text !== 'string' || text.length > 4096) throw Error('Unreadable flow reading.');
   const words = text.split(' ');
@@ -149,6 +174,18 @@ export function doctorFindings(facts: DoctorFacts): Finding[] {
     else add('kelvin', 'ok', 'System version', `Kelvin ${facts.reading.kelvin}, the one the bundled backend is built for.`);
   } else if (facts.readingFailure === 'timeout') add('reading', 'warning', 'The ship did not report on itself in time', 'Its own socket took over 5 seconds for a small read. It is busy; check again when it is quiet.');
   else add('reading', 'note', 'Timers and system version not read', 'Only a ship running on this computer can be asked for these.');
+  // Event length: measured from outside while nothing else of the doctor's runs, so its own work is not counted.
+  if (facts.events) {
+    const e = facts.events, secs = Math.round(e.watchedMs / 1000), ms = (n: number) => `${Math.round(n)} ms`;
+    const missed = secs < 120 ? ' Work that recurs every two minutes or so shows only in a two-minute watch.' : '';
+    if (e.over) {
+      const shown = e.slow.slice(0, 5).map(s => `${ms(s.lengthMs)} in ${s.labels.join(' › ')}`).join('; ');
+      add('events', 'warning', `Events longer than ${EVENT_LIMIT_MS} ms`,
+        `In ${secs} s watched, ${e.over} of ${e.events} events ran longer than ${EVENT_LIMIT_MS} ms; the ship answers nothing else while one runs. ` +
+        `${shown}${e.slow.length > 5 ? `; and ${e.slow.length - 5} more` : ''}. The last label names the app or system part that did the work.${missed}`);
+    } else add('events', 'ok', 'Event length', `In ${secs} s watched: ${e.events} events, the longest ${ms(e.longestMs)}, none over ${EVENT_LIMIT_MS} ms.${missed}`);
+  } else if (facts.eventsFailure === 'missing') add('events', 'note', 'Event length not measured', 'The event watcher is part of the packaged app; this copy was started without it.');
+  else if (facts.eventsFailure) add('events', 'note', 'Event length not measured', 'The runtime\'s page of running labels could not be opened. Runtimes before 4.0 do not keep one.');
   // Paused connections. Ames pauses a flow by itself when a peer asks for an app that is not running here, and
   // an operator (or a dead-peer job) can pause one by hand; the two look the same from here, so a paused ship that
   // is online is a warning only together with a busy worker, the signature measured on 2026-11-12.

@@ -5,7 +5,7 @@ import * as https from 'node:https';
 import * as path from 'node:path';
 import {NativeObservationFailure, queryDoctorReading, queryFlowsReading} from './planet-discovery-wire';
 import type {LocalPlanet} from './planet-discovery';
-import {parseFlowReading, parseProcess, parseReading, parseSwap, type DoctorFacts} from './ship-doctor';
+import {EVENT_LIMIT_MS, parseEventWatch, parseFlowReading, parseProcess, parseReading, parseSwap, type DoctorFacts, type EventWatch} from './ship-doctor';
 
 /** The kelvin the bundled backend was built for when its packaged desk is not there to read. */
 export const BUNDLED_KELVIN = 408;
@@ -41,8 +41,26 @@ async function eventLogBytes(pier: string): Promise<number | undefined> {
   return seen ? total : undefined;
 }
 /** Everything the doctor measures for a ship on this computer. Each reading is independent: one that fails is left out. */
-export async function gatherFacts(planet: LocalPlanet, extensionPath: string): Promise<DoctorFacts> {
+/** How long the doctor watches events by default; the screen also offers a two-minute watch. */
+export const EVENT_WATCH_SECONDS = 10;
+/**
+ * Time the worker's events with the packaged watcher (bin/event-watch, read-only shared memory). The page is
+ * named after the runtime's main process, the worker's parent. Nothing is sent to the ship.
+ */
+export async function watchEvents(extensionPath: string, workerPid: number, seconds: number): Promise<EventWatch | 'missing' | 'unavailable'> {
+  const helper = path.join(extensionPath, 'bin/event-watch');
+  if (!(await attempt(() => stat(helper)))?.isFile()) return 'missing';
+  const king = Number(await attempt(() => run('/bin/ps', ['-p', String(workerPid), '-o', 'ppid='])));
+  if (!Number.isSafeInteger(king) || king < 2) return 'unavailable';
+  const output = await attempt(() => new Promise<string>((resolve, reject) => execFile(helper, ['--shm', String(king), String(seconds), String(EVENT_LIMIT_MS)],
+    {timeout: (seconds + 10) * 1000, maxBuffer: 65536}, (error, stdout) => error ? reject(error) : resolve(String(stdout)))));
+  if (output === undefined) return 'unavailable';
+  try {return parseEventWatch(output);} catch {return 'unavailable';}
+}
+export async function gatherFacts(planet: LocalPlanet, extensionPath: string, watchSeconds = EVENT_WATCH_SECONDS): Promise<DoctorFacts> {
   const pid = String(planet.workerPid);
+  // First and alone, so the doctor's own requests and threads are not among the events it times.
+  const watch = await watchEvents(extensionPath, planet.workerPid, watchSeconds);
   const [httpMs, command, usage, snapshot, log, disk, swap, memory, kelvin] = await Promise.all([
     answerTime(planet.origin),
     attempt(() => run('/bin/ps', ['-p', pid, '-o', 'args='])),
@@ -64,5 +82,6 @@ export async function gatherFacts(planet: LocalPlanet, extensionPath: string): P
     ...(command ? {command} : {}), ...(usage ? usage : {}),
     ...(snapshot !== undefined ? {snapshotBytes: snapshot} : {}), ...(log !== undefined ? {eventLogBytes: log} : {}), ...(disk !== undefined ? {freeDiskBytes: disk} : {}),
     ...(swap ? {swapUsedBytes: swap.usedBytes, swapTotalBytes: swap.totalBytes} : {}), ...(memory && Number.isSafeInteger(memory) ? {memoryBytes: memory} : {}),
-    ...(reading ? {reading} : {}), ...(readingFailure ? {readingFailure} : {}), ...(flows ? {flows} : {}), ...(flowsFailure ? {flowsFailure} : {})};
+    ...(reading ? {reading} : {}), ...(readingFailure ? {readingFailure} : {}), ...(flows ? {flows} : {}), ...(flowsFailure ? {flowsFailure} : {}),
+    ...(typeof watch === 'string' ? {eventsFailure: watch} : {events: watch})};
 }

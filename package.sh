@@ -126,6 +126,9 @@ cp "$workspace_dir/LICENSE" "$workspace_dir/THIRD_PARTY_NOTICES.md" "$extension/
 mkdir "$extension/platform"
 cp "$workspace_dir/platform/urbit.svg" "$workspace_dir/platform/hoon-language.json" "$workspace_dir/platform/hoon.tmLanguage" "$extension/platform/"
 ditto "$dist_dir/src" "$extension/dist/src"
+# The doctor's event watcher reads the runtime's shared label page (read-only) to time each event.
+mkdir "$extension/bin"
+xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=12.0 "$workspace_dir/packaging/event-watch.c" -o "$extension/bin/event-watch"
 # The backend installer and its verified bundle travel inside the app, so installing Pataphor on a
 # ship builds and downloads nothing on the user's machine. Same relative layout as the checkout:
 # backend/install (tools), backend/assembly-manifest.json (pins), backend/package (prepared bundle).
@@ -371,6 +374,7 @@ cp "$inner_app/Contents/Resources/VSCodium.icns" "$staged_app/Contents/Resources
   prove_runtime "$extension/backend/runtime/urbit" signed || fail 'The signed runtime failed the bounded-evaluation proof.'
   printf '{"runtimeSHA256":"%s","pillSHA256":"%s","runtimeSource":"%s","proof":"bounded-evaluation-proof.hoon passed after signing"}\n' \
     "$(shasum -a 256 "$extension/backend/runtime/urbit" | awk '{print $1}')" "$pill_sha" "$runtime_key" > "$extension/backend/runtime/runtime.json"
+  sign_target org.pataphor.codeoss.workspace.eventwatch "$extension/bin/event-watch"
   sign_target com.vscodium "$inner_app" --entitlements "$stage/electron-entitlements.plist"
   codesign --verify --deep --strict "$inner_app"
   sign_target org.pataphor.codeoss.workspace.cli "$staged_app/Contents/MacOS/ReadymadeCLI"

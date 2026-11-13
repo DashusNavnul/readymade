@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {doctorFindings, parseFlowReading, parseProcess, parseReading, parseSwap, recoveryRecipe, runtimeOf, type DoctorFacts} from '../src/ship-doctor';
+import {execFile, execFileSync} from 'node:child_process';
+import {closeSync, mkdtempSync, openSync, rmSync, writeSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {doctorFindings, parseEventWatch, parseFlowReading, parseProcess, parseReading, parseSwap, recoveryRecipe, runtimeOf, type DoctorFacts} from '../src/ship-doctor';
 import {decodeDoctorReading, decodeFlowsReading, encodeDoctorRequest, encodeFlowsRequest} from '../src/planet-discovery-wire';
 
 const GB = 1024 ** 3;
@@ -74,6 +78,54 @@ test('paused connections: counted when quiet, named when online, a warning only 
   assert.match(more.detail, /^20 ships .* have a paused connection: .* and 4 more\./);
   assert.equal(level({...healthy, flowsFailure: 'timeout'}, 'paused'), 'note'); assert.equal(level({...healthy, flowsFailure: 'unavailable'}, 'paused'), 'note');
   assert.equal(level(healthy, 'paused'), undefined);
+});
+// A planet measured 2026-11-13, 130 s: the watcher and an independent sampler found the same six events over 100 ms.
+const watched = 'watched 130000000 events 5816 busy 19030527 longest 277706 over 1 unreadable 3\nslow 82442 277706 poke/arvo>call/gall>on-poke/%noltbook\n';
+test('the event watch is refused whole unless it is consistent', () => {
+  assert.deepEqual(parseEventWatch(watched), {watchedMs: 130000, events: 5816, busyMs: 19030.527, longestMs: 277.706, over: 1,
+    slow: [{startMs: 82442, lengthMs: 277.706, labels: ['poke/arvo', 'call/gall', 'on-poke/%noltbook']}]});
+  assert.equal(parseEventWatch('watched 10000000 events 0 busy 0 longest 0 over 0 unreadable 0').events, 0);
+  const lines = Array.from({length: 32}, (_, i) => `slow ${i} 300000 poke/arvo`).join('\n');
+  assert.equal(parseEventWatch(`watched 10000000 events 50 busy 9000000 longest 300000 over 40 unreadable 0\n${lines}`).slow.length, 32);
+  for (const bad of ['', 'unavailable 2', 'watched 10 events 1 busy 1 longest 1 over 1 unreadable 0', 'watched 10000000 events 1 busy 1 longest 1 over 0 unreadable 0\nslow 1 1 x',
+    'watched 10000000 events 1 busy 1 longest 1000 over 2 unreadable 0\nslow 1 300 a\nslow 2 300 b', 'watched 10000000 events 1 busy 1 longest 100 over 1 unreadable 0\nslow 1 300 a',
+    'watched 10000000 events 1 busy 1 longest 300 over 1 unreadable 0\nslow 1 300 a b', 'watched 10 events 1 busy 1 longest 300 over 1 unreadable 0\nslow 1 300 a'])
+    assert.throws(() => parseEventWatch(bad), /Unreadable/, bad);
+});
+test('events over 200 ms are a warning that names where the time went', () => {
+  const slow = doctorFindings({...healthy, events: parseEventWatch(watched)}).find(f => f.id === 'events')!;
+  assert.equal(slow.level, 'warning'); assert.match(slow.detail, /^In 130 s watched, 1 of 5816 events ran longer than 200 ms/); assert.match(slow.detail, /278 ms in poke\/arvo › call\/gall › on-poke\/%noltbook/);
+  assert.doesNotMatch(slow.detail, /two-minute watch/);
+  const quiet = doctorFindings({...healthy, events: parseEventWatch('watched 10000000 events 900 busy 400000 longest 38896 over 0 unreadable 4')}).find(f => f.id === 'events')!;
+  assert.equal(quiet.level, 'ok'); assert.match(quiet.detail, /^In 10 s watched: 900 events, the longest 39 ms, none over 200 ms\. .*two-minute watch/);
+  assert.equal(level({...healthy, eventsFailure: 'missing'}, 'events'), 'note'); assert.equal(level({...healthy, eventsFailure: 'unavailable'}, 'events'), 'note');
+  assert.equal(level(healthy, 'events'), undefined);
+});
+/** The runtime's label page (vere trace.c): write offset, overflow count, then each label followed by its 4-byte length. */
+function labelPage(labels: string[]): Buffer {
+  const page = Buffer.alloc(16384); let off = 0;
+  for (const label of ['root', ...labels]) {const bytes = Buffer.from(label); bytes.copy(page, 8 + off); page.writeUInt32LE(bytes.length, 8 + off + bytes.length); off += bytes.length + 4;}
+  page.writeUInt32LE(off, 0); return page;
+}
+test('the packaged event watcher times a real label page the way the runtime writes it', {skip: process.platform !== 'darwin'}, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'event-watch-')), binary = join(dir, 'event-watch'), file = join(dir, 'page');
+  try {
+    execFileSync('/usr/bin/xcrun', ['clang', '-O2', '-Wall', '-Wextra', '-Werror', '-mmacosx-version-min=12.0', join(__dirname, '../../packaging/event-watch.c'), '-o', binary]);
+    // A missing page is said, not guessed; this first run also pays macOS's one-time check of a new binary,
+    // which otherwise delays the timed run past the start of the event below.
+    assert.throws(() => execFileSync(binary, ['--file', join(dir, 'absent'), '1', '200'], {encoding: 'utf8'}),
+      (error: {status?: number; stdout?: string}) => error.status === 3 && /^unavailable 2\n$/.test(error.stdout ?? ''));
+    const fd = openSync(file, 'w+'), put = (labels: string[]) => writeSync(fd, labelPage(labels), 0, 16384, 0);
+    put([]);
+    const report = new Promise<string>((resolve, reject) => execFile(binary, ['--file', file, '2', '200'], (error, stdout) => error ? reject(error) : resolve(stdout)));
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    await sleep(300); put(['poke/arvo', 'call/gall', 'on-poke/%noltbook']); await sleep(260); put([]);
+    await sleep(100); put(['poke/arvo']); await sleep(30); put([]);
+    const result = parseEventWatch(await report); closeSync(fd);
+    assert.equal(result.events, 2); assert.equal(result.over, 1);
+    assert.deepEqual(result.slow[0].labels, ['poke/arvo', 'call/gall', 'on-poke/%noltbook']);
+    assert.ok(result.slow[0].lengthMs > 230 && result.slow[0].lengthMs < 400 && result.slow[0].startMs > 100, JSON.stringify(result.slow[0]));
+  } finally {rmSync(dir, {recursive: true, force: true});}
 });
 test('missing readings are said, never guessed', () => {
   const remote = doctorFindings({ship: '~sampel-palnet', httpMs: 80, bundledKelvin: 408});
