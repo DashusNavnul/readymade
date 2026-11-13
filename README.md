@@ -21,7 +21,7 @@ is made for one named ship.
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer) running macOS 12 or later**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261112).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261113).
 Quit any older Readymade first. Open the image, drag **Readymade Workspace** to
 **Applications** (choose Replace if asked), then open the app from Applications
 and eject the disk image. Running the download needs no
