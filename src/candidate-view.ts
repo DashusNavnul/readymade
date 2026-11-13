@@ -80,8 +80,12 @@ export class CandidateView implements vscode.Disposable {
       if (this.held.possiblyTruncated) children.push({label: 'Only the first eight candidates are available'});
       for (const c of this.held.candidates) {
         const campaign = review?.campaigns.find(r => r.candidate === c.id);
-        const status = campaign ? campaign.reason || (campaign.pending ? `Waiting for ${campaign.mode}` : campaign.outcome ? `Review: ${campaign.outcome}` : campaign.mode) : c.decision;
-        children.push({label: `${c.edits.length} file changes · ${c.stage}`, description: status,
+        // The ship keeps a candidate whose checks cannot start yet (one runs at a time) and starts it itself; a refused or
+        // unsettled candidate carries the ship's own reason. Show those instead of a bare stage and "pending".
+        const waiting = c.stage === 'cloning' && c.reason === 'candidate-waiting-for-slot';
+        const status = campaign ? campaign.reason || (campaign.pending ? `Waiting for ${campaign.mode}` : campaign.outcome ? `Review: ${campaign.outcome}` : campaign.mode) :
+          waiting ? 'Starts when the running check finishes' : (c.stage === 'refused' || c.stage === 'unknown') && c.reason ? c.reason : c.decision;
+        children.push({label: `${c.edits.length} file changes · ${waiting ? 'waiting' : c.stage}`, description: status,
           tooltip: `Candidate ${c.id}\n${c.basis.desk} revision ${c.basis.number}`, command: {command: 'readymade.showCandidate', title: 'Inspect candidate', arguments: [c.id]}});
         if (retained && !retained.some(i => i.session === this.held?.session && i.candidate.id === c.id) &&
             review?.available && review.scope?.enabled && review.scope.binding && !campaign && c.stage === 'review' && c.decision === 'pending')
