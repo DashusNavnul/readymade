@@ -297,7 +297,7 @@ async function reviewer(c: LiveContext): Promise<void> {
 async function importSuggestion(c: LiveContext): Promise<void> {
   const peer = needShip('READYMADE_PEER_SHIP'), handoff = need('READYMADE_HANDOFF'), request = readHandoff(handoff).suggestionRequest, session = sessionOf();
   if (!request) throw new LiveFailure('handoff-without-suggestion');
-  await ownProject(c); c.record.peer = peer; c.record.request = request; c.record.session = session;
+  const project = await ownProject(c); c.record.peer = peer; c.record.request = request; c.record.session = session;
   await c.timed('read-inbox', () => c.api.inbox.observe(), 60000);
   const row = (c.api.inbox.receipts ?? []).find(row => row.request === request && row.peer === peer);
   if (!row) throw new LiveFailure('suggestion-not-in-inbox');
@@ -307,7 +307,16 @@ async function importSuggestion(c: LiveContext): Promise<void> {
   c.record.offeredInTree = offered?.label;
   if (!offered) throw new LiveFailure('import-not-offered');
   const before = new Set(c.api.drafts.list().map(d => d.uri));
-  await c.timed('import', () => c.api.inbox.import(row.receiptHash), 180000);
+  // Several of the owner's tasks can sit on the suggestion's revision (a task's source moves on when its change lands). The product
+  // then asks which task takes it; answer as a person would: type the intended task's id into the real picker and accept.
+  const tasks = (await c.timed('read-tasks', () => c.api.client!.codingState(), 60000)).sessions.filter(task => {
+    const source = task.source as {desk?: unknown; number?: unknown} | null;
+    return task.project === project && !!source && source.desk === row.desk && Number.isSafeInteger(source.number) && BigInt(source.number as number) === BigInt(row.revision.replaceAll('.', ''));
+  }).length;
+  c.record.tasksOnThisRevision = tasks;
+  const importing = c.api.inbox.import(row.receiptHash); importing.catch(() => undefined);
+  if (tasks > 1) {await sleep(4000); await pasteQuickInput('Session ' + session);}
+  await c.timed('import', () => importing, 180000);
   const draft = c.api.drafts.list().find(d => !before.has(d.uri) && d.snapshot.session === session);
   if (!draft) throw new LiveFailure('import-made-no-draft');
   const editor = vscode.window.activeTextEditor;
