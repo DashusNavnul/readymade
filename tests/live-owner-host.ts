@@ -10,7 +10,7 @@ import {LiveFailure, LiveTimeout, acceptQuickInput, copied, errorInfo, invitatio
   readHandoff, seen, sleep, within, type LiveContext} from './live-ship-support';
 
 // Live acceptance on the OWNER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
-// invite | share | revoke | members | answer-suggestion | share-session | share-session-limited | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
+// invite | share | revoke | members | answer-suggestion | reviewer | import-suggestion | review | apply | share-session | share-session-limited | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
 // screen's own single submission; an unknown outcome is recorded and fails the phase, and nothing is sent twice.
 
 /** What an owner does first: connect coding to the ship already signed in, then choose the project. Reads only. */
@@ -254,6 +254,133 @@ async function answerSuggestion(c: LiveContext): Promise<void> {
   if (!String(tree()?.description).includes(answer === 'taken' ? 'told: taken' : 'told: not taken')) throw new LiveFailure('row-does-not-show-the-answer');
 }
 
+// ===== taking a collaborator's suggestion: reviewer, import, review, apply (goal step 43) =====
+// The candidate screen and the reviewer screen keep their modal confirmations private, like the sharing screen; the
+// scripted stand-ins below answer Confirm once, and only to text naming the project and the effect a user would read.
+interface ConfirmInternals {confirm: (detail: string) => Thenable<boolean>; confirmApply?: (detail: string) => Thenable<boolean>}
+const confirmations = (c: LiveContext, view: object, slot: 'confirm' | 'confirmApply', wanted: (detail: string) => boolean) => {
+  let count = 0, accepted = false;
+  (view as ConfirmInternals)[slot] = async detail => {
+    count++; accepted = count === 1 && wanted(detail);
+    Object.assign(c.record, {scriptedConfirmation: true, confirmations: count, confirmationOffered: detail.slice(0, 600), confirmationTextVerified: accepted});
+    return accepted;
+  };
+  return () => accepted;
+};
+const sessionOf = (): string => {
+  const session = need('READYMADE_SESSION');
+  if (!/^0x[1-9a-f][0-9a-f]{0,3}(?:\.[0-9a-f]{4})*$/.test(session)) throw new LiveFailure('invalid-READYMADE_SESSION');
+  return session;
+};
+
+/** The owner chooses the project's reviewer (READYMADE_REVIEWER, a provider key) through the reviewer screen, once. */
+async function reviewer(c: LiveContext): Promise<void> {
+  const key = need('READYMADE_REVIEWER'), session = sessionOf(), project = await ownProject(c); c.record.reviewer = key; c.record.session = session;
+  await c.timed('observe-reviewer', () => c.api.reviewPolicy.observe(session), 60000);
+  const held = (c.api.reviewPolicy as unknown as {held?: {policy: {scope?: {model?: string; enabled?: boolean; generation?: string}; providers: {key: string}[]}}}).held;
+  c.record.before = held?.policy.scope ?? null; c.record.providers = held?.policy.providers.map(p => p.key);
+  if (!held?.policy.providers.some(p => p.key === key)) throw new LiveFailure('reviewer-not-offered');
+  const accepted = confirmations(c, c.api.reviewPolicy, 'confirm', detail => detail.includes(project) && detail.includes(`Reviewer ${key}`) && /can apply code changes/.test(detail));
+  c.mark('reviewer-submit');
+  try {await c.timed('configure-reviewer', () => c.api.reviewPolicy.configure(false, key), 90000); c.record.write = 'submitted';}
+  catch (error) {c.record.write = accepted() ? 'unknown' : 'not-sent'; c.record.writeError = errorInfo(error, true); throw new LiveFailure('reviewer-' + c.record.write);}
+  await c.timed('observe-reviewer-after', () => c.api.reviewPolicy.observe(session), 60000);
+  const after = (c.api.reviewPolicy as unknown as {held?: {policy: {scope?: {enabled?: boolean; generation?: string}}}}).held?.policy.scope;
+  c.record.after = after ?? null;
+  if (!after?.enabled) throw new LiveFailure('review-not-enabled');
+}
+
+/**
+ * The owner reads the inbox, imports the collaborator's suggestion (request id from the handoff) as its own local
+ * draft with the row's own action, and prepares one candidate from that draft. The candidate id goes to the handoff.
+ */
+async function importSuggestion(c: LiveContext): Promise<void> {
+  const peer = needShip('READYMADE_PEER_SHIP'), handoff = need('READYMADE_HANDOFF'), request = readHandoff(handoff).suggestionRequest, session = sessionOf();
+  if (!request) throw new LiveFailure('handoff-without-suggestion');
+  await ownProject(c); c.record.peer = peer; c.record.request = request; c.record.session = session;
+  await c.timed('read-inbox', () => c.api.inbox.observe(), 60000);
+  const row = (c.api.inbox.receipts ?? []).find(row => row.request === request && row.peer === peer);
+  if (!row) throw new LiveFailure('suggestion-not-in-inbox');
+  c.record.path = row.path; c.record.basis = `${row.desk} revision ${row.revision}`;
+  const offered = (c.api.inbox.rows()[0].children ?? []).find(item => item.children?.some(action => action.command?.arguments?.[0] === row.receiptHash))
+    ?.children?.find(action => action.command?.command === 'readymade.importInboxSuggestion');
+  c.record.offeredInTree = offered?.label;
+  if (!offered) throw new LiveFailure('import-not-offered');
+  const before = new Set(c.api.drafts.list().map(d => d.uri));
+  await c.timed('import', () => c.api.inbox.import(row.receiptHash), 180000);
+  const draft = c.api.drafts.list().find(d => !before.has(d.uri) && d.snapshot.session === session);
+  if (!draft) throw new LiveFailure('import-made-no-draft');
+  const editor = vscode.window.activeTextEditor;
+  if (editor?.document.uri.toString() !== draft.uri) throw new LiveFailure('draft-not-opened');
+  c.record.draftChanged = draft.text !== draft.snapshot.text; c.record.draftBytes = Buffer.byteLength(draft.text);
+  if (!c.record.draftChanged) throw new LiveFailure('draft-has-no-change');
+  c.mark('candidate-submit');
+  try {await c.timed('prepare-candidate', async () => {await vscode.commands.executeCommand('readymade.prepareCandidate');}, 90000);}
+  catch (error) {c.record.prepareError = errorInfo(error, true);}
+  let pending = c.api.drafts.get(draft.uri).pending;
+  for (let n = 0; n < 40 && pending?.phase !== 'candidate' && pending?.phase !== 'refused'; n++) {
+    await sleep(3000);
+    try {await c.timed('refresh-' + n, () => c.api.refresh(session), 60000);} catch (error) {c.observed('refresh', 'unavailable', errorInfo(error).code);}
+    pending = c.api.drafts.get(draft.uri).pending; c.observed('candidate', pending?.phase ?? 'none');
+  }
+  c.record.write = pending ? pending.phase === 'issued' ? 'not-sent' : 'submitted' : 'not-sent';
+  c.record.candidatePhase = pending?.phase ?? null; c.record.candidate = pending?.candidate ?? null;
+  if (pending?.phase !== 'candidate' || !pending.candidate) throw new LiveFailure('candidate-not-prepared');
+  c.mark('handoff'); mergeHandoff(handoff, {candidate: pending.candidate, candidateSession: session});
+}
+
+/** Reads the candidate until the ship's own checks settle it: stage 'review' with a pending decision, or a refusal. */
+async function settledCandidate(c: LiveContext, session: string, id: string, until: (cand: {stage: string; decision: string; landed?: unknown}) => boolean, reads: number, gap: number) {
+  for (let n = 0; ; n++) {
+    try {await c.timed('observe-' + n, () => c.api.codeReview.observe(session), 60000);} catch (error) {c.observed('observe', 'unavailable', errorInfo(error).code);}
+    const held = (c.api.codeReview as unknown as {held?: {candidates: {id: string; stage: string; decision: string; landed?: unknown}[]; review?: {campaigns: {candidate: string; pending?: boolean; outcome?: string; reason?: string; mode?: string}[]}}}).held;
+    const cand = held?.candidates.find(row => row.id === id), campaign = held?.review?.campaigns.find(row => row.candidate === id);
+    c.observed('candidate', cand ? `${cand.stage}/${cand.decision}` : 'missing', campaign ? (campaign.reason || campaign.outcome || (campaign.pending ? 'waiting for ' + campaign.mode : campaign.mode)) : undefined);
+    if (cand && until(cand) || n + 1 >= reads) return {cand, campaign};
+    await sleep(gap);
+  }
+}
+
+/** The owner starts the governed review of the prepared candidate once, then reads until the reviewer decides. */
+async function review(c: LiveContext): Promise<void> {
+  const handoff = readHandoff(need('READYMADE_HANDOFF')), id = handoff.candidate, session = handoff.candidateSession;
+  if (!id || !session) throw new LiveFailure('handoff-without-candidate');
+  const project = await ownProject(c); c.record.candidate = id; c.record.session = session;
+  const checked = await settledCandidate(c, session, id, cand => cand.stage === 'review' || cand.stage === 'refused', 40, 5000);
+  c.record.checked = checked.cand ? `${checked.cand.stage}/${checked.cand.decision}` : null;
+  if (checked.cand?.stage !== 'review' || checked.cand.decision !== 'pending') throw new LiveFailure('candidate-not-ready-for-review');
+  const offered = (c.api.codeReview.rows()[0].children ?? []).some(row => row.command?.command === 'readymade.startCodeReview' && row.command.arguments?.[0] === id);
+  c.record.offeredInTree = offered;
+  if (!offered) throw new LiveFailure('review-not-offered');
+  const accepted = confirmations(c, c.api.codeReview, 'confirm', detail => detail.includes(project) && detail.includes(id) && /A passing native decision can apply/.test(detail));
+  c.mark('review-submit');
+  try {await c.timed('start-review', () => c.api.codeReview.start(id), 120000); c.record.write = 'submitted';}
+  catch (error) {c.record.write = accepted() ? 'unknown' : 'not-sent'; c.record.writeError = errorInfo(error, true); throw new LiveFailure('review-' + c.record.write);}
+  // The reviewer is a model run by the owner's ship: allow up to fifteen minutes, reading every fifteen seconds.
+  const decided = await settledCandidate(c, session, id, cand => cand.decision !== 'pending' || cand.stage === 'refused', 60, 15000);
+  c.record.decision = decided.cand ? `${decided.cand.stage}/${decided.cand.decision}` : null; c.record.campaign = decided.campaign ?? null;
+  if (decided.cand?.decision !== 'approve') throw new LiveFailure(decided.cand?.decision === 'pending' ? 'review-not-decided' : 'review-did-not-approve');
+}
+
+/** The owner applies the approved candidate once and reads until the ship reports it landed. */
+async function apply(c: LiveContext): Promise<void> {
+  const handoff = readHandoff(need('READYMADE_HANDOFF')), id = handoff.candidate, session = handoff.candidateSession;
+  if (!id || !session) throw new LiveFailure('handoff-without-candidate');
+  const project = await ownProject(c); c.record.candidate = id; c.record.session = session;
+  const before = await settledCandidate(c, session, id, () => true, 1, 0);
+  c.record.before = before.cand ? `${before.cand.stage}/${before.cand.decision}` : null;
+  const offered = (c.api.codeReview.rows()[0].children ?? []).some(row => row.command?.command === 'readymade.applyCandidate' && row.command.arguments?.[0] === id);
+  c.record.offeredInTree = offered;
+  if (!offered) throw new LiveFailure('apply-not-offered');
+  const accepted = confirmations(c, c.api.codeReview, 'confirmApply', detail => detail.includes(project) && /Apply the reviewed source to the working project/.test(detail));
+  c.mark('apply-submit');
+  try {await c.timed('apply', () => c.api.codeReview.apply(id), 180000); c.record.write = 'submitted';}
+  catch (error) {c.record.write = accepted() ? 'unknown' : 'not-sent'; c.record.writeError = errorInfo(error, true);}
+  const landed = await settledCandidate(c, session, id, cand => !!cand.landed || cand.stage === 'refused', 24, 5000);
+  c.record.after = landed.cand ? `${landed.cand.stage}/${landed.cand.decision}` : null; c.record.landed = landed.cand?.landed ?? null;
+  if (!landed.cand?.landed) throw new LiveFailure(c.record.write === 'submitted' ? 'not-landed' : 'apply-' + c.record.write);
+}
+
 async function projectSetting(c: LiveContext): Promise<void> {
   const peer = needShip('READYMADE_PEER_SHIP'), setting = need('READYMADE_SETTING'), project = await ownProject(c);
   if (setting !== 'on' && setting !== 'off') throw new LiveFailure('invalid-READYMADE_SETTING');
@@ -296,5 +423,5 @@ async function remove(c: LiveContext): Promise<void> {
 }
 
 export function run(): Promise<void> {
-  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'answer-suggestion': answerSuggestion, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
+  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'answer-suggestion': answerSuggestion, reviewer, 'import-suggestion': importSuggestion, review, apply, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
 }

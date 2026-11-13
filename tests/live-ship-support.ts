@@ -82,8 +82,8 @@ function codeFromFile(path: string): string {
   return code;
 }
 
-export interface Handoff {joinLink?: string; sharedProjectLink?: string; suggestionRequest?: string; suggestionPath?: string}
-/** Links, and the id and file of a suggestion one phase sent for the next to find. A link names ships, a project and an invitation or grant generation; none of this is a credential. */
+export interface Handoff {joinLink?: string; sharedProjectLink?: string; suggestionRequest?: string; suggestionPath?: string; candidate?: string; candidateSession?: string}
+/** Links, the id and file of a suggestion, and the candidate prepared from it, that one phase leaves for the next to find. A link names ships, a project and an invitation or grant generation; none of this is a credential. */
 export function readHandoff(path: string, optional = false): Handoff {
   if (!isAbsolute(path)) throw new LiveFailure('handoff-path-not-absolute');
   let text: string;
@@ -94,7 +94,7 @@ export function readHandoff(path: string, optional = false): Handoff {
   }
   let value: unknown; try {value = JSON.parse(text);} catch {throw new LiveFailure('handoff-invalid');}
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new LiveFailure('handoff-invalid');
-  for (const [key, link] of Object.entries(value)) if (!['joinLink', 'sharedProjectLink', 'suggestionRequest', 'suggestionPath'].includes(key) || typeof link !== 'string' || link.length > 2048) throw new LiveFailure('handoff-invalid');
+  for (const [key, link] of Object.entries(value)) if (!['joinLink', 'sharedProjectLink', 'suggestionRequest', 'suggestionPath', 'candidate', 'candidateSession'].includes(key) || typeof link !== 'string' || link.length > 2048) throw new LiveFailure('handoff-invalid');
   return value as Handoff;
 }
 export function mergeHandoff(path: string, patch: Handoff): void {

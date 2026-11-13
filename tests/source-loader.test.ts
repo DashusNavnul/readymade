@@ -150,9 +150,15 @@ test('canonical busy state refuses before a page intent or command, including a 
   }
 });
 
-test('absent, unavailable, contradictory or unbound readiness cannot create a page intent', async () => {
+test('a ship that reports no readiness gets the read, as before readiness existed (its own refusal still settles a busy task)', async () => {
+  const r = rig(); r.readiness(undefined);
+  r.client.codingTool = async (_s, _b, command) => {r.commands.push(command); r.add('done\n', 1, 1, null); return r.state();};
+  assert.ok(await r.loader().load('0x1', basis, path, 'demo', r.options)); assert.equal(r.commands.length, 1);
+});
+
+test('reported but unavailable, contradictory or unbound readiness cannot create a page intent', async () => {
   const valid = rig().state().fileReadReady as JsonObject;
-  for (const readiness of [undefined, null, [], {...valid, available: false}, {...valid, owner: '~nec'}, {...valid, session: '0x2'},
+  for (const readiness of [null, [], {...valid, available: false}, {...valid, owner: '~nec'}, {...valid, session: '0x2'},
     {...valid, schema: 'other'}, {...valid, ready: 'true'}, {...valid, ready: true, reason: 'turn-still-pending'}, {...valid, ready: false, reason: 'ready'}]) {
     const r = rig(); r.readiness(readiness);
     await assert.rejects(r.loader().load('0x1', basis, path, 'demo', r.options), /File-read readiness is unavailable/);

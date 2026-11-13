@@ -38,6 +38,10 @@ function refusal(state: CodingSnapshot, file: SourceProgress, request: string | 
 
 function requireReadReady(state: CodingSnapshot, file: SourceProgress): void {
   const raw = state.fileReadReady;
+  // No ship backend reports readiness yet (the ship side of this check was never written), so absence means
+  // "not reported", not "busy": the read is sent and the ship's own refusal of a busy task settles it, as before.
+  // A readiness value that IS reported must be well formed and bound to this file's ship and task.
+  if (raw === undefined) return;
   const view = raw && typeof raw === 'object' && !Array.isArray(raw) ? asRecord(raw) : {};
   if (view.schema !== 'native-coding-file-read-ready-v1' || view.owner !== file.ship || view.session !== file.session ||
       view.available !== true || typeof view.ready !== 'boolean' || typeof view.reason !== 'string' ||
