@@ -341,7 +341,8 @@ async function settledCandidate(c: LiveContext, session: string, id: string, unt
   }
 }
 
-/** The owner starts the governed review of the prepared candidate once, then reads until the reviewer decides. */
+/** Reads until the checks settle, starts the governed review once unless the ship already opened one for this candidate
+ * (a project with an enabled review scope does that itself when the checks pass), then reads until the reviewer decides. */
 async function review(c: LiveContext): Promise<void> {
   const handoff = readHandoff(need('READYMADE_HANDOFF')), id = handoff.candidate, session = handoff.candidateSession;
   if (!id || !session) throw new LiveFailure('handoff-without-candidate');
@@ -350,12 +351,17 @@ async function review(c: LiveContext): Promise<void> {
   c.record.checked = checked.cand ? `${checked.cand.stage}/${checked.cand.decision}` : null;
   if (checked.cand?.stage !== 'review' || checked.cand.decision !== 'pending') throw new LiveFailure('candidate-not-ready-for-review');
   const offered = (c.api.codeReview.rows()[0].children ?? []).some(row => row.command?.command === 'readymade.startCodeReview' && row.command.arguments?.[0] === id);
-  c.record.offeredInTree = offered;
-  if (!offered) throw new LiveFailure('review-not-offered');
-  const accepted = confirmations(c, c.api.codeReview, 'confirm', detail => detail.includes(project) && detail.includes(id) && /A passing native decision can apply/.test(detail));
-  c.mark('review-submit');
-  try {await c.timed('start-review', () => c.api.codeReview.start(id), 120000); c.record.write = 'submitted';}
-  catch (error) {c.record.write = accepted() ? 'unknown' : 'not-sent'; c.record.writeError = errorInfo(error, true); throw new LiveFailure('review-' + c.record.write);}
+  c.record.offeredInTree = offered; c.record.startedByShip = !!checked.campaign;
+  if (checked.campaign) {
+    if (offered) throw new LiveFailure('review-offered-twice');
+    c.record.write = 'not-needed';
+  } else {
+    if (!offered) throw new LiveFailure('review-not-offered');
+    const accepted = confirmations(c, c.api.codeReview, 'confirm', detail => detail.includes(project) && detail.includes(id) && /A passing native decision can apply/.test(detail));
+    c.mark('review-submit');
+    try {await c.timed('start-review', () => c.api.codeReview.start(id), 120000); c.record.write = 'submitted';}
+    catch (error) {c.record.write = accepted() ? 'unknown' : 'not-sent'; c.record.writeError = errorInfo(error, true); throw new LiveFailure('review-' + c.record.write);}
+  }
   // The reviewer is a model run by the owner's ship: allow up to fifteen minutes, reading every fifteen seconds.
   const decided = await settledCandidate(c, session, id, cand => cand.decision !== 'pending' || cand.stage === 'refused', 60, 15000);
   c.record.decision = decided.cand ? `${decided.cand.stage}/${decided.cand.decision}` : null; c.record.campaign = decided.campaign ?? null;
