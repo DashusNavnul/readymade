@@ -1,0 +1,135 @@
+{
+ "available": true,
+ "chain": "valid",
+ "inForce": {
+  "escalation": "Ask the owner before changing any file outside the two shared paths.",
+  "objectives": [
+   "Answer collaborator work requests in shared demo sessions."
+  ],
+  "paths": [
+   "/lib/session-estimate/hoon",
+   "/lib/session-rate/hoon"
+  ],
+  "project": "pataphor-demo-mp",
+  "resources": {
+   "maxAdmissions": 2,
+   "maxEvalWork": 1000000,
+   "maxSeconds": 900,
+   "maxTurns": 4
+  },
+  "tools": [
+   "check",
+   "compile",
+   "diff",
+   "list",
+   "read",
+   "search"
+  ]
+ },
+ "schema": "standing-policy-view-v1",
+ "storeRevision": 5,
+ "versions": [
+  {
+   "at": "~2026.11.17..11.16.43..5999",
+   "body": {
+    "escalation": "Ask the owner before changing any file outside the two shared paths.",
+    "objectives": [
+     "Answer collaborator work requests in shared demo sessions."
+    ],
+    "paths": [
+     "/lib/session-estimate/hoon",
+     "/lib/session-rate/hoon"
+    ],
+    "project": "pataphor-demo-mp",
+    "resources": {
+     "maxAdmissions": 2,
+     "maxEvalWork": 1000000,
+     "maxSeconds": 900,
+     "maxTurns": 4
+    },
+    "tools": [
+     "check",
+     "compile",
+     "diff",
+     "list",
+     "read",
+     "search"
+    ]
+   },
+   "digest": "0x7295.fe6b.f37d.2370.4917.414e.016d.a6b5.a4d9.624a.5d45.8108.c7e7.dfe8.150c.1d3f",
+   "issuer": "~zod",
+   "revoked": false,
+   "version": 4
+  },
+  {
+   "at": "~2026.11.17..10.45.57..4296",
+   "body": {
+    "escalation": "Ask the owner before changing any file outside the two shared paths.",
+    "objectives": [
+     "Answer collaborator work requests in shared demo sessions."
+    ],
+    "paths": [
+     "/lib/session-estimate/hoon",
+     "/lib/session-rate/hoon"
+    ],
+    "project": "pataphor-demo-mp",
+    "resources": {
+     "maxAdmissions": 1,
+     "maxEvalWork": 1000000,
+     "maxSeconds": 900,
+     "maxTurns": 4
+    },
+    "tools": [
+     "check",
+     "compile",
+     "diff",
+     "list",
+     "read",
+     "search"
+    ]
+   },
+   "digest": "0x8264.b6c0.ac83.140a.974b.9e2b.e8b9.be0b.2b4d.8eb2.472e.5cbc.a9fe.5221.9e2c.4c9c",
+   "issuer": "~zod",
+   "revoked": false,
+   "version": 3
+  },
+  {
+   "at": "~2026.11.17..04.40.15..0953",
+   "body": null,
+   "digest": "0x718b.e81c.9810.e0ab.83a7.073e.097b.a203.cc46.4736.cdcd.44e4.6779.ed18.f262.7bc4",
+   "issuer": "~zod",
+   "revoked": true,
+   "version": 2
+  },
+  {
+   "at": "~2026.11.17..04.40.11..8c6f",
+   "body": {
+    "escalation": "Ask the owner before touching /lib/preserve/hoon or any path outside these.",
+    "objectives": [
+     "Keep session-estimate and session-rate exact; check before any change."
+    ],
+    "paths": [
+     "/lib/session-estimate/hoon",
+     "/lib/session-rate/hoon"
+    ],
+    "project": "pataphor-demo-mp",
+    "resources": {
+     "maxAdmissions": 2,
+     "maxEvalWork": 2000000,
+     "maxSeconds": 1800,
+     "maxTurns": 16
+    },
+    "tools": [
+     "check",
+     "compile",
+     "patches",
+     "read"
+    ]
+   },
+   "digest": "0xa6e1.d0d0.813a.3a1c.74ee.03f6.d60f.a2db.1dd0.e1b2.c6d4.d829.5750.21b7.93a9.e593",
+   "issuer": "~zod",
+   "revoked": false,
+   "version": 1
+  }
+ ]
+}

@@ -1,0 +1,106 @@
+{
+ "account": {
+  "labels": [],
+  "memories": [],
+  "moreMemories": 0,
+  "rulings": [],
+  "since": "~2026.11.17..11.29.40..4fba",
+  "supersessions": [],
+  "who": "claude"
+ },
+ "agents": [
+  {
+   "newest": "~2026.11.17..11.29.40..4fba",
+   "turns": 815,
+   "who": "claude-opus-5-5"
+  },
+  {
+   "newest": "~2026.11.16..10.22.47..f4cb",
+   "turns": 920,
+   "who": "gpt-6-astra"
+  },
+  {
+   "newest": "~2026.11.16..09.41.57..3560",
+   "turns": 118,
+   "who": "gpt-6.1-terra"
+  },
+  {
+   "newest": "~2026.11.16..08.40.12..14ba",
+   "turns": 646,
+   "who": "gpt-6.1-sol"
+  },
+  {
+   "newest": "~2026.11.13..14.41.28..9b69",
+   "turns": 129,
+   "who": "claude-fable-5-2"
+  },
+  {
+   "newest": "~2026.11.09..02.44.19..ca3e",
+   "turns": 362,
+   "who": "claude-fable-5-1"
+  },
+  {
+   "newest": "~2026.10.28..04.34.53..a1ba",
+   "turns": 36,
+   "who": "claude-sonnet-5-5"
+  },
+  {
+   "newest": "~2026.10.25..18.41.36..7be1",
+   "turns": 3,
+   "who": "gpt-6-sol"
+  },
+  {
+   "newest": "~2026.10.11..20.15.02..59ba",
+   "turns": 49,
+   "who": "claude-opus-4-8"
+  },
+  {
+   "newest": "~2026.10.05..22.01.07..7aa2",
+   "turns": 4,
+   "who": "claude"
+  }
+ ],
+ "observedAt": "~2026.11.17..12.42.42..7d33",
+ "openQuestions": [
+  {
+   "at": "~2026.10.10..01.48.22..9663",
+   "cite": "cite:mem/memory-2.md/19e05b6d",
+   "description": "Description of memory 2.",
+   "hash": "19e05b6d",
+   "name": "memory-2.md",
+   "standing": "question",
+   "supersededBy": null,
+   "tier": "advisory",
+   "type": "project"
+  }
+ ],
+ "packet": {
+  "budget": 2871,
+  "bytes": 2866,
+  "items": [
+   {
+    "at": "~2026.11.13..22.26.20..6ca4",
+    "body": "Body of memory 1.",
+    "cite": "cite:mem/memory-1.md/ee04b7a2",
+    "description": "Description of memory 1.",
+    "hash": "ee04b7a2",
+    "name": "memory-1.md",
+    "standing": "unlabelled",
+    "supersededBy": null,
+    "tier": "advisory",
+    "type": "project"
+   }
+  ],
+  "leftOut": 591,
+  "topic": "readymade"
+ },
+ "schema": "operator-memory-view-v1",
+ "standings": {
+  "fact": 1,
+  "hypothesis": 0,
+  "question": 1,
+  "ruling": 0,
+  "unlabelled": 1159
+ },
+ "view": "handoff"
+}

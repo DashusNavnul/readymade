@@ -13,7 +13,7 @@ app_name='Readymade Workspace.app'
 publish_dir="${READYMADE_PACKAGE_OUTPUT_DIR:-$dist_dir}"
 app_path="$publish_dir/$app_name"
 receipt_path="$publish_dir/readymade-workspace-package-receipt.json"
-stage=''; downloaded=''; local_signing_active=''; backend_stage=''
+stage=''; downloaded=''; local_signing_active=''; backend_stage=''; package_cache_lock_identity=''
 fail() { printf 'Packaging refused: %s\n' "$1" >&2; exit 1; }
 source_fingerprint() {
   node - "$workspace_dir" <<'FINGERPRINT'
@@ -41,6 +41,11 @@ cleanup() {
   if [[ -n "$downloaded" && -f "$downloaded" && ! -L "$downloaded" ]]; then rm -- "$downloaded"; fi
   if [[ -n "$stage" && "$stage" == "$dist_dir"/.package.* && -d "$stage" && ! -L "$stage" ]]; then rm -r -- "$stage"; fi
   if [[ -n "$backend_stage" && "$backend_stage" == */readymade-backend.* && -d "$backend_stage" && ! -L "$backend_stage" ]]; then rm -r -- "$backend_stage"; fi
+  if [[ -n "$package_cache_lock_identity" ]]; then
+    if [[ -d "$package_cache_lock" && ! -L "$package_cache_lock" && "$(stat -f '%d:%i' "$package_cache_lock")" == "$package_cache_lock_identity" ]]; then
+      rmdir -- "$package_cache_lock" || result=1
+    else result=1; fi
+  fi
   return "$result"
 }
 trap cleanup EXIT
@@ -62,6 +67,11 @@ for cache_parent in "$HOME/.cache" "$HOME/.cache/readymade" "$cache_dir"; do
   cache_mode="$(stat -f '%Lp' "$cache_parent")"
   (( (8#$cache_mode & 022) == 0 )) || fail 'A package-cache parent permits writes by another user.'
 done
+# The doctor uses the same exclusive lock before moving a verified download.
+# Retained locks are never reclaimed automatically, including after a crashed build.
+package_cache_lock="$HOME/.cache/readymade/.package-cache-lock"
+mkdir -m 700 -- "$package_cache_lock" || fail 'Packaging or maintenance owns the cache lock; preserve retained locks for inspection.'
+package_cache_lock_identity="$(stat -f '%d:%i' "$package_cache_lock")"
 mkdir -p "$dist_dir" "$publish_dir"
 [[ -d "$publish_dir" && ! -L "$publish_dir" && -O "$publish_dir" ]] || fail 'The publication directory is unsafe.'
 [[ -d "$cache_dir" && ! -L "$cache_dir" && -O "$cache_dir" && "$(stat -f '%Lp' "$cache_dir")" == 700 ]] || fail 'Package cache must be an owned, private directory.'
@@ -374,6 +384,9 @@ cp "$inner_app/Contents/Resources/VSCodium.icns" "$staged_app/Contents/Resources
   prove_runtime "$extension/backend/runtime/urbit" signed || fail 'The signed runtime failed the bounded-evaluation proof.'
   printf '{"runtimeSHA256":"%s","pillSHA256":"%s","runtimeSource":"%s","proof":"bounded-evaluation-proof.hoon passed after signing"}\n' \
     "$(shasum -a 256 "$extension/backend/runtime/urbit" | awk '{print $1}')" "$pill_sha" "$runtime_key" > "$extension/backend/runtime/runtime.json"
+  # Derived from the existing package pins; no separately editable cleanup allowlist.
+  printf '{"schema":"readymade-cache-downloads-v1","editor":{"name":"%s","sha256":"%s"},"pill":{"name":"%s.pill","sha256":"%s"}}\n' \
+    "$archive_name" "$upstream_sha" "$pill_sha" "$pill_sha" > "$extension/backend/runtime/cache-downloads.json"
   sign_target org.pataphor.codeoss.workspace.eventwatch "$extension/bin/event-watch"
   sign_target com.vscodium "$inner_app" --entitlements "$stage/electron-entitlements.plist"
   codesign --verify --deep --strict "$inner_app"

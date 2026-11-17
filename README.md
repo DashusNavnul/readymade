@@ -131,6 +131,10 @@ Shared Project**. See [Join a workspace](docs/JOIN_A_WORKSPACE.md). If a ship is
 slow or will not connect, run **Readymade: Ship Doctor**: it measures the ship
 and the Mac and says what it found, and changes nothing.
 
+To see what is running, what is waiting on you and what your ship told your
+collaborators, run **Readymade: Overview**; see
+[What your ship can tell you](docs/SHIP_PAGES.md).
+
 What is and is not verified: the whole first-timer path was run live with the
 packaged app, the guest typing nothing. A planet hosted; the guests were its own
 moon and then two brand-new comets with no tie to the host, one started with the

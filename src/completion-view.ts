@@ -3,6 +3,7 @@ import { CompletionJournal, type CompletionResult } from './completion-journal';
 import { observeCompletion, type CompletionObservation } from './completion-store';
 import type { ShipClient } from './ship-client';
 import type { MediaTreeRow } from './media-workbench';
+import { SettledDocuments } from './settled-documents';
 
 export interface AnswerDialogs {
   reason(): Thenable<string | undefined>;
@@ -22,25 +23,26 @@ export class CompletionView implements vscode.Disposable {
   private busy = false;
   private text = 'Select a project and observe answer review.';
   private readonly uri = vscode.Uri.parse('readymade-answer-review:/answer-review.json');
-  private readonly changedDocument = new vscode.EventEmitter<vscode.Uri>();
+  /** Changes reach the review document one at a time; overlapping ones can leave it as a mix of two texts. */
+  private readonly documents = new SettledDocuments(uri => uri.toString() === this.uri.toString() ? this.text : undefined);
   private readonly provider: vscode.Disposable;
   constructor(private readonly journal: CompletionJournal, private readonly project: () => string | undefined, private readonly changed: () => void,
     private readonly dialogs: AnswerDialogs = nativeDialogs) {
-    this.provider = vscode.workspace.registerTextDocumentContentProvider('readymade-answer-review', {onDidChange: this.changedDocument.event,
+    this.provider = vscode.workspace.registerTextDocumentContentProvider('readymade-answer-review', {onDidChange: this.documents.onDidChange,
       provideTextDocumentContent: uri => {if (uri.toString() !== this.uri.toString()) throw vscode.FileSystemError.FileNotFound(uri); return this.text;}});
   }
   connect(client: ShipClient): void {this.client = client; this.scope = ''; this.sync();}
   private sync(): void {
     const scope = JSON.stringify([this.client?.origin, this.client?.snapshot?.owner, this.project()]);
     if (scope === this.scope) return;
-    this.scope = scope; this.observation = undefined; this.text = 'No answer review observed for this project.'; this.changedDocument.fire(this.uri);
+    this.scope = scope; this.observation = undefined; this.text = 'No answer review observed for this project.'; this.documents.changed(this.uri);
   }
   private entries(): CompletionResult[] {
     return this.journal.entries().filter(e => e.intent.origin === this.client?.origin && e.intent.context.owner === this.client?.snapshot?.owner && e.intent.context.project === this.project());
   }
   private async show(value: unknown): Promise<void> {
     this.text = JSON.stringify({notice: 'Answer completion only. This does not accept code changes or deploy an application.', evidence: value}, null, 2);
-    this.changedDocument.fire(this.uri); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(this.uri), {preview: false});
+    this.documents.changed(this.uri); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(this.uri), {preview: false});
   }
   async observe(session?: string): Promise<void> {
     this.sync(); const client = this.client, project = this.project(), scope = this.scope;
@@ -56,7 +58,7 @@ export class CompletionView implements vscode.Disposable {
       this.observation = observed; await this.show(observed);
     } catch (error) {
       this.observation = undefined; this.text = 'Answer review unavailable. Observe again before making a decision.';
-      this.changedDocument.fire(this.uri); throw error;
+      this.documents.changed(this.uri); throw error;
     }
     finally {this.busy = false; this.changed();}
   }
@@ -99,5 +101,5 @@ export class CompletionView implements vscode.Disposable {
     } catch (error) {children.push({label: 'Answer decision journal unavailable', tooltip: error instanceof Error ? error.message : 'Journal could not be read'});}
     return [{id: 'answer-review', label: 'Answer Review', icon: 'check', children}];
   }
-  dispose(): void {this.client = undefined; this.observation = undefined; this.scope = ''; this.provider.dispose(); this.changedDocument.dispose();}
+  dispose(): void {this.client = undefined; this.observation = undefined; this.scope = ''; this.provider.dispose(); this.documents.dispose();}
 }

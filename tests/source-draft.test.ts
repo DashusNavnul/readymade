@@ -4,9 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { SourceStore, snapshotFrom, type SourceSnapshot } from '../src/source-store';
-import { DraftStore } from '../src/draft-store';
+import { DraftStore, type BundleDraftRecord } from '../src/draft-store';
 import { SourcePager, type PageJournal } from '../src/source-pager';
 import type { CodingSnapshot, JsonObject } from '../src/protocol';
+import {bundleCandidateCommand} from '../src/candidate-command';
+import {importInboxBundle, type InboxBundleDetail} from '../src/project-inbox';
+import {remoteSourceHash} from '../src/remote-project-view';
 
 const origin = 'https://files.example';
 const basis = { id: '0xabc', owner: '~zod', desk: 'fixture', number: 1, root: '0v1', commit: '0v2' };
@@ -276,4 +279,128 @@ test('CRLF/C1 bytes remain visible in canonical/private buffers but cannot becom
   let posts = 0; const client = { origin, snapshot: state(), codingTool: async () => { posts++; return candidate(); } };
   await assert.rejects(drafts.prepare(row.id, client)); assert.equal(posts, 0);
   assert.equal(drafts.get(row.id).snapshot.text, 'old\r\n');
+});
+
+function bundleState(): CodingSnapshot {const value = state(); value.sessions[0].project = 'demo'; return value;}
+function bundleDraft(store: DraftStore, texts = ['first changed\n', 'second changed\n']): BundleDraftRecord {
+  const sources = [snapshot(), snapshotFrom({...snapshot(), uri: undefined, key: undefined, path: '/lib/second/hoon', blob: '0x88'})];
+  const receipt: InboxBundleDetail = {kind: 'bundle', receiptHash: '0x123', peer: '~nec', receivedAt: '~2026.11.16', generation: '1', request: '0x5',
+    parentRoot: '0x1', snapshotDigest: '0x9', desk: basis.desk, revision: '1', files: sources.map((s, i) => ({path: s.path,
+      originalHash: remoteSourceHash(s.text), sourceHash: remoteSourceHash(texts[i]), source: texts[i]}))};
+  return importInboxBundle(store, receipt, sources, {origin, owner: '~zod', project: 'demo', session: '0x1', basis, state: bundleState()});
+}
+function bundleCandidate(row: BundleDraftRecord, mutate: (output: JsonObject) => void = () => {}): CodingSnapshot {
+  const reply = candidate(), request = '0x777', context = {session: '0x1', request, source: basis, project: 'demo'};
+  const output: JsonObject = {kind: 'candidate', id: '0xcafe', previous: null, basis, context,
+    edits: row.files.map(f => ({kind: 'modify', path: f.snapshot.path, before: f.snapshot.blob, after: '0x98',
+      content: {mark: 'hoon', bytes: Buffer.byteLength(f.text), digest: remoteSourceHash(f.text), sourceOmitted: true}}))};
+  mutate(output);
+  reply.records = [{kind: 'tool', text: JSON.stringify({version: 'native-coding-tool-result-v1', call_id: request, context, output})}];
+  return reply;
+}
+
+test('bundle submission persists one whole intent before one POST and correlates all contents', async t => {
+  const directory = privateDirectory(t), store = new DraftStore(directory), row = bundleDraft(store); let posts = 0;
+  const client = {origin, snapshot: bundleState(), codingTool: async (session: string, source: string, input: string) => {
+    posts++; const held = new DraftStore(directory).getBundle(row.id);
+    assert.equal(held.pending?.phase, 'issued'); assert.equal(held.pending?.input, input); assert.match(input, /^\/patches 2\n/);
+    assert.match(input, /\/lib\/test\/hoon 0x99 /); assert.match(input, /\/lib\/second\/hoon 0x88 /);
+    assert.deepEqual(held.pending?.files.map(f => f.text), row.files.map(f => f.text));
+    assert.equal(session, '0x1'); assert.equal(source, basis.id);
+    return bundleCandidate(row, output => (output.edits as unknown[]).reverse());
+  }};
+  const result = await store.prepareBundle(row.id, client, 'native-coding-patches-v1');
+  assert.equal(result.pending?.phase, 'candidate'); assert.equal(result.pending?.candidate, '0xcafe'); assert.equal(posts, 1);
+  store.saveBundle(row.id, row.files[1].snapshot.path, 'later local edit\n');
+  const restored = new DraftStore(directory);
+  assert.equal(restored.getBundle(row.id).pending?.files[1].text, row.files[1].text);
+  await assert.rejects(restored.prepareBundle(row.id, client, 'native-coding-patches-v1'), /retained/); assert.equal(posts, 1);
+  assert.deepEqual(restored.getBundle(row.id).receipt, row.receipt);
+});
+
+test('missing batch support, stale basis and oversized whole command refuse before any intent', async t => {
+  const store = new DraftStore(privateDirectory(t)), row = bundleDraft(store); let posts = 0;
+  const client = {origin, snapshot: bundleState(), codingTool: async () => {posts++; return bundleCandidate(row);}};
+  await assert.rejects(store.prepareBundle(row.id, client), /unsupported/);
+  client.snapshot.sessions[0].source = {...basis, commit: '0v9'};
+  await assert.rejects(store.prepareBundle(row.id, client, 'native-coding-patches-v1'), /source/);
+  client.snapshot = bundleState(); client.snapshot.sessions[0].project = 'other';
+  await assert.rejects(store.prepareBundle(row.id, client, 'native-coding-patches-v1'), /project/);
+  client.snapshot = bundleState();
+  for (const f of row.files) store.saveBundle(row.id, f.snapshot.path, 'x'.repeat(32768));
+  await assert.rejects(store.prepareBundle(row.id, client, 'native-coding-patches-v1'), /whole bundle exceeds/);
+  assert.equal(store.getBundle(row.id).pending, undefined); assert.equal(posts, 0);
+  assert.throws(() => bundleCandidateCommand([row.files[0], row.files[0]]), /duplicate/);
+  assert.throws(() => bundleCandidateCommand([{snapshot: row.files[0].snapshot, text: row.files[0].snapshot.text}]), /change/);
+});
+
+test('lost whole-bundle delivery survives restart and cannot be guessed or automatically replayed', async t => {
+  const directory = privateDirectory(t), store = new DraftStore(directory), row = bundleDraft(store); let posts = 0;
+  const client = {origin, snapshot: bundleState(), codingTool: async () => {posts++; throw new Error('lost reply');}};
+  await assert.rejects(store.prepareBundle(row.id, client, 'native-coding-patches-v1'), /lost reply/);
+  const restored = new DraftStore(directory);
+  assert.equal(restored.getBundle(row.id).pending?.phase, 'unknown');
+  restored.observeBundle(row.id, bundleCandidate(row)); // No retained request identity: do not guess.
+  assert.equal(restored.getBundle(row.id).pending?.phase, 'unknown');
+  await assert.rejects(restored.prepareBundle(row.id, client, 'native-coding-patches-v1'), /retained/); assert.equal(posts, 1);
+});
+
+test('bundle result refuses partial, duplicate, foreign and substituted content; later exact read can recover', async t => {
+  const corruptions: ((output: JsonObject) => void)[] = [
+    output => {output.edits = (output.edits as unknown[]).slice(0, 1);},
+    output => {const e = output.edits as JsonObject[]; e[1] = e[0];},
+    output => {(output.edits as JsonObject[])[1].before = '0x55';},
+    output => {(output.edits as JsonObject[])[1].path = '/lib/foreign/hoon';},
+    output => {((output.edits as JsonObject[])[1].content as JsonObject).digest = remoteSourceHash('different');},
+    output => {((output.edits as JsonObject[])[1].content as JsonObject).bytes = 1;},
+    output => {output.context = {session: '0x1', request: '0x999', project: 'demo', source: basis};}
+  ];
+  for (const corrupt of corruptions) {
+    const directory = privateDirectory(t), store = new DraftStore(directory), row = bundleDraft(store); let posts = 0;
+    const client = {origin, snapshot: bundleState(), codingTool: async () => {posts++; return bundleCandidate(row, corrupt);}};
+    await assert.rejects(store.prepareBundle(row.id, client, 'native-coding-patches-v1'));
+    const restored = new DraftStore(directory); assert.equal(restored.getBundle(row.id).pending?.phase, 'unknown');
+    assert.equal(restored.getBundle(row.id).pending?.request, '0x777');
+    restored.observeBundle(row.id, bundleCandidate(row)); assert.equal(restored.getBundle(row.id).pending?.phase, 'candidate');
+    assert.equal(posts, 1);
+  }
+});
+
+test('native batch refusal retains one whole request and never falls back to per-file submissions', async t => {
+  const store = new DraftStore(privateDirectory(t)), row = bundleDraft(store); let posts = 0;
+  const client = {origin, snapshot: bundleState(), codingTool: async () => {posts++; return bundleCandidate(row, output => {output.kind = 'refused'; output.reason = 'batch-not-permitted';});}};
+  const result = await store.prepareBundle(row.id, client, 'native-coding-patches-v1');
+  assert.equal(result.pending?.phase, 'refused');
+  store.observeBundle(row.id, bundleCandidate(row)); assert.equal(store.getBundle(row.id).pending?.phase, 'refused');
+  await assert.rejects(store.prepareBundle(row.id, client, 'native-coding-patches-v1')); assert.equal(posts, 1);
+});
+
+test('two windows compete for one durable bundle submission and stale saves cannot overwrite it', async t => {
+  const directory = privateDirectory(t), first = new DraftStore(directory), row = bundleDraft(first), second = new DraftStore(directory); let posts = 0;
+  const client = {origin, snapshot: bundleState(), codingTool: async () => {posts++; await new Promise(resolve => setImmediate(resolve)); return bundleCandidate(row);}};
+  const results = await Promise.allSettled([first.prepareBundle(row.id, client, 'native-coding-patches-v1'), second.prepareBundle(row.id, client, 'native-coding-patches-v1')]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1); assert.equal(posts, 1);
+  assert.throws(() => second.saveBundle(row.id, row.files[0].snapshot.path, 'stale edit\n'), /outside this editor/);
+  assert.equal(new DraftStore(directory).getBundle(row.id).pending?.phase, 'candidate');
+});
+
+test('corrupt bundle members, altered intents and held locks refuse without touching scalar records', async t => {
+  const directory = privateDirectory(t), store = new DraftStore(directory), scalar = store.create(snapshotFrom({...snapshot(), uri: undefined, key: undefined, path: '/lib/unrelated/hoon'}));
+  const scalarFile = path.join(directory, `${scalar.id}.json`), scalarBytes = fs.readFileSync(scalarFile), row = bundleDraft(store);
+  const file = path.join(directory, `bundle-${row.id}.json`), bytes = fs.readFileSync(file);
+  fs.writeFileSync(path.join(directory, '.drafts.lock'), '', {mode: 0o600});
+  assert.throws(() => store.saveBundle(row.id, row.files[0].snapshot.path, 'not saved\n'), /EEXIST/);
+  assert.deepEqual(fs.readFileSync(file), bytes); fs.unlinkSync(path.join(directory, '.drafts.lock'));
+  await assert.rejects(store.prepareBundle(row.id, {origin, snapshot: bundleState(), codingTool: async () => {throw new Error('lost');}}, 'native-coding-patches-v1'), /lost/);
+  const frozen = fs.readFileSync(file);
+  for (const corrupt of ['member', 'input', 'text', 'phase']) {
+    const altered = JSON.parse(frozen.toString());
+    if (corrupt === 'member') altered.files.pop();
+    if (corrupt === 'input') altered.pending.input += 'tampered';
+    if (corrupt === 'text') altered.pending.files[1].text = 'different intent\n';
+    if (corrupt === 'phase') altered.pending.phase = ['unknown'];
+    fs.writeFileSync(file, JSON.stringify(altered)); assert.throws(() => new DraftStore(directory));
+    assert.deepEqual(fs.readFileSync(scalarFile), scalarBytes); fs.writeFileSync(file, frozen);
+  }
+  assert.equal(new DraftStore(directory).getBundle(row.id).pending?.phase, 'unknown');
 });

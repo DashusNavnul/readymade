@@ -7,6 +7,7 @@ import {ProjectInboxView, type InboxAnswer} from './project-inbox-view';
 import {NoltbookDocumentsView} from './noltbook-documents-view';
 import {NoltbookDocumentStore} from './noltbook-document-store';
 import {RemoteSuggestionJournal} from './remote-suggestion-journal';
+import {RemoteBundleJournal} from './remote-bundle-suggest';
 import {RemoteDraftStore} from './remote-draft-store';
 import {RemoteDraftProvider} from './remote-draft-provider';
 import {RemoteSourceView} from './remote-source-view';
@@ -54,7 +55,10 @@ import { hostProbes } from './backend-install';
 import { installChoice, loomOf } from './install-choice';
 import { connectionFailureMessage } from './ship-connection';
 import { ShipDoctorView } from './ship-doctor-view';
+import {NativeScreens} from './native-screens';
 import { waitingReport, waitingSummary, type WaitingReport } from './owner-inbox';
+import {projectProblemRows} from './project-problems';
+import {workloadRows} from './workspace-capacity';
 import { projectActivity, type ActivityEntry } from './project-activity';
 import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
@@ -85,6 +89,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   readonly planetSetup: PlanetSetupView;
   readonly backendInstall: BackendInstallView;
   readonly doctor: ShipDoctorView;
+  readonly native: NativeScreens;
   readonly planetBoot: PlanetBootView;
   readonly setup: SetupView;
   readonly workspaceRequests: WorkspaceRequestView;
@@ -201,7 +206,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (this.media.connectedClient) return this.media.connectedClient;
       // No address to type: a ship on this computer connects by itself, anything else through the Connect list.
       return this.media.connectClient(retainedOrigin);
-    }, () => {if (!this.disposed) this.render();}, this.remoteDrafts, this.remoteSuggestions = new RemoteSuggestionJournal(join(context.globalStorageUri.fsPath, 'remote-suggestions')));
+    }, () => {if (!this.disposed) this.render();}, this.remoteDrafts, this.remoteSuggestions = new RemoteSuggestionJournal(join(context.globalStorageUri.fsPath, 'remote-suggestions')),
+      new RemoteBundleJournal(join(context.globalStorageUri.fsPath, 'remote-bundles')));
     this.invitations = new ProjectInvitationsView(context.extension.id, () => this.media.connectedClient, () => this.selectedProject, async wanted => {
       if (this.media.connectedClient) return this.media.connectedClient;
       // A join link names the ship it is for: if that ship runs on this computer it connects and signs in by itself.
@@ -237,8 +243,19 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       const client = this.media.connectedClient, cookies = client?.browserCookies(client.origin) ?? [];
       if (!client || cookies.length !== 1 || !/^urbauth-~[a-z-]{3,128}$/.test(cookies[0].name)) return undefined;
       return {ship: cookies[0].name.slice('urbauth-'.length), origin: client.origin, planet: this.media.connectedLocalPlanet};
-    });
-    this.registrations.push(this.backendInstall, this.planetBoot, this.doctor);
+    }, undefined, context.globalStorageUri.fsPath,
+    async () => this.media.connectedClient?.requestJSON('/apps/pataphor-native/coding/diagnostics', {method: 'GET'}));
+    this.native = new NativeScreens({client: () => this.media.connectedClient, ship: () => connection().ship,
+      project: () => this.media.connectedClient && this.client === this.media.connectedClient ? this.selectedProject : undefined,
+      shared: uri => {
+        const read = this.remoteSource.sharedFile(vscode.Uri.parse(uri, true)); if (read) return read;
+        try {const draft = this.remoteDrafts.get(uri); return {owner: draft.observation.owner, project: draft.observation.project, path: draft.path};} catch {return undefined;}
+      },
+      sessions: () => this.remoteSource.sharedSessions(), state: context.globalState, recover: error => this.recoverSession(error),
+      suggestionFile: (owner, project, request) => {
+        try {return this.remoteSuggestions?.list().find(row => row.request === request && row.intent.observation.owner === owner && row.intent.observation.project === project)?.intent.path;} catch {return undefined;}
+      }, changed: () => {if (!this.disposed) this.render();}});
+    this.registrations.push(this.backendInstall, this.planetBoot, this.doctor, this.native);
     void this.offerStart();
     void this.resumeSwitch().then(() => this.reconnectLast());
     this.home = new WelcomeView(connection, async action => {
@@ -277,6 +294,20 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('startPlanet', () => this.planetBoot.show());
     command('connect', async origin => {const client = await this.media.connectClient(typeof origin === 'string' ? origin : undefined); this.render(); await this.setup.show(client);});
     command('doctor', () => this.doctor.show());
+    command('overview', () => this.native.overview.show());
+    command('tasksAndQuestions', () => this.native.tasks.show());
+    command('notices', () => this.native.notices.show());
+    command('readNotices', () => this.native.readInbox());
+    command('suggestionHistory', () => this.native.history.show());
+    command('workRequests', () => this.native.work.show());
+    command('sessionRoles', () => this.native.roles.show());
+    command('standingPolicy', () => this.native.policy.show());
+    command('memoryHandoff', () => this.native.handoff());
+    command('memoryLabel', () => this.native.labelMemory());
+    command('followSession', () => this.native.followSession());
+    command('askWork', () => this.native.askWork());
+    command('togglePresence', () => this.native.togglePresence());
+    command('presenceBoard', () => this.native.board.show());
     command('ownerInbox', () => this.checkWaiting());
     command('catchUp', () => this.catchUp());
     command('projectActivity', () => this.readActivity());
@@ -296,6 +327,9 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('reconcileSharedDraft', id => this.remoteSource.reconcile(typeof id === 'string' ? id : undefined));
     command('sendSharedSuggestion', id => this.remoteSource.sendSuggestion(typeof id === 'string' ? id : undefined));
     command('checkSharedSuggestion', request => this.remoteSource.checkSuggestion(String(request)));
+    command('sendSharedBundle', ids => this.remoteSource.sendBundle(Array.isArray(ids) ? ids.map(String) : undefined));
+    command('checkSharedBundle', request => this.remoteSource.checkBundle(String(request)));
+    command('rebaseSharedBundle', request => this.remoteSource.rebaseBundle(String(request)));
     const role = (value: unknown) => value === 'contributor' || value === 'observer' || value === 'maintainer' ? value : undefined;
     command('inviteCollaborator', async (target, wanted) => {await this.invitations.invite(typeof target === 'string' ? target : undefined, role(wanted));});
     command('inviteAndCopyLink', (target, wanted) => this.invitations.inviteAndCopyLink(typeof target === 'string' ? target : undefined, role(wanted)));
@@ -310,8 +344,16 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('projectHistory', () => this.invitations.observe('events'));
     command('copyPendingJoinLink', id => this.invitations.copyPendingLink(String(id)));
     command('closeProjectInvitation', (id, expired) => this.invitations.closeInvitation(String(id), expired === true));
-    command('projectInbox', () => this.inbox.observe());
+    command('projectInbox', mode => mode === 'history' || mode === 'next-history' ? this.inbox.observeHistory(mode === 'next-history') : this.inbox.observe());
     command('openInboxSuggestion', receipt => this.inbox.show(String(receipt)));
+    command('openInboxBundleFile', (receipt, path) => this.inbox.showBundleFile(String(receipt), String(path)));
+    command('importInboxBundle', receipt => this.inbox.importBundle(String(receipt)));
+    command('compareInboxBundle', receipt => this.inbox.compareBundle(String(receipt)));
+    command('chooseBundleFile', (receipt, path, choice) => this.inbox.chooseBundleFile(String(receipt), String(path), choice === 'mine' ? 'mine' : 'suggested'));
+    command('showBundleChoice', (receipt, path) => this.inbox.showBundleChoice(String(receipt), String(path)));
+    command('resolveInboxBundle', receipt => this.inbox.resolveBundle(String(receipt)));
+    command('openBundleDraftFile', (id, path) => this.inbox.showBundleDraftFile(String(id), String(path)));
+    command('prepareBundleCandidate', id => this.prepareBundleCandidate(String(id)));
     command('openDocument', async id => {
       if (typeof id !== 'string' && !this.media.connectedClient) await this.media.connectClient();
       return this.documents.open(typeof id === 'string' ? id : undefined);
@@ -569,6 +611,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     this.snapshot = await client.workspaceState();
     if (project) {try {await this.readActivity();} catch { /* shown as none recorded */ } try {await this.checkWaiting();} catch { /* shown as not checked */ }}
     await this.checkShareNotices(true);
+    // Landings and work the owners reported; a ship without that page adds nothing.
+    const told = await this.native.inboxLines().catch(() => []);
     if (this.requireClient() !== client || this.selectedProject !== project) throw new Error('The connection or project changed; ask again.');
     const rows = (value: unknown) => Array.isArray(value) ? value as JsonObject[] : [], text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
     const feed = this.feed && this.feed.project === project ? this.feed : undefined;
@@ -576,7 +620,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       ship: text(this.snapshot.ship) || client.origin, project, session: this.selectedSession && this.selectedSession !== '0x0' ? this.selectedSession : undefined,
       activity: feed?.entries ?? [], activityPartial: feed?.partial ?? false,
       waiting: project && this.waiting ? {items: this.waiting.items.map(item => item.label), unchecked: this.waiting.unchecked} : undefined,
-      notices: this.heldShareNotices && this.heldShareNotices.peer === this.snapshot.ship ? shareNoticeLines(this.heldShareNotices, this.suggestionFile) : undefined,
+      notices: [...told, ...(this.heldShareNotices && this.heldShareNotices.peer === this.snapshot.ship ? shareNoticeLines(this.heldShareNotices, this.suggestionFile) : [])],
       conversation: rows((this.snapshot.conversation as JsonObject | undefined)?.entries).map(row => ({id: text(row.id), status: text(row.status), request: text(row.request),
         output: typeof row.output === 'string' && row.output ? row.output : undefined, truncated: Number(row.outputBytes) > Buffer.byteLength(text(row.output))})),
       candidates: rows(this.snapshot.candidates).map(row => ({id: text(row.id), project: text(row.project), stage: text(row.stage)})),
@@ -603,6 +647,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
         if (session && session !== '0x0') await quiet(() => this.codeReview.observe(session));
         await quiet(() => this.invitations.observe('invitations'));
       }
+      await quiet(() => this.native.readInbox(true));
       const candidates = this.codeReview.waiting;
       this.waiting = waitingReport({requests: this.workspaceRequests.waiting(project), suggestions: project ? this.inbox.waiting : undefined,
         review: candidates?.review, apply: candidates?.apply, answer: this.answerReview.waiting,
@@ -714,6 +759,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       const preference = sessionSelection(client.snapshot!, this.selectedProject, selectedSession);
       if (preference) await this.context.workspaceState.update(projectSessionSelectionKey(client.origin, snapshot.ship, preference.project), preference);
       for (const draft of this.drafts.list()) if (draft.pending && draft.snapshot.origin === client.origin && draft.snapshot.session === selectedSession) this.drafts.observe(draft.id, client.snapshot!);
+      this.observeBundles(client, selectedSession);
       this.status.text = `$(remote) ${snapshot.ship}`; this.status.command = 'readymade.refresh'; this.render();
       void this.checkShareNotices(true);
     } finally { this.connecting = false; }
@@ -745,6 +791,8 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     for (const draft of this.drafts.list()) {
       if (draft.pending && draft.snapshot.origin === client.origin && draft.snapshot.session === session) this.drafts.observe(draft.id, client.snapshot!);
     }
+    this.observeBundles(client, session);
+    void this.observeCapacity(client);
     this.render();
   }
   private requireClient(): ShipClient { if (!this.client) throw new Error('Connect to a ship first'); return this.client; }
@@ -808,6 +856,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       rows.push(...this.waitingRows());
       if (this.selectedProject) rows.push(...this.activityRows());
       rows.push(...this.workspaceRequests.rows(this.selectedProject));
+      rows.push(...workloadRows(String(this.snapshot.ship), this.client?.snapshot, this.workspaceRequests.store, this.capacity?.origin === this.client?.origin ? this.capacity?.value : undefined));
       rows.push(...this.files.rows());
       rows.push(...this.checks.rows());
       rows.push(...this.evaluations.rows());
@@ -831,7 +880,9 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       rows.push({ label: 'Observe ship terminal…', command: { command: 'readymade.terminal', title: 'Terminal' } });
     }
     for (const draft of this.drafts.list().filter(d => d.snapshot.origin === this.client?.origin && d.snapshot.ship === this.snapshot?.ship && (!this.selectedProject || this.client?.snapshot?.sessions.some(s => s.id === d.snapshot.session && s.project === this.selectedProject)))) rows.push({ label: draft.snapshot.path, description: draft.pending ? `${draft.pending.phase} ${draft.pending.candidate ?? draft.pending.request ?? 'intent retained'}` : 'local draft', command: { command: 'vscode.open', title: 'Open draft', arguments: [vscode.Uri.parse(draft.uri)] } });
-    const primary = new Set(['home', 'project', 'shared-project', 'shared-documents', 'workspace-requests', 'ship-files', 'checks', 'evaluations', 'code-review', 'review-policy', 'project-sharing', 'project-activity', 'answer-review', 'changes', 'saved-drafts', 'code', 'groups', 'lattice', 'glurff', 'noltbook', 'landscape']);
+    rows.push(...this.native.rows());
+    rows.push(...projectProblemRows(rows));
+    const primary = new Set(['home', 'project', 'native-overview', 'native-pages', 'project-problems', 'workload', 'shared-project', 'shared-documents', 'workspace-requests', 'ship-files', 'checks', 'evaluations', 'code-review', 'review-policy', 'project-sharing', 'project-activity', 'answer-review', 'changes', 'saved-drafts', 'code', 'groups', 'lattice', 'glurff', 'noltbook', 'landscape']);
     this.tree.rows = [...rows.filter(row => row.id && primary.has(row.id)),
       {id: 'more', label: 'More', icon: 'ellipsis', children: rows.filter(row => !row.id || !primary.has(row.id))}];
     this.tree.refresh();
@@ -895,6 +946,30 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     if (!source) return; const draft = this.drafts.create(this.sources!.openSnapshot(source)); this.render();
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.parse(draft.uri)));
   }
+  private capacity?: {origin: string; value: unknown};
+  /** One read-only GET of the owner's capacity page; a failure keeps the Unknown row. */
+  private async observeCapacity(client: ShipClient): Promise<void> {
+    try {this.capacity = {origin: client.origin, value: await client.requestJSON('/apps/pataphor-native/coding/capacity', {method: 'GET'})};}
+    catch {this.capacity = undefined;}
+    this.render();
+  }
+  /** A whole-bundle candidate is read from the same session observation as single drafts; nothing is resent. */
+  private observeBundles(client: ShipClient, session: string | undefined): void {
+    for (const row of this.drafts.listBundles()) {
+      const first = row.files[0].snapshot;
+      if (row.pending?.request && first.origin === client.origin && first.session === session && client.snapshot) this.drafts.observeBundle(row.id, client.snapshot);
+    }
+  }
+  /** One native candidate for every file of an imported multi-file suggestion; the ship checks them together. */
+  async prepareBundleCandidate(id: string): Promise<void> {
+    const row = this.drafts.getBundle(id), first = row.files[0].snapshot, client = this.requireClient();
+    if (first.origin !== client.origin) throw new Error('Draft belongs to another ship');
+    await this.activity.contextChanged();
+    this.selectedSession = first.session;
+    await client.codingState(first.session);
+    await this.drafts.prepareBundle(id, client, 'native-coding-patches-v1'); this.render();
+    void vscode.window.showInformationMessage(`One candidate requested for all ${row.files.length} files. Checks and review follow; nothing is installed.`);
+  }
   private async prepareCandidate(): Promise<void> {
     const editor = vscode.window.activeTextEditor; if (editor?.document.uri.scheme !== 'readymade-draft') throw new Error('Open a Readymade draft first');
     if (editor.document.isDirty && !await editor.document.save()) throw new Error('Save the local draft before preparing a candidate');
@@ -906,7 +981,15 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     await this.drafts.prepare(uri, client); this.render();
     void vscode.window.showInformationMessage('Candidate intent retained. Review the ship result; this does not install or deploy a change.');
   }
-  private async showConversation(): Promise<void> { const client = this.requireClient(); this.snapshot = await client.workspaceState(); this.conversation.render(this.snapshot, this.requireJournal()); }
+  private async showConversation(): Promise<void> {
+    const client = this.requireClient(), journal = this.requireJournal(), owner = client.snapshot?.owner, epoch = this.projectSelectionEpoch;
+    const current = () => !this.disposed && this.client === client && this.journal === journal &&
+      this.projectSelectionEpoch === epoch && client.snapshot?.owner === owner;
+    const snapshot = await client.workspaceState();
+    if (!current() || typeof owner !== 'string' || snapshot.ship !== owner) throw new Error('History connection changed. Open the workspace again.');
+    this.snapshot = snapshot;
+    this.conversation.render(snapshot, journal, {client, owner, current});
+  }
   private async request(): Promise<void> {
     const client = this.requireClient(), journal = this.requireJournal(); this.snapshot = await client.workspaceState();
     const seats = Array.isArray(this.snapshot.seats) ? this.snapshot.seats as JsonObject[] : [];

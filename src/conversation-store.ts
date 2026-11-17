@@ -1,11 +1,13 @@
 import { constants, closeSync, fsyncSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import {opendir, open, lstat} from 'node:fs/promises';
 import { ShipClient, ShipClientError } from './ship-client';
 import { JsonObject, validUnicode } from './protocol';
 
 export type RequestStatus = 'unknown' | 'submitted' | 'accepted' | 'refused' | 'not-sent';
 export interface RequestEntry { id: string; destination: string; text: string; at: string; status: RequestStatus; reason?: string }
+export interface RequestArchivePage {rows: {archive: string; entry: RequestEntry}[]; examined: number; complete: boolean}
 interface Journal { version: 1; origin: string; entries: RequestEntry[]; drafts: Record<string, string> }
 const settled = (e: RequestEntry) => ['accepted', 'refused', 'not-sent'].includes(e.status);
 const LIMIT = 1024 * 1024;
@@ -48,6 +50,54 @@ export class ConversationStore {
     this.validate(this.state);
   }
   get entries(): readonly RequestEntry[] { return structuredClone(this.state.entries); }
+  /** Explicit, read-only directory walk. File order is not chronological; no whole-history scan. */
+  async *archivePages(): AsyncGenerator<RequestArchivePage> {
+    const before = await lstat(this.directory);
+    if (!before.isDirectory() || before.uid !== process.getuid?.() || before.mode & 0o077) throw new Error('Unsafe request archive directory');
+    const directory = await opendir(this.directory), prefix = createHash('sha256').update(this.origin).digest('hex') + '.archive-';
+    try {
+      const after = await lstat(this.directory);
+      if (after.dev !== before.dev || after.ino !== before.ino || !after.isDirectory()) throw new Error('Request archive directory changed');
+      let done = false;
+      while (!done) {
+        const current = await lstat(this.directory);
+        if (!current.isDirectory() || current.dev !== before.dev || current.ino !== before.ino || current.uid !== before.uid || current.mode & 0o077) throw new Error('Request archive directory changed');
+        const rows: RequestArchivePage['rows'] = []; let examined = 0, files = 0;
+        while (examined < 256 && files < 8) {
+          const file = await directory.read();
+          if (!file) {done = true; break;}
+          examined++;
+          if (!file.name.startsWith(prefix)) continue;
+          const suffix = file.name.slice(prefix.length);
+          // A writer's temporary file is not a published archive.
+          if (/^[a-f0-9]{64}\.json\.[a-f0-9]{16}$/.test(suffix)) continue;
+          if (!/^[a-f0-9]{64}\.json$/.test(suffix)) throw new Error('Invalid request archive filename');
+          files++;
+          const handle = await open(join(this.directory, file.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          let bytes: Buffer;
+          try {
+            const info = await handle.stat();
+            if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || info.mode & 0o077 || info.size > LIMIT) throw new Error('Unsafe request archive');
+            const buffer = Buffer.alloc(LIMIT + 1); let length = 0;
+            while (length < buffer.length) {
+              const {bytesRead} = await handle.read(buffer, length, buffer.length - length, length);
+              if (!bytesRead) break; length += bytesRead;
+            }
+            const final = await handle.stat();
+            if (length > LIMIT || info.size !== length || final.size !== info.size || final.mtimeMs !== info.mtimeMs || final.ctimeMs !== info.ctimeMs) throw new Error('Request archive changed');
+            bytes = buffer.subarray(0, length);
+          } finally {await handle.close();}
+          const archive = suffix.slice(0, -5);
+          if (createHash('sha256').update(bytes).digest('hex') !== archive) throw new Error('Request archive hash mismatch');
+          const value = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)) as Journal;
+          this.validate(value);
+          if (!value.entries.length || value.entries.length > 32 || Object.keys(value.drafts).length || value.entries.some(e => !settled(e))) throw new Error('Unsafe request archive contents');
+          rows.push(...value.entries.map(entry => ({archive, entry})));
+        }
+        yield {rows, examined, complete: done};
+      }
+    } finally {await directory.close();}
+  }
   draft(destination: string): string { return this.state.drafts[destination] ?? ''; }
   saveDraft(destination: string, text: string): void {
     if (!validDestination(destination) || !validUnicode(text) || Buffer.byteLength(text) > 8192) throw new Error('Invalid request draft');

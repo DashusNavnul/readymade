@@ -5,7 +5,8 @@ import {GUEST_SOURCE} from '../src/guest-service';
 import {sharedProjectLink} from '../src/remote-source-view';
 import type {RemoteSourceObservation} from '../src/remote-project-view';
 import type {RemoteProjectSessionsReply} from '../src/remote-project-sessions';
-import {LiveFailure, errorInfo, invitationAction, liveRun, mergeHandoff, need, needShip, readHandoff, seen, type LiveContext} from './live-ship-support';
+import {LiveFailure, errorInfo, invitationAction, liveRun, mergeHandoff, need, needShip, readHandoff, seen, until, type LiveContext} from './live-ship-support';
+import {streamText} from '../src/collab-pages';
 
 // Live acceptance on the PEER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
 // join | sessions | suggest. The links come from the owner phases through the READYMADE_HANDOFF file. The peer
@@ -137,4 +138,113 @@ async function suggest(c: LiveContext): Promise<void> {
   c.mark('handoff'); mergeHandoff(handoff, {suggestionRequest: record.request, suggestionPath: file.path});
 }
 
-export function run(): Promise<void> {return liveRun('live-peer-host', {join, sessions, suggest});}
+/**
+ * The collaborator edits TWO shared files as local drafts and sends them as ONE suggestion with the product's
+ * send command (draft ids as its arguments, so no picker is scripted), then only reads the retained request.
+ * READYMADE_GENERATION, when set, names the current grant generation if the handoff link carries an older one.
+ */
+async function suggestBundle(c: LiveContext): Promise<void> {
+  const owner = needShip('READYMADE_OWNER_SHIP'), project = need('READYMADE_PROJECT'), handoff = need('READYMADE_HANDOFF');
+  const old = readHandoff(handoff).sharedProjectLink;
+  if (!old) throw new LiveFailure('handoff-without-shared-project-link');
+  const base = sharedProjectLink(vscode.Uri.parse(old, true), c.extension.id), generation = process.env.READYMADE_GENERATION ?? base.generation;
+  const text = vscode.Uri.from({scheme: vscode.env.uriScheme, authority: c.extension.id, path: '/shared-project',
+    query: new URLSearchParams({owner: base.owner, project: base.project, generation, peer: base.peer}).toString()}).toString();
+  const link = sharedProjectLink(vscode.Uri.parse(text, true), c.extension.id);
+  assert.deepEqual({owner: link.owner, project: link.project, peer: link.peer}, {owner, project, peer: c.ship});
+  type Bundles = {list(): readonly {request: string; drafts: readonly string[]; phase: string; reason?: string; receiptHash?: string; intent: {files: readonly {path: string}[]}}[]};
+  const source = c.api.remoteSource as unknown as SourceInternals & {bundles: Bundles; drafts: {list(): readonly {id: string; uri: string; path: string}[]}};
+  if (!(await vscode.commands.getCommands(true)).includes('readymade.sendSharedBundle')) throw new LiveFailure('send-shared-bundle-not-registered');
+  await c.timed('open-shared-project', () => c.api.remoteSource.open(text), 90000);
+  const observation = source.observation; c.record.sourceState = source.state; c.record.generation = generation;
+  if (source.state !== 'Read-only shared files' || !observation || observation.files.length < 2) throw new LiveFailure('two-shared-files-not-readable');
+  c.record.revision = observation.revision; c.record.root = observation.root;
+  const stamp = Date.now().toString(36), files = observation.files.slice(0, 2), ids: string[] = [];
+  for (const file of files) {
+    await c.timed('edit-draft-' + file.path, () => c.api.remoteSource.editDraft(file.path), 30000);
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.getText() !== file.text) throw new LiveFailure('draft-did-not-open');
+    const line = `::  two-file suggestion from the Readymade app ${stamp}\n`, end = editor.document.positionAt(file.text.length);
+    if (!await editor.edit(edit => edit.insert(end, (file.text.endsWith('\n') ? '' : '\n') + line))) throw new LiveFailure('draft-edit-refused');
+    const draft = source.drafts.list().find(row => row.uri === editor.document.uri.toString());
+    if (!draft) throw new LiveFailure('draft-not-retained');
+    ids.push(draft.id);
+  }
+  c.record.paths = files.map(f => f.path);
+  const before = new Set(source.bundles.list().map(row => row.request));
+  c.mark('bundle-submit');
+  let failed: unknown;
+  try {await c.timed('send-bundle', () => Promise.resolve(vscode.commands.executeCommand('readymade.sendSharedBundle', ids)), 90000);} catch (error) {failed = error;}
+  const created = source.bundles.list().find(row => !before.has(row.request)), held = () => source.bundles.list().find(row => row.request === created?.request);
+  let record = held();
+  if (!record) {c.record.write = 'not-sent'; if (failed) c.record.writeError = errorInfo(failed, true); throw new LiveFailure('bundle-not-sent');}
+  c.record.request = record.request; c.record.write = 'submitted'; c.record.sentFiles = record.intent.files.map(f => f.path); c.observed('bundle', record.phase);
+  if (failed) c.record.sendError = errorInfo(failed, true);
+  const final = ['recorded', 'refused', 'uncertain', 'refused-before-submit'];
+  for (let reads = 0; reads < 12 && !final.includes(record.phase); reads++) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    try {await c.timed('check-bundle-' + reads, () => Promise.resolve(vscode.commands.executeCommand('readymade.checkSharedBundle', record!.request)), 60000);}
+    catch (error) {c.observed('check', 'unavailable', errorInfo(error).code);}
+    record = held() ?? record; c.observed('bundle', record.phase, record.reason);
+  }
+  const row = (c.api.remoteSource.rows()[0].children ?? []).find(r => r.label === `Suggestion · ${record!.intent.files.length} files`);
+  Object.assign(c.record, {phase: record.phase, reason: record.reason, receiptHash: record.receiptHash, tree: row ? seen([row])[0] : undefined});
+  if (record.phase !== 'recorded') throw new LiveFailure('bundle-' + record.phase);
+}
+
+/**
+ * The collaborator's side of the native pages, in the real window: new notices from the owner, a live stream of a
+ * shared session (opened, then closed), file presence on a shared file, and one work request the owner must refuse
+ * (a session that is not shared), so nothing is queued on the owner's ship.
+ */
+async function nativePeer(c: LiveContext): Promise<void> {
+  const owner = needShip('READYMADE_OWNER_SHIP'), project = need('READYMADE_PROJECT'), text = readHandoff(need('READYMADE_HANDOFF')).sharedProjectLink;
+  if (!text) throw new LiveFailure('handoff-without-shared-project-link');
+  const native = c.api.native, record: Record<string, unknown> = {};
+  c.record.native = record;
+  record.newNotices = await c.timed('read-inbox', () => native.readInbox(true), 30000);
+  record.newNoticesAgain = await c.timed('read-inbox-again', () => native.readInbox(true), 30000);
+  await c.timed('notices-screen', async () => {await vscode.commands.executeCommand('readymade.notices'); await until(() => !!native.notices.shown && native.notices.shown.status !== 'Reading the ship…', 30000);}, 45000);
+  record.notices = native.notices.shown!.status; record.firstReceived = native.notices.shown!.sections[1]?.lines[0];
+  try {await c.timed('open-shared-project', () => c.api.remoteSource.open(text), 60000);} catch (error) {record.openError = errorInfo(error, true);}
+  try {await c.timed('list-shared-sessions', () => c.api.remoteSource.refreshSessions(owner, project), 75000);} catch (error) {record.sessionsError = errorInfo(error, true);}
+  const shared = c.api.remoteSource.sharedSessions(); record.sharedSessions = shared.map(s => ({session: s.session.slice(0, 11), phase: s.phase}));
+  if (shared.length) {
+    const s = shared[0]!;
+    record.follow = await c.timed('follow', () => native.follow(s), 30000);
+    try {await until(() => native.followed.some(f => f.session === s.session && f.phase !== 'connecting'), 20000);} catch { /* recorded as it stands */ }
+    record.stream = native.followed.map(f => ({phase: f.phase, reason: f.reason, sequence: f.sequence, text: streamText(f)}));
+    record.unfollow = await c.timed('unfollow', () => native.unfollow(s), 30000);
+    // Following the same session again must start from the sequence this computer last saw.
+    const sequence = (record.stream as {sequence: number}[])[0]?.sequence ?? 0;
+    record.followAgain = await c.timed('follow-again', () => native.follow(s), 30000);
+    if (sequence) assert.equal(record.followAgain, `Following again from sequence ${sequence}.`);
+    record.unfollowAgain = await c.timed('unfollow-again', () => native.unfollow(s), 30000);
+    record.refusedAsk = await c.timed('ask-unshared-session', () => native.ask({owner, project, session: '0x1'}, 'Live check: this session is not shared, so the owner must refuse this.'), 30000);
+    // One real request on the shared session: the owner queues it (the session is not idle, so it cannot start),
+    // and it is withdrawn at once, so nothing is left on the owner's ship and nothing runs.
+    if (process.env.READYMADE_ASK_AND_WITHDRAW === '1') {
+      const real = await c.timed('ask-shared-session', () => native.ask(s, 'Live check: this request is withdrawn at once and must never run.'), 30000);
+      record.realAsk = real.said; assert.equal(real.refused, false, real.said); assert.match(real.said, /queued your request/);
+      record.withdrawn = await c.timed('withdraw', () => native.withdraw(real.nonce), 30000);
+      assert.match(String(record.withdrawn), /withdrew your request\. Nothing ran\.$/);
+      record.withdrawnAgain = await c.timed('withdraw-again', () => native.withdraw(real.nonce), 30000);
+    }
+    // What was asked is kept on this computer and shown with where it stands.
+    await c.timed('work-screen', async () => {await vscode.commands.executeCommand('readymade.workRequests'); await until(() => !!native.work.shown && native.work.shown.status !== 'Reading the ship…', 30000);}, 45000);
+    record.workScreen = {status: native.work.shown!.status, asked: native.work.shown!.sections[1]?.lines.slice(0, 2)};
+  }
+  const source = c.api.remoteSource as unknown as {observation?: RemoteSourceObservation; uri(o: RemoteSourceObservation, path: string): vscode.Uri};
+  if (source.observation?.files.length) {
+    const file = source.observation.files[0]!;
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(source.uri(source.observation, file.path)));
+    record.presenceOffByDefault = (await c.timed('presence-off', async () => {await native.tellPresence(); return native.presenceShown.text;}, 30000)) || 'hidden';
+    await vscode.workspace.getConfiguration('readymade').update('sharePresence', true, vscode.ConfigurationTarget.Global);
+    // Turning the setting on reports by itself; wait for what the status bar then says.
+    await c.timed('presence', async () => {await native.tellPresence(); await until(() => native.presenceShown.text !== '', 20000);}, 30000);
+    record.presence = {file: file.path, ...native.presenceShown};
+  }
+  assert.equal(record.newNoticesAgain, 0, 'a notice is shown once');
+}
+
+export function run(): Promise<void> {return liveRun('live-peer-host', {join, sessions, suggest, 'suggest-bundle': suggestBundle, 'native-peer': nativePeer});}

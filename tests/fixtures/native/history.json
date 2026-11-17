@@ -1,0 +1,158 @@
+{
+ "noticeStore": true,
+ "observedAt": "~2026.11.17..12.42.43..e816",
+ "owner": "~zod",
+ "project": "pataphor-demo-mp",
+ "rows": [
+  {
+   "answer": null,
+   "authoredAt": "~2026.11.17..04.06.03..ac9f",
+   "baseRevision": 7,
+   "files": 2,
+   "kind": "multi-file",
+   "landed": {
+    "candidate": "0xad3a.d3b7.adba.58a3.f882.85b9.56e5.abd3.0a94.0ed5.a1e6.baca.2a2e.5729.5df0.4e5b",
+    "desk": "pataphor-demo-mp-work",
+    "revision": 8
+   },
+   "landedNotice": {
+    "acknowledgedAt": "~2026.11.17..09.57.40..d2d3",
+    "id": "0xa503.fd27.c628.ec15.6e7c.3a4b.839f.8ffb.41a3.839d.1c29.9b9f.a5c8.2800.4c6b.22b4",
+    "kind": "suggestion-landed",
+    "status": "delivered"
+   },
+   "peer": "~nec",
+   "request": "0xca36.c23e.ac4d.0f3b.27d4.7108.6120.f4fd",
+   "reviewed": {
+    "at": "~2026.11.17..04.21.07..3b20",
+    "candidate": "0xad3a.d3b7.adba.58a3.f882.85b9.56e5.abd3.0a94.0ed5.a1e6.baca.2a2e.5729.5df0.4e5b",
+    "stage": "applied",
+    "verdict": "approve"
+   }
+  },
+  {
+   "answer": null,
+   "authoredAt": "~2026.11.13..13.35.53..49df",
+   "baseRevision": 3,
+   "files": 1,
+   "kind": "single-file",
+   "landed": {
+    "candidate": "0xf49a.f5a9.174f.3ef3.3079.9a1b.0d25.bbd8.f0ce.c264.a9c2.9ea0.30df.855d.a3c2.7368",
+    "desk": "pataphor-demo-mp-work",
+    "revision": 4
+   },
+   "landedNotice": {
+    "acknowledgedAt": "~2026.11.17..09.57.41..2542",
+    "id": "0x8203.5570.f8e3.52a6.68bf.09ef.547c.2f3d.5f23.1cce.c48a.f35e.c595.7f14.93a5.8c14",
+    "kind": "suggestion-landed",
+    "status": "delivered"
+   },
+   "peer": "~nec",
+   "request": "0x23be.3b42.b0e1.8e64.94d2.9880.5cce.efb9",
+   "reviewed": {
+    "at": "~2026.11.13..13.49.10..9ac7",
+    "candidate": "0xf49a.f5a9.174f.3ef3.3079.9a1b.0d25.bbd8.f0ce.c264.a9c2.9ea0.30df.855d.a3c2.7368",
+    "stage": "applied",
+    "verdict": "approve"
+   }
+  },
+  {
+   "answer": {
+    "acknowledgedAt": "~2026.11.17..08.36.26..a014",
+    "id": "0x7368.9996.1d90.4b62.41c0.b865.c68c.fa92.8b86.d94a.3238.605e.05ca.d814.5edf.4eca",
+    "kind": "suggestion-taken",
+    "status": "delivered"
+   },
+   "authoredAt": "~2026.11.13..13.02.55..a7ee",
+   "baseRevision": 2,
+   "files": 1,
+   "kind": "single-file",
+   "landed": {
+    "candidate": "0x738a.aa2c.4d94.c01c.5ccd.bcf0.00f5.4d83.5379.2a13.539c.09e3.8622.5727.1fc0.3003",
+    "desk": "pataphor-demo-mp-work",
+    "revision": 3
+   },
+   "landedNotice": {
+    "acknowledgedAt": "~2026.11.17..09.57.41..732b",
+    "id": "0x5062.c6b3.f87e.1270.66a0.071d.23e7.fd9e.ce7d.b596.07a9.a2ee.79df.c019.0be5.42f7",
+    "kind": "suggestion-landed",
+    "status": "delivered"
+   },
+   "peer": "~nec",
+   "request": "0x76bf.4b61.1318.c491.c804.e905.0243.5227",
+   "reviewed": {
+    "at": "~2026.11.13..13.12.43..bded",
+    "candidate": "0x738a.aa2c.4d94.c01c.5ccd.bcf0.00f5.4d83.5379.2a13.539c.09e3.8622.5727.1fc0.3003",
+    "stage": "applied",
+    "verdict": "approve"
+   }
+  },
+  {
+   "answer": null,
+   "authoredAt": "~2026.11.13..12.20.32..7962",
+   "baseRevision": 1,
+   "files": 1,
+   "kind": "single-file",
+   "landed": {
+    "candidate": "0x2ba6.7397.849b.8f91.07ad.35ad.458f.74f1.2d23.40ee.7a22.06c9.ddc2.794d.b8e3.f0a1",
+    "desk": "pataphor-demo-mp-work",
+    "revision": 2
+   },
+   "landedNotice": {
+    "acknowledgedAt": "~2026.11.17..09.57.41..c0a6",
+    "id": "0x1a0e.106e.0e6f.974d.044c.de93.2c73.eb09.7ea0.3e0a.eacc.32bb.e3e0.e76b.b01f.ed43",
+    "kind": "suggestion-landed",
+    "status": "delivered"
+   },
+   "peer": "~nec",
+   "request": "0x6c1b.3a04.706a.d9ff.372b.1ac0.af9d.b80b",
+   "reviewed": {
+    "at": "~2026.11.13..12.49.23..5bb9",
+    "candidate": "0x2ba6.7397.849b.8f91.07ad.35ad.458f.74f1.2d23.40ee.7a22.06c9.ddc2.794d.b8e3.f0a1",
+    "stage": "applied",
+    "verdict": "approve"
+   }
+  },
+  {
+   "answer": null,
+   "authoredAt": "~2026.11.17..04.06.03..ac9f",
+   "baseRevision": 7,
+   "files": 2,
+   "kind": "multi-file",
+   "landed": {
+    "candidate": "0xad3a.d3b7.adba.58a3.f882.85b9.56e5.abd3.0a94.0ed5.a1e6.baca.2a2e.5729.5df0.4e5b",
+    "desk": "pataphor-demo-mp-work",
+    "revision": 8
+   },
+   "landedNotice": {
+    "acknowledgedAt": "~2026.11.17..09.57.40..d2d3",
+    "id": "0xa503.fd27.c628.ec15.6e7c.3a4b.839f.8ffb.41a3.839d.1c29.9b9f.a5c8.2800.4c6b.22b4",
+    "kind": "suggestion-landed",
+    "status": "delivered"
+   },
+   "peer": "~nec",
+   "request": "0xca36.c23e.ac4d.0f3b.27d4.7108.6120.f4fd",
+   "reviewed": {
+    "at": "~2026.11.17..04.21.07..3b20",
+    "candidate": "0xad3a.d3b7.adba.58a3.f882.85b9.56e5.abd3.0a94.0ed5.a1e6.baca.2a2e.5729.5df0.4e5b",
+    "stage": "applied",
+    "verdict": "approve"
+   }
+  },
+  {
+   "answer": null,
+   "authoredAt": "~2026.11.16..17.05.19..7b81",
+   "baseRevision": 6,
+   "files": 2,
+   "kind": "multi-file",
+   "landed": null,
+   "landedNotice": null,
+   "peer": "~nec",
+   "request": "0x13be.ca05.425e.9753.164b.8f2c.6483.f569",
+   "reviewed": null
+  }
+ ],
+ "schema": "readymade-suggestion-history-v1",
+ "shown": 6,
+ "suggestions": 53
+}

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {execFile, execFileSync} from 'node:child_process';
-import {closeSync, mkdtempSync, openSync, rmSync, writeSync} from 'node:fs';
+import {closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {doctorFindings, parseEventWatch, parseFlowReading, parseProcess, parseReading, parseSwap, recoveryRecipe, runtimeOf, type DoctorFacts} from '../src/ship-doctor';
+import {doctorFindings, parseEventWatch, parseFlowReading, parseProcess, parseReading, parseSwap, recoveryRecipe, runtimeOf, type DoctorFacts, nativeFindings} from '../src/ship-doctor';
 import {decodeDoctorReading, decodeFlowsReading, encodeDoctorRequest, encodeFlowsRequest} from '../src/planet-discovery-wire';
 
 const GB = 1024 ** 3;
@@ -137,4 +137,19 @@ test('the recovery recipe names the real pier and runtime and the two rules that
   assert.match(recipe, /Pier \(the whole ship\): \/piers\/sampel/); assert.match(recipe, /\/Users\/x\/vere-v4\.6 --loom 34 \/piers\/sampel/);
   assert.match(recipe, /Never copy a running pier/); assert.match(recipe, /Never run a backup and the original at the same time/); assert.match(recipe, /stale snapshot/);
   assert.match(recoveryRecipe('~zod', '/p', undefined), /not read \(the ship is not running\)/);
+});
+
+test('the native diagnostics page becomes doctor findings that each carry the read they came from', () => {
+  const page = {schema: 'native-diagnostics-v1', owner: '~zod', available: true, findings: [
+    {area: 'Native jobs', status: 'ok', summary: '0 running.', evidence: '/gx/cantrip/native-coding/reconciliation/noun'},
+    {area: 'Candidate check queue', status: 'attention', summary: '8 unknown.', evidence: '/gx/cantrip/native-coding/candidate-ledger/noun'},
+    {area: 'Project invitations', status: 'unknown', summary: 'Unreadable: collab-too-old', evidence: '/apps/pataphor-native/coding/capacity'}]};
+  const out = nativeFindings(page, '~zod');
+  assert.deepEqual(out.map(f => [f.level, f.title]), [['ok', 'Native jobs'], ['warning', 'Candidate check queue'], ['note', 'Project invitations']]);
+  assert.match(out[1].detail, /8 unknown\. \(read: \/gx\/cantrip\/native-coding\/candidate-ledger\/noun\)$/);
+  for (const bad of [{...page, owner: '~nec'}, {...page, schema: 'x'}, {...page, available: false},
+    {...page, findings: [{...page.findings[0], status: 'fine'}]}, {...page, findings: [{...page.findings[0], evidence: ''}]}, undefined])
+    assert.deepEqual(nativeFindings(bad, '~zod'), []);
+  const live = process.env.READYMADE_DIAG_LIVE_PAGE;
+  if (live) assert.ok(nativeFindings(JSON.parse(readFileSync(live, 'utf8')), '~dashus-navnul').length >= 10);
 });

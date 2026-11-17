@@ -7,7 +7,9 @@ import type {SharingView} from '../src/project-sharing';
 import type {SessionSharingCommand, SessionSharingOutcome, SessionSharingSnapshot} from '../src/session-sharing';
 import {dateAtomMillis} from '../src/editing-activity';
 import {LiveFailure, LiveTimeout, acceptQuickInput, copied, errorInfo, invitationAction, liveRun, mergeHandoff, need, needShip, pasteQuickInput,
-  readHandoff, seen, sleep, within, type LiveContext} from './live-ship-support';
+  readHandoff, seen, sleep, until, within, type LiveContext} from './live-ship-support';
+import {ownerTasks, standingPolicy} from '../src/owner-pages';
+import {collabNotices} from '../src/collab-pages';
 
 // Live acceptance on the OWNER's own running ship. One phase per launch (READYMADE_LIVE_PHASE):
 // invite | share | revoke | members | answer-suggestion | reviewer | import-suggestion | review | apply | share-session | share-session-limited | unshare-session | project-sharing (READYMADE_SETTING=on|off) | remove. Every write is the product
@@ -134,6 +136,95 @@ async function revoke(c: LiveContext): Promise<void> {
   await changeSharing(c, peer, true, `Revoke ${peer}'s access to ${project}?`, []);
   const after = await observeSharing(c, peer, 'sharing-after');
   if (!after.grant?.revoked) throw new LiveFailure('grant-not-revoked');
+}
+
+/**
+ * Each owner action through the real client, chosen so the ship must refuse it: nothing on the ship changes, and the
+ * ship's own reason must come back in words. The handoff is a read. Two actions are skipped when their page is absent.
+ */
+async function nativeActions(c: LiveContext): Promise<void> {
+  await ownProject(c);
+  const native = c.api.native, said: Record<string, unknown> = {};
+  c.record.actions = said;
+  const policy = standingPolicy((await c.client.nativePage('/apps/pataphor-native/coding/policy.json')).value);
+  if (policy?.inForce) said.policyUnchanged = await c.timed('policy-unchanged', () => native.setPolicy(policy.inForce!), 30000);
+  const notices = collabNotices((await c.client.nativePage('/apps/readymade-collab/notices')).value, c.ship);
+  const delivered = notices?.outbox.find(n => n.status === 'delivered');
+  if (delivered) said.retryDelivered = await c.timed('retry-delivered', () => native.retry(delivered.id), 30000);
+  const tasks = ownerTasks((await c.client.nativePage('/apps/pataphor-native/coding/tasks')).value);
+  const answered = tasks?.questions.find(q => !q.open);
+  if (answered) said.answerAgain = await c.timed('answer-again', () => native.answer(answered.id, 'Live check: a second answer must be refused.'), 30000);
+  said.answerMissing = await c.timed('answer-missing', () => native.answer('0x1', 'Live check: no such question.'), 30000);
+  // Revoking the policy in force, only when asked (READYMADE_REVOKE_POLICY=1): used to put a test project back as it was.
+  if (process.env.READYMADE_REVOKE_POLICY === '1') {
+    said.revoked = await c.timed('revoke-policy', () => native.revokePolicy(), 30000);
+    assert.equal(said.revoked, 'Revoked. No policy is in force.');
+    await sleep(3000);
+    const after = standingPolicy((await c.client.nativePage('/apps/pataphor-native/coding/policy.json')).value);
+    said.afterRevoke = {inForce: !!after?.inForce, versions: after?.versions.length, chain: after?.chain}; assert.equal(after?.inForce, undefined);
+    said.revokedAgain = await c.timed('revoke-policy-again', () => native.revokePolicy(), 30000);
+    assert.match(String(said.revokedAgain), /^Refused by the ship: standing policy not in force\./);
+  }
+  // Dismissing one queued request named by READYMADE_DISMISS_WORK (a request created by these checks, never a person's).
+  const stuck = process.env.READYMADE_DISMISS_WORK;
+  if (stuck) {
+    said.dismissed = await c.timed('dismiss-work', () => native.dismiss(stuck), 30000);
+    assert.equal(said.dismissed, 'Dismissed. Its requester is told, and nothing runs.');
+    said.dismissedAgain = await c.timed('dismiss-work-again', () => native.dismiss(stuck), 30000);
+    assert.match(String(said.dismissedAgain), /^Refused by the ship: work request started\./);
+  }
+  // One success, on a question created for this check (READYMADE_TEST_QUESTION): answered once, then closed on the ship.
+  const mine = process.env.READYMADE_TEST_QUESTION;
+  if (mine) {
+    assert.ok(tasks?.questions.some(q => q.id === mine && q.open && q.task.startsWith('live-check-')), 'the test question must be open and a live-check task');
+    said.answered = await c.timed('answer-test-question', () => native.answer(mine, 'Yes. Answered from the Readymade window by the live check.'), 30000);
+    assert.equal(said.answered, 'Your answer is stored. The task can be claimed again.');
+    await sleep(3000);
+    const after = ownerTasks((await c.client.nativePage('/apps/pataphor-native/coding/tasks')).value)?.questions.find(q => q.id === mine);
+    said.afterAnswer = after && {open: after.open, answer: after.answer}; assert.equal(after?.open, false);
+    said.answeredTwice = await c.timed('answer-test-question-again', () => native.answer(mine, 'A second answer.'), 30000);
+    assert.match(String(said.answeredTwice), /^Refused by the ship: question answered\. .+ Nothing changed\.$/);
+  }
+  said.labelStale = await c.timed('label-stale', () => native.label({name: 'MEMORY.md', hash: '00000000'}, 'fact'), 30000);
+  said.unsupersedeNone = await c.timed('unsupersede-none', () => native.unsupersede('MEMORY.md', 'easil.md'), 30000);
+  // A proposal that is already closed cannot be closed again; one the ship does not hold is named as missing.
+  const shut = tasks?.proposals.find(p => p.closed);
+  if (shut) {said.dismissClosed = await c.timed('dismiss-closed-proposal', () => native.dismissProposal(shut.id), 30000); assert.match(String(said.dismissClosed), /^Refused by the ship: proposal closed\./);}
+  said.dismissMissing = await c.timed('dismiss-missing-proposal', () => native.dismissProposal('0x1'), 30000);
+  const doc = await c.timed('handoff', () => native.handoffText('claude', need('READYMADE_PROJECT')), 45000);
+  said.handoff = {chars: doc.length, title: doc.split('\n')[0], sections: doc.split('\n').filter(l => l.startsWith('## ')).map(l => l.slice(0, 60))};
+  for (const key of ['policyUnchanged', 'retryDelivered', 'answerAgain', 'answerMissing', 'labelStale', 'unsupersedeNone', 'dismissMissing']) {
+    if (said[key] !== undefined) assert.match(String(said[key]), /^Refused by the ship: .+\. Nothing changed\.$/, key);
+  }
+  assert.match(doc, /^# Handoff from ~/);
+}
+
+/** Opens every native screen through its real command and records what each one showed. Read-only. */
+async function nativeScreens(c: LiveContext): Promise<void> {
+  await ownProject(c);
+  const screens: [string, () => {shown?: {status: string; sections: readonly {title: string; lines: readonly unknown[]}[]}}][] = [
+    ['overview', () => c.api.native.overview], ['tasksAndQuestions', () => c.api.native.tasks], ['notices', () => c.api.native.notices],
+    ['suggestionHistory', () => c.api.native.history], ['workRequests', () => c.api.native.work], ['sessionRoles', () => c.api.native.roles],
+    ['standingPolicy', () => c.api.native.policy], ['presenceBoard', () => c.api.native.board]];
+  const seen: Record<string, unknown> = {};
+  for (const [command, panel] of screens) {
+    await c.timed('screen-' + command, async () => {
+      await vscode.commands.executeCommand('readymade.' + command);
+      await until(() => !!panel().shown && panel().shown!.status !== 'Reading the ship…', 30000);
+    }, 45000);
+    const shown = panel().shown!;
+    assert.ok(shown.sections.length > 0, `${command} showed no sections: ${shown.status}`);
+    seen[command] = {status: shown.status.slice(0, 160), sections: shown.sections.map(s => `${s.title}: ${s.lines.length}`)};
+    c.observed(command, 'shown');
+  }
+  const rows = c.api.native.rows(), overview = rows.find(row => row.id === 'native-overview'), pages = rows.find(row => row.id === 'native-pages');
+  assert.ok(overview && pages);
+  seen.treeRow = `${overview.label}: ${overview.description}, ${overview.children?.length ?? 0} blockers as problems`;
+  seen.shipGroup = (pages.children ?? []).map(row => row.description ? `${row.label} (${row.description})` : row.label);
+  assert.ok((pages.children ?? []).every(row => row.command?.command.startsWith('readymade.')));
+  const registered = new Set(await vscode.commands.getCommands(true));
+  for (const row of pages.children ?? []) assert.ok(registered.has(row.command!.command), `${row.command!.command} is not registered`);
+  c.record.screens = seen;
 }
 
 async function members(c: LiveContext): Promise<void> {
@@ -338,6 +429,82 @@ async function importSuggestion(c: LiveContext): Promise<void> {
   c.mark('handoff'); mergeHandoff(handoff, {candidate: pending.candidate, candidateSession: session});
 }
 
+/**
+ * Goal items 23-24: the owner imports one WHOLE multi-file suggestion (READYMADE_BUNDLE_RECEIPT, or the newest one on the
+ * session's revision) into one draft with the row's own action, then prepares one candidate for every file with the
+ * draft row's own action. The candidate id goes to the handoff for the existing review phase. Nothing is sent twice.
+ */
+async function importBundle(c: LiveContext): Promise<void> {
+  const session = sessionOf(), handoff = need('READYMADE_HANDOFF'), project = await ownProject(c); c.record.session = session;
+  const task = (await c.timed('read-tasks', () => c.api.client!.codingState(session), 60000)).sessions.find(t => t.id === session);
+  const source = task?.source as {desk?: string; number?: number} | undefined;
+  if (task?.project !== project || !source?.desk || !Number.isSafeInteger(source.number)) throw new LiveFailure('session-not-in-project');
+  c.record.sessionRevision = `${source.desk} revision ${source.number}`;
+  await c.timed('read-inbox', () => c.api.inbox.observe(), 60000);
+  const bundles = (c.api.inbox.rows()[0].children ?? []).filter(row => row.children?.[0]?.command?.command === 'readymade.importInboxBundle');
+  c.record.bundlesShown = bundles.length;
+  const wanted = process.env.READYMADE_BUNDLE_RECEIPT;
+  const row = bundles.find(r => wanted ? r.children![0].command!.arguments![0] === wanted : String(r.tooltip).startsWith(`${source.desk} · revision ${source.number}\n`));
+  if (!row) throw new LiveFailure('no-bundle-on-this-revision');
+  const receipt = String(row.children![0].command!.arguments![0]); c.record.receipt = receipt; c.record.peer = row.description; c.record.files = row.label;
+  const before = new Set(c.api.drafts.listBundles().map(d => d.id));
+  const tasks = (await c.api.client!.codingState()).sessions.filter(t => {
+    const s = t.source as {desk?: unknown; number?: unknown} | null;
+    return t.project === project && !!s && s.desk === source.desk && s.number === source.number;
+  }).length;
+  c.record.tasksOnThisRevision = tasks;
+  const importing = c.api.inbox.importBundle(receipt); importing.catch(() => undefined);
+  if (tasks > 1) {await sleep(4000); await pasteQuickInput('Session ' + session);}
+  await c.timed('import-bundle', () => importing, 240000);
+  const draft = c.api.drafts.listBundles().find(d => !before.has(d.id));
+  if (!draft) throw new LiveFailure('import-made-no-draft');
+  c.record.draft = {id: draft.id, files: draft.files.map(f => f.snapshot.path), origin: draft.receipt.peer, receipt: draft.receipt.receiptHash,
+    changed: draft.files.map(f => f.text !== f.snapshot.text)};
+  const shown = (c.api.inbox.rows()[0].children ?? []).find(r => r.label === 'Imported Multi-File Drafts')?.children?.find(r => r.tooltip?.includes(receipt));
+  c.record.originShown = shown?.description;
+  if (shown?.description !== `from ${draft.receipt.peer}`) throw new LiveFailure('origin-not-shown');
+  const prepare = shown.children?.find(r => r.command?.command === 'readymade.prepareBundleCandidate');
+  if (!prepare) throw new LiveFailure('prepare-not-offered');
+  c.mark('candidate-submit');
+  try {await c.timed('prepare-candidate', async () => {await vscode.commands.executeCommand('readymade.prepareBundleCandidate', draft.id);}, 120000);}
+  catch (error) {c.record.prepareError = errorInfo(error, true);}
+  let pending = c.api.drafts.getBundle(draft.id).pending;
+  for (let n = 0; n < 40 && pending?.phase !== 'candidate' && pending?.phase !== 'refused'; n++) {
+    await sleep(3000);
+    try {await c.timed('refresh-' + n, () => c.api.refresh(session), 60000);} catch (error) {c.observed('refresh', 'unavailable', errorInfo(error).code);}
+    pending = c.api.drafts.getBundle(draft.id).pending; c.observed('candidate', pending?.phase ?? 'none');
+  }
+  c.record.write = pending ? pending.phase === 'issued' ? 'not-sent' : 'submitted' : 'not-sent';
+  c.record.candidatePhase = pending?.phase ?? null; c.record.candidate = pending?.candidate ?? null; c.record.candidateReason = pending?.reason ?? null;
+  if (pending?.phase !== 'candidate' || !pending.candidate) throw new LiveFailure('candidate-not-prepared');
+  c.mark('handoff'); mergeHandoff(handoff, {candidate: pending.candidate, candidateSession: session});
+}
+
+/** Goal item 25, read-only: compare one suggestion (READYMADE_BUNDLE_RECEIPT, hot or archived) with the owner's current files. */
+async function compareBundle(c: LiveContext): Promise<void> {
+  const receipt = need('READYMADE_BUNDLE_RECEIPT'); await ownProject(c); c.record.receipt = receipt;
+  await c.timed('read-inbox', () => c.api.inbox.observe(), 60000);
+  await c.timed('read-history', () => c.api.inbox.observeHistory(), 60000);
+  const find = () => [...(c.api.inbox.rows()[0].children ?? []), ...((c.api.inbox.rows()[0].children ?? []).find(r => r.label === 'History')?.children ?? [])]
+    .find(r => r.children?.some(a => a.command?.command === 'readymade.compareInboxBundle' && a.command.arguments?.[0] === receipt));
+  if (!find()) throw new LiveFailure('bundle-not-listed');
+  const tabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputTextDiff).map(t => t.label);
+  const before = tabs().length;
+  await c.timed('compare', () => c.api.inbox.compareBundle(receipt), 180000);
+  c.record.summary = find()?.children?.find(a => a.command?.command === 'readymade.compareInboxBundle')?.description;
+  c.record.diffTabs = tabs().slice(before); c.record.write = 'none';
+  if (!c.record.summary) throw new LiveFailure('no-comparison-shown');
+  if (process.env.READYMADE_RESOLVE === 'mine') {
+    // Goal item 26: keep the owner's version of every moved file, take the suggestion for the rest; local drafts only.
+    const compareRow = () => find()?.children?.find(a => a.command?.command === 'readymade.compareInboxBundle');
+    for (const row of compareRow()?.children ?? []) if (row.description === 'changed since suggested: choose') c.api.inbox.chooseBundleFile(receipt, String(row.label), 'mine');
+    c.record.choices = (compareRow()?.children ?? []).map(r => [r.label, r.description]);
+    const before = new Set(c.api.drafts.list().map(d => d.uri));
+    c.api.inbox.resolveBundle(receipt);
+    c.record.drafts = c.api.drafts.list().filter(d => !before.has(d.uri)).map(d => ({path: d.snapshot.path, revision: d.snapshot.source.number, changed: d.text !== d.snapshot.text}));
+  }
+}
+
 /** Reads the candidate until the ship's own checks settle it: stage 'review' with a pending decision, or a refusal. */
 async function settledCandidate(c: LiveContext, session: string, id: string, until: (cand: {stage: string; decision: string; landed?: unknown}) => boolean, reads: number, gap: number) {
   for (let n = 0; ; n++) {
@@ -371,8 +538,10 @@ async function review(c: LiveContext): Promise<void> {
     try {await c.timed('start-review', () => c.api.codeReview.start(id), 120000); c.record.write = 'submitted';}
     catch (error) {c.record.write = accepted() ? 'unknown' : 'not-sent'; c.record.writeError = errorInfo(error, true); throw new LiveFailure('review-' + c.record.write);}
   }
-  // The reviewer is a model run by the owner's ship: allow up to fifteen minutes, reading every fifteen seconds.
-  const decided = await settledCandidate(c, session, id, cand => cand.decision !== 'pending' || cand.stage === 'refused', 60, 15000);
+  // The reviewer is a model run by the owner's ship: allow up to fifteen minutes (READYMADE_REVIEW_WAIT_MINUTES shortens the
+  // wait so one launch stays inside the ten-minute cap; a later read-only inspect-change reads the decision), every fifteen seconds.
+  const minutes = Number(process.env.READYMADE_REVIEW_WAIT_MINUTES ?? 15);
+  const decided = await settledCandidate(c, session, id, cand => cand.decision !== 'pending' || cand.stage === 'refused', Math.max(1, Math.min(60, Math.round(minutes * 4))), 15000);
   c.record.decision = decided.cand ? `${decided.cand.stage}/${decided.cand.decision}` : null; c.record.campaign = decided.campaign ?? null;
   if (decided.cand?.decision !== 'approve') throw new LiveFailure(decided.cand?.decision === 'pending' ? 'review-not-decided' : 'review-did-not-approve');
 }
@@ -437,6 +606,44 @@ async function remove(c: LiveContext): Promise<void> {
   if (after.member || after.viewGrant === 'live' || after.sessions.some(row => row.shared)) throw new LiveFailure('collaborator-not-removed');
 }
 
+/** Opens the real candidate and check documents without submitting anything. Reuse the same private
+ * profile on another launch to verify that reopening observes the same native outcome. */
+async function inspectChange(c: LiveContext): Promise<void> {
+  const {candidate: id, candidateSession: session} = readHandoff(need('READYMADE_HANDOFF'));
+  if (!id || !session) throw new LiveFailure('handoff-without-candidate');
+  const project = await ownProject(c);
+  await c.timed('observe-candidate', () => c.api.codeReview.observe(session), 60000);
+  await c.timed('open-candidate', () => c.api.codeReview.show(id), 30000);
+  const document = vscode.window.activeTextEditor?.document;
+  assert.equal(document?.uri.scheme, 'readymade-candidate'); assert.ok(document);
+  const candidate = JSON.parse(document.getText());
+  assert.equal(candidate.id, id); assert.equal(candidate.session, session); assert.equal(candidate.project, project);
+  assert.equal(candidate.owner, c.ship); assert.equal(candidate.snapshotKind, 'candidate');
+  if (process.env.READYMADE_EXPECTED_STAGE) assert.equal(candidate.stage, process.env.READYMADE_EXPECTED_STAGE);
+  if (candidate.stage === 'applied') {assert.equal(candidate.decision, 'approve'); assert.ok(candidate.landed);}
+  c.record.candidateDocument = candidate; c.record.candidateRows = seen(c.api.codeReview.rows());
+  if (process.env.READYMADE_EXPECTED_DIFF === '1') {
+    assert.equal(candidate.edits.length, 1); assert.ok(candidate.edits[0].preview);
+    const diff = vscode.window.tabGroups.all.flatMap(group => group.tabs).map(tab => tab.input)
+      .find((input): input is vscode.TabInputTextDiff => input instanceof vscode.TabInputTextDiff &&
+        input.original.scheme === document.uri.scheme && input.original.path.startsWith(document.uri.path.replace(/candidate\.json$/, 'source/')));
+    assert.ok(diff, 'The exact candidate must be visible in a diff editor');
+    const original = await vscode.workspace.openTextDocument(diff.original), proposed = await vscode.workspace.openTextDocument(diff.modified);
+    assert.equal(original.getText(), candidate.edits[0].preview.original);
+    assert.equal(proposed.getText(), candidate.edits[0].preview.proposed);
+    await assert.rejects(Promise.resolve(vscode.workspace.fs.writeFile(diff.modified, Buffer.from('forbidden'))));
+    c.record.diff = {original: diff.original.toString(), proposed: diff.modified.toString(), exact: true, readonly: true};
+  }
+  await c.timed('observe-checks', () => c.api.checks.observe(session), 60000);
+  const reports = c.api.checks.rows()[0].children?.filter(row => row.command?.command === 'readymade.showCheck') ?? [];
+  c.record.checkRows = seen(c.api.checks.rows());
+  if (reports.length) {
+    await c.timed('open-check', () => c.api.checks.show(String(reports[0].command!.arguments![0])), 30000);
+    c.record.checkDocument = JSON.parse(vscode.window.activeTextEditor!.document.getText());
+  }
+  c.record.write = 'none';
+}
+
 export function run(): Promise<void> {
-  return liveRun('live-owner-host', {invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'answer-suggestion': answerSuggestion, reviewer, 'import-suggestion': importSuggestion, review, apply, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
+  return liveRun('live-owner-host', {'native-screens': nativeScreens, 'native-actions': nativeActions, invite, share, revoke, members, 'share-session': c => sessionChange(c, 'share'), 'share-session-limited': sessionLimit, 'answer-suggestion': answerSuggestion, reviewer, 'import-suggestion': importSuggestion, 'import-bundle': importBundle, 'compare-bundle': compareBundle, review, apply, 'inspect-change': inspectChange, 'unshare-session': c => sessionChange(c, 'unshare'), 'project-sharing': projectSetting, remove});
 }

@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 import {mergeDraft} from './draft-merge';
-import {createHash} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {ShipClientError, type ShipClient} from './ship-client';
 import type {RemoteSuggestionJournal} from './remote-suggestion-journal';
+import {remoteBundleOutcome, type RemoteBundleJournal} from './remote-bundle-suggest';
 import type {RemoteDraftStore, RemoteDraftRecord} from './remote-draft-store';
 import type {ActivityReply} from './editing-activity';
 import type {MediaTreeRow} from './media-workbench';
 import {remoteShip, remoteProjectViewTarget, type RemoteProjectViewTarget, type RemoteProjectViewSelector, type RemoteProjectViewReply, type RemoteSourceObservation} from './remote-project-view';
-import {remoteProjectSessionsObserve, remoteProjectSessionRows, type RemoteProjectSessionsReply} from './remote-project-sessions';
+import {SharedSessionPages} from './remote-project-session-pages';
 
 export interface SharedProjectLink extends RemoteProjectViewTarget {readonly peer: string; readonly file?: string}
 export function sharedProjectLink(uri: vscode.Uri, authority: string): SharedProjectLink {
@@ -23,7 +24,7 @@ export function sharedProjectLink(uri: vscode.Uri, authority: string): SharedPro
 }
 const scheme = 'readymade-remote-source';
 interface RetainedRead {client: ShipClient; link: SharedProjectLink; selector?: RemoteProjectViewSelector; observation?: RemoteSourceObservation; state: string; settled: boolean}
-interface SessionList {client: ShipClient; reply?: RemoteProjectSessionsReply; note?: string; busy: boolean}
+interface SessionList {client: ShipClient; pages: SharedSessionPages; busy: boolean}
 /** Presentation only: remote observations never become local coding sessions or source authority. */
 export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentContentProvider {
   private readonly registration = vscode.workspace.registerTextDocumentContentProvider(scheme, this);
@@ -44,7 +45,8 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
   private activityExpiry?: ReturnType<typeof setTimeout>;
   private readonly sessionLists = new Map<string, SessionList>();
   constructor(private readonly authority: string, private readonly current: () => ShipClient | undefined,
-    private readonly connect: (origin?: string) => Promise<ShipClient | undefined>, private readonly changed: () => void, private readonly drafts?: RemoteDraftStore, private readonly suggestions?: RemoteSuggestionJournal) {}
+    private readonly connect: (origin?: string) => Promise<ShipClient | undefined>, private readonly changed: () => void, private readonly drafts?: RemoteDraftStore, private readonly suggestions?: RemoteSuggestionJournal,
+    private readonly bundles?: RemoteBundleJournal) {}
   private peer(client: ShipClient): string {
     const cookies = client.browserCookies(client.origin);
     if (cookies.length !== 1 || !cookies[0].name.startsWith('urbauth-') || !remoteShip(cookies[0].name.slice(8))) throw new Error('One authenticated ship identity is required.');
@@ -116,15 +118,21 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (!client || !link || !this.valid(client, link) || this.busy || this.sending || !this.settled) throw new Error('Check the pending request before refreshing.');
     if (this.histories.size >= 32) throw new Error('This window retains 32 observations. Open a new window for more.');
     this.retain();
-    this.busy = true; this.settled = false; this.selector = undefined; this.state = 'Reading shared files…'; this.changed();
+    // Retain the exact request before dispatch so a lost POST answer is recoverable by GET.
+    const request = '0x' + BigInt('0x' + randomUUID().replaceAll('-', '')).toString(16).replace(/\B(?=(?:[0-9a-f]{4})+$)/g, '.');
+    this.selector = {owner: link.owner, project: link.project, generation: link.generation, request};
+    this.busy = true; this.settled = false; this.state = 'Reading shared files…'; this.changed();
     try {
-      const result = await client.projectViewSubmit({owner: link.owner, project: link.project, generation: link.generation});
+      const result = await client.projectViewSubmit(this.selector);
       if (!this.valid(client, link)) throw new Error('Shared project connection changed.');
       this.selector = {owner: result.owner, project: result.project, generation: result.generation, request: result.request};
       this.accept(result); await this.observe(client, link);
     } catch (error) {
-      this.settled = error instanceof ShipClientError && error.code === 'refused';
-      this.state = this.settled ? 'Read refused before submission' : 'Outcome unknown — no automatic retry'; throw error;
+      this.settled = error instanceof ShipClientError && ['refused', 'commandBusy'].includes(error.code);
+      this.state = error instanceof ShipClientError && error.code === 'refused' && error.status === 400
+        ? 'Update the collaboration service on your ship to recover shared-file reads'
+        : this.settled ? 'Read not submitted — Refresh to try again' : 'Outcome unknown — Check shared project to read its result';
+      throw error;
     }
     finally {this.busy = false; this.changed();}
   }
@@ -256,7 +264,8 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (!this.drafts || !this.suggestions || !client || !link || this.closed || this.busy || this.sending ||
         !this.valid(client, link) || draft.observation.owner !== link.owner || draft.observation.project !== link.project || draft.observation.generation !== link.generation)
       throw new Error('Open this draft’s shared project before sending a suggestion.');
-    if (this.suggestions.list().some(row => row.draftId === draft.id)) throw new Error('This draft has a retained suggestion. Check its result; do not resend.');
+    if (this.suggestions.list().some(row => row.draftId === draft.id) || this.bundles?.claimedDrafts().has(draft.id))
+      throw new Error('This draft has a retained suggestion. Check its result; do not resend.');
     const document = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === draft.uri && !doc.isClosed);
     const source = document?.getText() ?? draft.text, captured = this.drafts.save(draft.id, source);
     if (source === draft.observation.files.find(file => file.path === draft.path)!.text) throw new Error('This draft has no changes to suggest.');
@@ -272,6 +281,96 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
       const claim = this.suggestions.claim(captured, source, fresh);
       await this.suggestions.submit(client, claim.request);
     } finally {this.sending = false; this.changed();}
+  }
+  /** Drafts of this shared project that no single-file or multi-file suggestion has taken. */
+  private bundleCandidates(link: SharedProjectLink): RemoteDraftRecord[] {
+    const scalar = new Set(this.suggestions?.list().map(row => row.draftId) ?? []), sent = this.bundles?.claimedDrafts() ?? new Set<string>();
+    return (this.drafts?.list() ?? []).filter(d => d.observation.owner === link.owner && d.observation.project === link.project &&
+      d.observation.generation === link.generation && d.observation.peer === link.peer && !scalar.has(d.id) && !sent.has(d.id));
+  }
+  /** Sends two or more changed drafts as ONE suggestion, bound to one fresh owner source observation. Never resent. */
+  async sendBundle(ids?: readonly string[]): Promise<void> {
+    const client = this.current(), link = this.link, drafts = this.drafts, bundles = this.bundles;
+    if (!drafts || !bundles || !client || !link || this.closed || this.busy || this.sending || !this.valid(client, link))
+      throw new Error('Open the shared project before sending a multi-file suggestion.');
+    const eligible = this.bundleCandidates(link);
+    if (eligible.length < 2) throw new Error('Edit at least two shared files, then send them together.');
+    // Called with draft ids (command arguments), the choice is exact and no picker is shown.
+    if (ids && ids.some(id => !eligible.some(draft => draft.id === id))) throw new Error('A chosen draft is not an unsent draft of this shared project.');
+    const picked = ids ? eligible.filter(draft => ids.includes(draft.id)).map(draft => ({draft})) :
+      await vscode.window.showQuickPick(eligible.map(draft => ({label: draft.path, description: 'revision ' + draft.observation.revision, picked: true, draft})),
+        {title: 'Send these drafts as one suggestion', canPickMany: true});
+    if (!picked || !this.valid(client, link)) return;
+    if (picked.length < 2) throw new Error('Choose at least two drafts. Send a single draft with Send Suggestion.');
+    const chosen = picked.map(row => row.draft), old = chosen[0].observation;
+    if (chosen.some(d => d.observation.request !== old.request)) throw new Error('These drafts come from different observations. Reconcile them onto the current shared files first.');
+    const text = (d: RemoteDraftRecord) => vscode.workspace.textDocuments.find(doc => doc.uri.toString() === d.uri && !doc.isClosed)?.getText() ?? drafts.get(d.id).text;
+    const files = chosen.map(d => {const source = text(d); drafts.save(d.id, source); return {path: d.path, source};});
+    const unchanged = chosen.find((d, i) => files[i].source === old.files.find(f => f.path === d.path)?.text);
+    if (unchanged) throw new Error(`${unchanged.path} has no changes to suggest.`);
+    await this.refresh();
+    const fresh = this.observation;
+    if (!this.valid(client, link) || this.state !== 'Read-only shared files' || !fresh) throw new Error('A fresh shared source observation is required before sending.');
+    if (chosen.some((d, i) => text(d) !== files[i].source)) throw new Error('A draft changed during source observation. Review it before sending.');
+    const fields = ['origin', 'peer', 'owner', 'project', 'generation', 'grant', 'root', 'snapshotDigest', 'desk', 'revision'] as const;
+    if (fields.some(key => old[key] !== fresh[key]) || chosen.some(d => {
+      const before = old.files.find(f => f.path === d.path), after = fresh.files.find(f => f.path === d.path);
+      return !before || !after || before.hash !== after.hash || before.text !== after.text;
+    })) throw new Error('Shared source changed. Reconcile these drafts before sending.');
+    this.sending = true; this.changed();
+    try {
+      const claim = bundles.claim(chosen.map(d => d.id), files, fresh);
+      await bundles.submit(client, claim.request);
+    } finally {this.sending = false; this.changed();}
+  }
+  /**
+   * Goal item 27: the owner refused this suggestion because its shared files moved (stale-parent). Read the current files
+   * once, merge each sent draft onto them (original → sent → current), and write NEW drafts; the refused drafts stay.
+   * Overlaps open side by side. Nothing is sent: the collaborator sends the new drafts as one suggestion when ready.
+   */
+  async rebaseBundle(request: string): Promise<void> {
+    const client = this.current(), link = this.link, drafts = this.drafts, bundles = this.bundles;
+    if (!drafts || !bundles || !client || !link || this.closed || this.busy || this.sending || !this.valid(client, link))
+      throw new Error('Open the shared project before rebasing this suggestion.');
+    const held = bundles.get(request), old = held.intent.observation;
+    if (old.owner !== link.owner || old.project !== link.project || old.peer !== this.peer(client)) throw new Error('This suggestion belongs to another shared project.');
+    if (held.phase !== 'refused' || held.reason !== 'stale-parent') throw new Error('Only a suggestion refused because the shared files moved can be rebased.');
+    await this.refresh();
+    const fresh = this.observation;
+    if (!this.valid(client, link) || this.state !== 'Read-only shared files' || !fresh) throw new Error('A fresh source observation is required to rebase.');
+    // Preflight every file before writing any draft: all-or-nothing.
+    const plan = held.intent.files.map(file => {
+      const original = old.files.find(f => f.path === file.path), current = fresh.files.find(f => f.path === file.path);
+      if (!original) throw new Error(`${file.path} is missing from the refused suggestion's observation. Nothing was rebased.`);
+      if (!current) throw new Error(`${file.path} is no longer shared. Nothing was rebased; the refused drafts are kept.`);
+      const merged = mergeDraft(original.text, file.source, current.text);
+      if (merged.kind === 'merged' && Buffer.byteLength(merged.text) > 32768) throw new Error(`${file.path} would exceed the shared source limit. Nothing was rebased.`);
+      return {path: file.path, sent: file.source, current: current.text, merged};
+    });
+    if (plan.some(row => drafts.list().some(d => d.observation.request === fresh.request && d.path === row.path && d.text !== row.current)))
+      throw new Error('A draft for these current files already has edits. Open it before rebasing. Nothing was rebased.');
+    let conflicts = 0;
+    for (const row of plan) {
+      const next = drafts.create(fresh, row.path);
+      if (row.merged.kind === 'merged') {drafts.save(next.id, row.merged.text); continue;}
+      conflicts++;
+      const refused = held.drafts.map(id => {try {return drafts.get(id);} catch {return undefined;}}).find(d => d?.path === row.path);
+      if (!refused) continue;
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.parse(refused.uri), vscode.Uri.parse(next.uri),
+        `${row.path} · your refused suggestion ↔ new draft on the current files (resolve on the right)`, {preview: false});
+    }
+    void vscode.window.showInformationMessage(conflicts
+      ? `Rebased ${plan.length - conflicts} of ${plan.length} files cleanly; ${conflicts} overlap and are open side by side. Nothing was sent; the refused drafts are kept.`
+      : `All ${plan.length} files rebased onto revision ${fresh.revision}. Nothing was sent: review the new drafts, then Send Drafts as One Suggestion.`);
+    this.changed();
+  }
+  async checkBundle(request: string): Promise<void> {
+    const client = this.current();
+    if (!this.bundles || !client || this.closed || this.busy || this.sending) throw new Error('Connect the recipient ship before checking this suggestion.');
+    const o = this.bundles.get(request).intent.observation;
+    if (client.origin !== o.origin || this.peer(client) !== o.peer) throw new Error('This suggestion belongs to another ship connection.');
+    this.sending = true; this.changed();
+    try {await this.bundles.observe(client, request);} finally {this.sending = false; this.changed();}
   }
   async checkSuggestion(request: string): Promise<void> {
     const client = this.current();
@@ -340,7 +439,21 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     }
     return [...links.values()];
   }
-  /** One explicit request per call, held in memory only. A request still pending is read again, never resubmitted. */
+  /** The shared file a read-only source document shows, when it belongs to the project open here now. */
+  sharedFile(uri: vscode.Uri): {owner: string; project: string; path: string} | undefined {
+    const seen = this.observation; if (this.closed || !seen || uri.scheme !== scheme) return undefined;
+    const file = seen.files.find(f => this.uri(seen, f.path).toString() === uri.toString());
+    return file && {owner: seen.owner, project: seen.project, path: file.path};
+  }
+  /** Sessions other owners shared with this ship, as last listed here. Presentation only: no authority is implied. */
+  sharedSessions(): {owner: string; project: string; generation: string; session: string; inspection: string; phase: string}[] {
+    const client = this.current(); if (this.closed || !client) return [];
+    return this.sessionLinks(client, this.peer(client)).flatMap(link => {
+      const held = this.sessionLists.get(JSON.stringify([link.peer, link.owner, link.project]));
+      return held?.client !== client ? [] : held.pages.sessions.map(s => ({owner: link.owner, project: link.project, generation: link.generation, session: s.id, inspection: s.inspection, phase: s.phase}));
+    });
+  }
+  /** A bounded catalog traversal, held in memory only. Unanswered pages resume by exact observation. */
   async refreshSessions(owner?: unknown, project?: unknown): Promise<void> {
     const client = this.current();
     if (this.closed || !client) throw new Error('Connect your ship before listing shared sessions.');
@@ -358,27 +471,22 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     const key = JSON.stringify([link.peer, link.owner, link.project]), prior = this.sessionLists.get(key), held = prior?.client === client ? prior : undefined;
     if (held?.busy) throw new Error('This shared session list is already being read.');
     for (const [id, row] of this.sessionLists) if (row.client !== client) this.sessionLists.delete(id);
-    const entry: SessionList = {client, reply: held?.reply, busy: true}; this.sessionLists.set(key, entry); this.changed();
+    const entry: SessionList = {client, pages: held?.pages.resumable ? held.pages : new SharedSessionPages(client, {owner: link.owner, project: link.project}, link.peer), busy: true};
+    this.sessionLists.set(key, entry); this.changed();
     try {
-      await remoteProjectSessionsObserve(client, link, held?.reply?.status === 'pending' ? held.reply.request : undefined, reply => {
+      await entry.pages.observe(() => {
         if (this.closed || this.current() !== client || this.sessionLists.get(key) !== entry) throw new Error('Shared project connection changed.');
-        entry.reply = reply; this.changed();
+        this.changed();
       });
-    } catch (error) {
-      const code = error instanceof ShipClientError ? error.code : '';
-      entry.note = code === 'outcomeUnknown' ? 'Outcome unknown; nothing was retried' : code === 'refused' ? 'Your ship refused this request; nothing was sent to the owner' :
-        code === 'commandBusy' ? 'Not sent: an earlier request is unresolved or your ship is busy' : 'List unavailable; nothing was retried';
-      throw error;
     } finally {entry.busy = false; this.changed();}
   }
   private sessionRow(link: SharedProjectLink): MediaTreeRow {
     const held = this.sessionLists.get(JSON.stringify([link.peer, link.owner, link.project])), list = held?.client === this.current() ? held : undefined;
-    const rows: MediaTreeRow[] = list?.busy ? [] : [{label: 'Refresh shared sessions', tooltip: 'Asks the owner once, or reads a request that is still waiting. Nothing is retried automatically.',
+    const rows: MediaTreeRow[] = list?.busy ? [] : [{label: 'Refresh shared sessions', tooltip: 'Reads all sharing-grant pages, or observes the exact unanswered page. Session activity is observed separately on each page.',
       command: {command: 'readymade.refreshSharedSessions', title: 'Refresh Shared Sessions', arguments: [link.owner, link.project]}}];
-    if (list?.note) rows.push({label: list.note});
-    if (list?.reply) rows.push(...remoteProjectSessionRows(list.reply));
+    if (list) rows.push(...list.pages.rows());
     return {label: 'Sessions · ' + link.owner + ' / ' + link.project,
-      description: list?.busy ? 'Asking the owner' : list?.reply?.status === 'ready' ? 'Past observation' : 'Read-only', children: rows};
+      description: list?.busy ? 'Reading pages' : list?.pages.complete ? 'Complete past observation' : 'Read-only · incomplete', children: rows};
   }
   rows(): MediaTreeRow[] {
     const children: MediaTreeRow[] = [{label: 'Open Shared Project…', command: {command: 'readymade.openSharedProject', title: 'Open Shared Project'}}];
@@ -423,7 +531,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
       tooltip: draft.observation.origin + '\nSaved draft context; resume checks current native access. Pending requests are not resent.',
       command: {command: 'readymade.resumeSharedProject', title: 'Resume Shared Project', arguments: [draft.id]}});
     const saved = allSaved.filter(row => !this.link || row.observation.owner === this.link.owner && row.observation.project === this.link.project);
-    const suggestions = new Map(this.suggestions?.list().map(row => [row.draftId, row]) ?? []);
+    const suggestions = new Map(this.suggestions?.list().map(row => [row.draftId, row]) ?? []), bundled = this.bundles?.claimedDrafts() ?? new Set<string>();
     for (const draft of saved) {
       const suggestion = suggestions.get(draft.id);
       const actions: MediaTreeRow[] = [];
@@ -435,14 +543,41 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
         if (recovery !== 'recorded' && !['recorded', 'refused', 'refused-before-submit'].includes(phase)) {
           const latest = recovery ?? phase, label = latest === 'missing' || latest === 'expired' ? 'Recover Owner Receipt' : 'Check Result';
           actions.push({label, tooltip: 'Read the existing owner receipt. This does not resend your suggestion.',
-            command: {command: 'readymade.checkSharedSuggestion', title: label, arguments: [suggestion.request]}});
+            command: {command: 'readymade.checkSharedSuggestion', title: label, arguments: [suggestion.request]},
+            problem: {key: JSON.stringify([draft.observation.origin, draft.observation.owner, draft.observation.project, suggestion.request]),
+              category: 'delivery', status: 'unknown',
+              label: `${draft.observation.owner} / ${draft.observation.project}: suggestion receipt ${latest}`}});
         }
-      } else if (client && this.suggestions) actions.push({label: 'Send Suggestion', command: {command: 'readymade.sendSharedSuggestion', title: 'Send Suggestion', arguments: [draft.id]}});
+      } else if (bundled.has(draft.id)) actions.push({label: 'Sent in a multi-file suggestion', description: 'See its result below'});
+      else if (client && this.suggestions) actions.push({label: 'Send Suggestion', command: {command: 'readymade.sendSharedSuggestion', title: 'Send Suggestion', arguments: [draft.id]}});
       children.push({label: draft.path, description: 'Local draft · ' + draft.observation.owner + ' / ' + draft.observation.project,
       tooltip: draft.observation.origin + '\nRecipient ' + draft.observation.peer + '\nGeneration ' + draft.observation.generation + ' · revision ' + draft.observation.revision,
-      children: [{label: 'Open Draft', command: {command: 'readymade.openSharedDraft', title: 'Open Draft', arguments: [draft.id]}},
+      children: [{label: 'Open Draft', command: {command: 'readymade.openSharedDraft', title: 'Open Draft', arguments: [draft.id]},
+        problem: suggestion && ['refused', 'refused-before-submit'].includes(suggestion.phase) ? {
+          key: JSON.stringify([draft.observation.origin, draft.observation.owner, draft.observation.project, suggestion.request]),
+          category: 'delivery', status: 'blocked', label: `${draft.observation.owner} / ${draft.observation.project}: suggestion ${suggestion.phase}`} : undefined},
         {label: 'Compare', command: {command: 'readymade.compareSharedDraft', title: 'Compare', arguments: [draft.id]}},
         {label: 'Reconcile', command: {command: 'readymade.reconcileSharedDraft', title: 'Reconcile', arguments: [draft.id]}}, ...actions]});
+    }
+    if (client && this.link && this.bundles && !this.busy && !this.sending && this.valid(client, this.link) && this.bundleCandidates(this.link).length >= 2)
+      children.push({label: 'Send Drafts as One Suggestion…', tooltip: 'One suggestion covering several shared files, bound to the current owner source.',
+        command: {command: 'readymade.sendSharedBundle', title: 'Send Drafts as One Suggestion'}});
+    for (const bundle of this.bundles?.list() ?? []) {
+      const o = bundle.intent.observation;
+      if (client && (o.origin !== client.origin || o.peer !== peer) || this.link && (o.owner !== this.link.owner || o.project !== this.link.project)) continue;
+      const open = !['recorded', 'refused', 'uncertain', 'refused-before-submit'].includes(bundle.phase);
+      const key = JSON.stringify([o.origin, o.owner, o.project, bundle.request]);
+      children.push({label: `Suggestion · ${bundle.intent.files.length} files`, description: o.owner + ' / ' + o.project,
+        tooltip: bundle.intent.files.map(f => f.path).join('\n') + `\nBased on revision ${o.revision} · not committed` + (bundle.receiptHash ? `\nOwner receipt ${bundle.receiptHash}` : ''),
+        children: [{label: remoteBundleOutcome(bundle.phase, bundle.reason), description: 'Not committed',
+          problem: bundle.phase === 'recorded' ? undefined : {key, category: 'delivery', status: open ? 'unknown' : 'blocked',
+            label: `${o.owner} / ${o.project}: multi-file suggestion ${bundle.phase}`}},
+        ...bundle.intent.files.map(f => ({label: f.path, description: 'sent'})),
+        ...(open ? [{label: 'Check Result', tooltip: 'Read the existing result. This does not resend your suggestion.',
+          command: {command: 'readymade.checkSharedBundle', title: 'Check Result', arguments: [bundle.request]}}] : []),
+        ...(bundle.phase === 'refused' && bundle.reason === 'stale-parent' ? [{label: 'Rebase onto Current Files',
+          tooltip: 'Read the current files once and write new drafts with your changes merged in. Nothing is sent.',
+          command: {command: 'readymade.rebaseSharedBundle', title: 'Rebase onto Current Files', arguments: [bundle.request]}}] : [])]});
     }
     return [{id: 'shared-project', label: 'Shared Project', icon: 'organization', children}];
   }

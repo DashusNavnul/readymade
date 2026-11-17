@@ -8,6 +8,7 @@ import {WorkspaceSubmissionGate} from './workspace-submission-gate';
 import type { ShipClient } from './ship-client';
 import type { MediaTreeRow } from './media-workbench';
 import { WorkspaceRequestStore, type WorkspaceRequestRow, type WorkspaceRequestDetail } from './workspace-request-store';
+import { SettledDocuments } from './settled-documents';
 
 /** Native presentation of retained ship requests. Local storage never grants permission. */
 export class WorkspaceRequestView implements vscode.Disposable {
@@ -22,7 +23,8 @@ export class WorkspaceRequestView implements vscode.Disposable {
   private showing = false;
   private disposed = false;
   private snapshot = 'No retained request observed.';
-  private readonly changedDocument = new vscode.EventEmitter<vscode.Uri>();
+  /** Changes reach the document one at a time; overlapping ones can leave it as a mix of two texts. */
+  private readonly documents = new SettledDocuments(uri => uri.toString() === this.uri.toString() ? this.snapshot : undefined);
   private readonly uri = vscode.Uri.parse('readymade-request:/retained-request.json');
   private readonly registrations: vscode.Disposable[];
   constructor(private readonly context: vscode.ExtensionContext, private readonly changed: () => void,
@@ -30,9 +32,9 @@ export class WorkspaceRequestView implements vscode.Disposable {
     this.imports = new WorkspaceImportView(context, () => this.importBinding(), changed, detail => this.selectImported(detail));
     this.returns = new WorkspaceReturnView(context, () => this.returnBinding(), changed);
     this.results = new WorkspaceResultView(() => this.returnBinding());
-    this.registrations = [this.changedDocument,
+    this.registrations = [this.documents,
       vscode.workspace.registerTextDocumentContentProvider('readymade-request', {
-        onDidChange: this.changedDocument.event, provideTextDocumentContent: () => this.snapshot,
+        onDidChange: this.documents.onDidChange, provideTextDocumentContent: () => this.snapshot,
       }),
       vscode.commands.registerCommand('readymade.workspaceRequests', async (project?: unknown) => {
         try { await this.show(typeof project === 'string' ? project : undefined); }
@@ -58,7 +60,7 @@ export class WorkspaceRequestView implements vscode.Disposable {
   disconnect(): void {
     this.client = undefined; this.owner = undefined; this.project = undefined;
     this.model?.dispose(); this.model = undefined; this.selectionKey = undefined;
-    this.snapshot = 'Disconnected. No current native request observation.'; this.changedDocument.fire(this.uri); this.changed();
+    this.snapshot = 'Disconnected. No current native request observation.'; this.documents.changed(this.uri); this.changed();
   }
   /** Every page of the request catalog, so that a count over it is a count of all of them, not of the first page. */
   async loadAll(): Promise<void> {
@@ -119,7 +121,7 @@ export class WorkspaceRequestView implements vscode.Disposable {
       requestCompletion: model.requestOutcome ?? null,
       codingSession: model.codingOutcome ?? null,
       ...(scope ? {reviewedExecutionScope: scope} : {}), request: model.observation ?? null}, null, 2);
-    this.changedDocument.fire(this.uri);
+    this.documents.changed(this.uri);
     const document = await vscode.workspace.openTextDocument(this.uri); this.current(model);
     await vscode.window.showTextDocument(document, {preview: false, preserveFocus: false}); this.current(model);
   }

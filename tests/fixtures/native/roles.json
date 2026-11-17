@@ -1,0 +1,32 @@
+{
+ "observedAt": "~2026.11.17..12.42.44..a464",
+ "owner": "~zod",
+ "project": "pataphor-demo-mp",
+ "schema": "readymade-session-roles-v1",
+ "sessions": [
+  {
+   "controller": "~zod",
+   "observers": [
+    "~nec"
+   ],
+   "requesters": [
+    "~nec"
+   ],
+   "requests": [
+    {
+     "at": "~2026.11.17..10.46.55..8e0f",
+     "dispatchedAt": null,
+     "id": "0xf055.2e52.76fd.0060.d785.c0e6.a49e.c733.ef17.ae3f.b1d1.dc5f.ffaa.2628.3dce.370b",
+     "nonce": "0x1003",
+     "outcome": null,
+     "peer": "~nec",
+     "policyVersion": null,
+     "project": "pataphor-demo-mp",
+     "session": "0xe1b1.e811.d50e.8229.135c.57ea.b965.94b3.b908.31c6.d356.224b.3845.e3c5.8aaf.d76e",
+     "status": "queued"
+    }
+   ],
+   "session": "0xe1b1.e811.d50e.8229.135c.57ea.b965.94b3.b908.31c6.d356.224b.3845.e3c5.8aaf.d76e"
+  }
+ ]
+}

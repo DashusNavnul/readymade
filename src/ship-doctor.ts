@@ -9,6 +9,23 @@ import {FLOWS_TIMEOUT_MS} from './planet-discovery-wire';
  */
 export type FindingLevel = 'ok' | 'note' | 'warning' | 'problem';
 export interface Finding {readonly id: string; readonly level: FindingLevel; readonly title: string; readonly detail: string}
+/**
+ * The owner's native diagnostics page (workers, queues, reviewers, storage, grants, recovery) as doctor findings.
+ * Every finding keeps the exact ship read it came from; an invalid page yields nothing rather than a guess.
+ */
+export function nativeFindings(value: unknown, owner: string): Finding[] {
+  try {
+    const page = value as {schema?: unknown; owner?: unknown; available?: unknown; findings?: unknown};
+    if (!page || page.schema !== 'native-diagnostics-v1' || page.owner !== owner || page.available !== true || !Array.isArray(page.findings) || page.findings.length > 64) return [];
+    const level: Record<string, FindingLevel> = {ok: 'ok', attention: 'warning', unknown: 'note'};
+    const text = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && Buffer.byteLength(v) <= max;
+    return page.findings.map((raw, i) => {
+      const f = raw as {area?: unknown; status?: unknown; summary?: unknown; evidence?: unknown};
+      if (!text(f.area, 128) || !text(f.summary, 512) || !text(f.evidence, 256) || typeof f.status !== 'string' || !(f.status in level)) throw new Error('finding');
+      return Object.freeze({id: `native-${i}`, level: level[f.status], title: f.area, detail: `${f.summary} (read: ${f.evidence})`});
+    });
+  } catch {return [];}
+}
 export interface TimerRow {readonly seconds: number; readonly owner: string}
 export interface ShipReading {readonly kelvin: number; readonly timers: number; readonly soon: readonly TimerRow[]}
 /** The ship's paused connections: known peers, peers with a paused flow, paused flows, and paused peers heard within a day. */

@@ -162,7 +162,7 @@ async function fixtureAcceptance(api: ReadymadeWorkspace): Promise<JsonObject> {
     await api.workspaceRequests.store!.load();
     assert.equal(api.workspaceRequests.store!.catalog?.total, 0);
     assert.equal(api.workspaceRequests.store!.canSubmit, false);
-    await assert.rejects(api.media.connectClient('http://127.0.0.1:1'), /different ship/);
+    await assert.rejects(api.media.connectClient('http://127.0.0.1:1'), /connected to another ship/);
     assert.equal(api.media.connectedClient, shared, 'Rejected ship switch must preserve the shared session');
     const source = api.sources!.sources()[0]; assert.ok(source);
     const canonical = vscode.Uri.parse(source.uri);

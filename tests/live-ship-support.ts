@@ -182,7 +182,7 @@ export async function liveRun(module: string, phases: Readonly<Record<string, Li
   const timings: Record<string, number> = {}, statuses: Observed[] = [], record: Record<string, unknown> = {};
   const diagnostics: {extensionPath?: string; credentialSource?: string; independentDiscovery?: Awaited<ReturnType<typeof discoverLocalPlanets>>['diagnostics'][]; discoveryStatus?: ReadymadeWorkspace['media']['localDiscoveryStatus'];
     observedNamesOrigins: {ship: string; origin: string}[]; count: number; connectingOutcome: string; connectingError?: ReturnType<typeof errorInfo>} = {observedNamesOrigins: [], count: 0, connectingOutcome: 'not-started'};
-  let api: ReadymadeWorkspace | undefined, marker = 'configuration', connected = false;
+  let api: ReadymadeWorkspace | undefined, marker = 'configuration', connected = false, actualPlanetPicker = false;
   const origin = process.env.READYMADE_LIVE_ORIGIN, ship = process.env.READYMADE_EXPECTED_SHIP;
   const receipt = () => ({fixture: false, module, phase, ship, origin, project: process.env.READYMADE_PROJECT, editor: vscode.version,
     extensionPath: diagnostics.extensionPath, credentialSource: diagnostics.credentialSource, connected,
@@ -237,17 +237,20 @@ export async function liveRun(module: string, phases: Readonly<Record<string, Li
       diagnostics.discoveryStatus = api!.media.localDiscoveryStatus;
       const rows = api!.media.localPlanets;
       diagnostics.observedNamesOrigins = rows.map(({ship, origin}) => ({ship, origin})); diagnostics.count = rows.length;
-      return rows.some(planet => planet.ship === ship && planet.origin === origin);
+      return rows.some(planet => planet.ship === ship && planet.origin === origin) || diagnostics.connectingOutcome === 'resolved';
     }, 10000);
-    marker = 'picker-snapshot';
-    const choices = api.media.localPlanets;
-    const index = choices.findIndex(planet => planet.ship === ship && planet.origin === origin);
-    assert.ok(index >= 0);
-    await sleep(250);
-    assert.deepEqual(api.media.localPlanets, choices);
-    for (let i = 0; i < index; i++) {marker = 'picker-next-' + i; await vscode.commands.executeCommand('workbench.action.quickOpenSelectNext');}
-    marker = 'picker-accept';
-    await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    if (diagnostics.connectingOutcome !== 'resolved') {
+      actualPlanetPicker = true;
+      marker = 'picker-snapshot';
+      const choices = api.media.localPlanets;
+      const index = choices.findIndex(planet => planet.ship === ship && planet.origin === origin);
+      assert.ok(index >= 0);
+      await sleep(250);
+      assert.deepEqual(api.media.localPlanets, choices);
+      for (let i = 0; i < index; i++) {marker = 'picker-next-' + i; await vscode.commands.executeCommand('workbench.action.quickOpenSelectNext');}
+      marker = 'picker-accept';
+      await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    }
     marker = 'private-sign-in';
     let client: ShipClient;
     try {client = await within(connecting, 45000, marker);}
@@ -270,7 +273,7 @@ export async function liveRun(module: string, phases: Readonly<Record<string, Li
         try {return await within(work(), limit, step);} finally {timings[step] = Date.now() - from;}
       }});
     marker = 'receipt';
-    fs.writeFileSync(evidence, JSON.stringify({passed: true, actualPlanetPicker: true, noTypedOrigin: true, ...receipt()}, null, 2), {flag: 'wx', mode: 0o600});
+    fs.writeFileSync(evidence, JSON.stringify({passed: true, actualPlanetPicker, noTypedOrigin: true, ...receipt()}, null, 2), {flag: 'wx', mode: 0o600});
   } catch (error) {
     if (evidence) fs.writeFileSync(evidence, JSON.stringify({passed: false, ...receipt(), marker, failure: error instanceof LiveFailure ? error.reason : undefined,
       diagnostics, errorInfo: errorInfo(error, connected), error: 'Live acceptance phase failed; private error details omitted.'}, null, 2), {flag: 'wx', mode: 0o600});

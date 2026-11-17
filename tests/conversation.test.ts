@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -159,4 +159,59 @@ test('encoded byte capacity archives settled evidence below 64 entries; unresolv
   const baseline = readFileSync(saturated.file);
   assert.throws(() => saturated.issue('private', 'blocked'), /full/);
   assert.deepEqual(readFileSync(saturated.file), baseline); assert.equal(archives(saturated).length, 0);
+});
+
+const archiveFile = (j: ConversationStore, value: unknown) => {
+  const bytes = JSON.stringify(value), hash = createHash('sha256').update(bytes).digest('hex');
+  const file = j.file.replace(/\.json$/, '') + '.archive-' + hash + '.json';
+  writeFileSync(file, bytes, {mode: 0o600}); return file;
+};
+const historical = (i = 1) => ({id: '0v' + i.toString(32), destination: 'private', text: 'historical ' + i,
+  at: new Date(0).toISOString(), status: 'accepted' as const});
+const archived = (entries: unknown[], extra = {}) => ({version: 1, origin, entries, drafts: {}, ...extra});
+
+test('archive pages expose every settled receipt without reading another origin or changing unknown intent', async () => {
+  const j = fresh(), pending = j.issue('seat:bachelor', 'unknown');
+  j.saveDraft('private', 'retained draft');
+  for (let i = 0; i < 130; i++) {const e = j.issue('private', String(i)); j.receipt(e.id, {known: true, id: e.id, destination: 'private', outcome: 'accepted'});}
+  const before = readFileSync(j.file), expected = archives(j), actual: RequestEntry[] = [];
+  const foreign = new ConversationStore(j.directory, 'https://foreign.example');
+  writeFileSync(foreign.file.replace(/\.json$/, '') + '.archive-' + 'f'.repeat(64) + '.json', 'not JSON', {mode: 0o600});
+  for await (const page of j.archivePages()) {
+    assert.ok(page.examined <= 256); assert.ok(page.rows.length <= 256);
+    actual.push(...page.rows.map(row => row.entry));
+  }
+  assert.deepEqual(new Set(actual.map(e => e.id)), new Set(expected.map(e => e.id)));
+  assert.ok(!actual.some(e => e.id === pending.id)); assert.deepEqual(readFileSync(j.file), before);
+  assert.equal(j.draft('private'), 'retained draft');
+});
+
+test('archive browser advances bounded pages including empty unrelated pages', async () => {
+  const j = fresh();
+  for (let i = 0; i < 300; i++) writeFileSync(join(j.directory, 'unrelated-' + i), '', {mode: 0o600});
+  const empty = j.archivePages(), first = await empty.next();
+  assert.equal(first.value!.examined, 256); assert.equal(first.value!.complete, false); assert.deepEqual(first.value!.rows, []);
+  await empty.return(undefined);
+  for (let i = 1; i <= 17; i++) archiveFile(j, archived([historical(i)]));
+  let count = 0, pages = 0;
+  for await (const page of j.archivePages()) {pages++; count += page.rows.length; assert.ok(new Set(page.rows.map(r => r.archive)).size <= 8);}
+  assert.equal(count, 17); assert.ok(pages >= 3);
+});
+
+test('archive browser rejects malformed, foreign, unresolved, altered or unsafe published evidence', async () => {
+  for (const kind of ['hash', 'origin', 'unknown', 'draft', 'malformed', 'permissions', 'symlink', 'hardlink', 'name']) {
+    const j = fresh();
+    const value = kind === 'malformed' ? null : archived([{...historical(), ...(kind === 'unknown' ? {status: 'unknown'} : {})}],
+      kind === 'origin' ? {origin: 'https://foreign.example'} : kind === 'draft' ? {drafts: {private: 'retained'}} : {});
+    const file = archiveFile(j, value);
+    if (kind === 'hash') writeFileSync(file, '{}');
+    if (kind === 'permissions') chmodSync(file, 0o644);
+    if (kind === 'hardlink') linkSync(file, join(j.directory, 'linked'));
+    if (kind === 'symlink') {
+      const target = j.file.replace(/\.json$/, '') + '.archive-' + 'a'.repeat(64) + '.json'; symlinkSync(file, target);
+    }
+    if (kind === 'name') writeFileSync(j.file.replace(/\.json$/, '') + '.archive-invalid.json', '{}', {mode: 0o600});
+    await assert.rejects(async () => {for await (const _page of j.archivePages()) { /* consume only fixtures */ }});
+    assert.equal(readFileSync(file, 'utf8'), kind === 'hash' ? '{}' : JSON.stringify(value));
+  }
 });

@@ -1,0 +1,14 @@
+{
+ "authority": "~zod",
+ "entries": [],
+ "observedAt": "~2026.11.17..12.42.44..90d6",
+ "project": "pataphor-demo-mp",
+ "refused": [
+  {
+   "at": "~2026.11.17..12.35.58..7f3e",
+   "path": "/desk/bill",
+   "reason": "poke-ack\n | /app/readymade-collab/hoon:<[1.209 38].[1.209 40]>\n | %presence-path-not-shared\n | /app/readymade-collab/hoon:<[1.209 27].[1.209 41]>\n"
+  }
+ ],
+ "schema": "readymade-file-presence-v1"
+}

@@ -9,6 +9,7 @@ import {remoteSessionShortId} from './remote-project-sessions';
 import {sessionSharingSettle, sessionSharingHolds, sessionSharingMessage, sessionSharingWhen, SESSION_SHARING_LIMITS,
   type SessionSharingCommand, type SessionSharingOutcome, type SessionSharingSnapshot} from './session-sharing';
 import {dateAtomText} from './editing-activity';
+import { SettledDocuments } from './settled-documents';
 
 /** One collaborator's agent-session standing, in memory only. `check` is a command whose result a later read may still show. */
 interface SessionStanding {
@@ -24,7 +25,8 @@ export class ProjectSharingView implements vscode.Disposable {
   private busy = false;
   private text = '# Project sharing\n\nChoose a project and a collaborator.';
   private readonly uri = vscode.Uri.parse('readymade-sharing:/access.md');
-  private readonly event = new vscode.EventEmitter<vscode.Uri>();
+  /** Changes reach the document one at a time; overlapping ones can leave it as a mix of two texts. */
+  private readonly documents = new SettledDocuments(uri => uri.toString() === this.uri.toString() ? this.text : undefined);
   private readonly registration: vscode.Disposable;
   constructor(private readonly project: () => string | undefined, private readonly changed: () => void,
     private readonly journal: SharingJournal, private readonly confirm: (detail: string) => Thenable<boolean> = async detail =>
@@ -32,7 +34,7 @@ export class ProjectSharingView implements vscode.Disposable {
     private readonly confirmRemoval: (detail: string) => Thenable<boolean> = async detail =>
       (await vscode.window.showWarningMessage('Remove collaborator?', {modal: true, detail}, 'Remove')) === 'Remove') {
     this.registration = vscode.workspace.registerTextDocumentContentProvider('readymade-sharing', {
-      onDidChange: this.event.event, provideTextDocumentContent: uri => {
+      onDidChange: this.documents.onDidChange, provideTextDocumentContent: uri => {
         if (uri.toString() !== this.uri.toString()) throw vscode.FileSystemError.FileNotFound(uri);
         return this.text;
       }
@@ -42,7 +44,7 @@ export class ProjectSharingView implements vscode.Disposable {
   private sync(): void {
     const next = JSON.stringify([this.client?.origin, this.client?.snapshot?.owner, this.project()]);
     if (next === this.context) return;
-    this.context = next; this.held = undefined; this.text = '# Project sharing\n\nChoose a collaborator to inspect access.'; this.event.fire(this.uri);
+    this.context = next; this.held = undefined; this.text = '# Project sharing\n\nChoose a collaborator to inspect access.'; this.documents.changed(this.uri);
   }
   private entries() {return this.journal.entries().filter(i => i.origin === this.client?.origin && i.command.owner === this.client?.snapshot?.owner && i.command.project === this.project());}
   rows(): MediaTreeRow[] {
@@ -192,7 +194,7 @@ export class ProjectSharingView implements vscode.Disposable {
       tooltip: v.sessionSharingBlocked === 'project-not-private' ? 'The project’s source desk is readable by other ships; your ship only changes coding policy for private projects.' :
         v.sessionSharingBlocked === 'work-not-isolated' ? 'The project’s work desk is running or claimed.' : 'One of the project’s desks is missing on your ship.'});
     else rows.push({label: `Session sharing for this project: ${v.sessionSharing}`, tooltip: 'The project’s own setting. When it is off, no session of it can be shared with anyone.',
-      children: [v.sessionSharing === 'on' ? {label: 'Turn off session sharing for this project…', command: {command: 'readymade.projectSessionSharing', title: 'Turn off', arguments: ['off']}} :
+      children: [v.sessionSharing === 'on' ? {label: 'Stop sharing every session in this project…', command: {command: 'readymade.projectSessionSharing', title: 'Stop sharing', arguments: ['off']}} :
         {label: 'Turn on session sharing for this project…', command: {command: 'readymade.projectSessionSharing', title: 'Turn on', arguments: ['on']}}]});
     if (!v.inspectable && v.member && v.sessionSharing === 'off') rows.push({label: `Sessions cannot be shared until session sharing is turned on for this project`});
     else if (!v.inspectable) rows.push(v.member ? {label: `Sessions cannot be shared with ${v.peer} as ${v.role}`, tooltip: 'That role, or this project’s policy, does not allow looking at agent sessions.'} :
@@ -268,8 +270,8 @@ export class ProjectSharingView implements vscode.Disposable {
     try {
       const detail = on ?
         `Allow agent sessions of ${v.project} to be shared?\n\nNothing is shared by this: you still choose each session and each collaborator, one at a time, and a collaborator only sees ` +
-          'what that session shows (read only). Collaborators need the contributor role or higher.\n\nThis adds “inspect” to the project’s coding policy on your ship. Sessions already running keep working.' :
-        `Stop all session sharing for ${v.project}?\n\nEvery session shared with any collaborator stops at once. The sessions themselves keep running.\n\nThis removes “inspect” from the project’s coding policy on your ship.`;
+          'what that session shows (read only). Watching is its own permission: any member can be shown a session, and it never lets them request work.\n\nThis adds “observe” (read only) to the project’s coding policy on your ship. Sessions already running keep working.' :
+        `Stop all session sharing for ${v.project}?\n\nEvery session shared with any collaborator stops at once. The sessions themselves keep running. You can still share a session again later, one at a time.`;
       if (!await this.confirm(detail)) return;
       await this.settle(client, context, s, {owner: v.owner, project: v.project, peer: v.peer, operation: on ? 'sharing-on' : 'sharing-off', session: '0x0'}, '');
     } finally {this.busy = false; this.changed();}
@@ -293,6 +295,6 @@ export class ProjectSharingView implements vscode.Disposable {
         'Removal ends membership, shared file access and every shared agent session together. Invite the ship again to restore membership.');
     } finally {this.busy = false; this.changed();}
   }
-  private async show(text: string): Promise<void> {this.text = text; this.event.fire(this.uri); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(this.uri), {preview: true});}
-  dispose(): void {this.client = undefined; this.held = undefined; this.sessions = undefined; this.context = ''; this.registration.dispose(); this.event.dispose();}
+  private async show(text: string): Promise<void> {this.text = text; this.documents.changed(this.uri); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(this.uri), {preview: true});}
+  dispose(): void {this.client = undefined; this.held = undefined; this.sessions = undefined; this.context = ''; this.registration.dispose(); this.documents.dispose();}
 }

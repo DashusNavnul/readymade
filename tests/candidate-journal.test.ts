@@ -66,6 +66,24 @@ test('missing or changed policy bindings cannot start a review', () => temporary
   f.solo.scope.binding = '0x0'; await assert.rejects(j.start(f.client, f.intent, true), /Invalid candidate review scope/);
   assert.equal(f.posts(), 0); assert.equal(j.entries().length, 0);
 }));
+test('recovery can gain exact previews while preserving old intents and all edit bindings', () => temporary(async path => {
+  const f = fixture(path), j = new CandidateJournal(path); await j.start(f.client, f.intent, true);
+  const original = JSON.stringify(j.entries());
+  Object.assign(f.row.edits[0], {preview: {schema: 'native-coding-candidate-text-v1', original: 'old\n', proposed: 'new\n'}});
+  assert.equal((await j.recover(f.client, f.intent)).candidate!.edits[0].preview!.proposed, 'new\n');
+  assert.equal(JSON.stringify(j.entries()), original);
+  f.row.edits[0].after = '0x7'; await assert.rejects(j.recover(f.client, f.intent), /evidence/);
+  assert.equal(f.posts(), 1);
+}));
+test('retained previews cannot change or disappear during recovery', () => temporary(async path => {
+  const f = fixture(path), j = new CandidateJournal(path);
+  const preview = {schema: 'native-coding-candidate-text-v1', original: 'old\n', proposed: 'new\n'};
+  Object.assign(f.row.edits[0], {preview}); f.intent.candidate = readCandidate(f.row, '~zod', '0x4');
+  await j.start(f.client, f.intent, true);
+  preview.proposed = 'different'; await assert.rejects(j.recover(f.client, f.intent), /evidence/);
+  Object.assign(f.row.edits[0], {preview: null}); await assert.rejects(j.recover(f.client, f.intent), /evidence/);
+  assert.equal(f.posts(), 1);
+}));
 test('legacy retained starts remain readable without acquiring permission to replay', () => temporary(async path => {
   const f = fixture(path), j = new CandidateJournal(path); await j.start(f.client, f.intent, true);
   const file = join(path, fs.readdirSync(path).find(name => name.endsWith('.intent.json'))!);
@@ -76,6 +94,39 @@ test('legacy retained starts remain readable without acquiring permission to rep
   await reopened.recover(f.client, intent);
   await assert.rejects(reopened.start(f.client, intent, true), /exact review policy binding/);
   assert.equal(f.posts(), 1);
+}));
+test('explicit revoked review replacement preserves old intent and never replays a lost restart', () => temporary(async path => {
+  const f = fixture(path), journal = new CandidateJournal(path);
+  await journal.start(f.client, f.intent, true);
+  const original = journal.entries()[0];
+  Object.assign(f.solo, {restart: true});
+  Object.assign(f.solo.scope, {generation: '2', binding: '0xc'});
+  f.solo.campaigns = [{candidate: '0x2', mode: 'resolve', pending: null, reason: 'local-review-scope-revoked', outcome: '', attempt: 0, binding: '0xb'}];
+  const intent = {...f.intent, scope: {...scope, generation: '2', binding: '0xc'}, previousCampaign: '0xb'};
+  let posts = 0;
+  const client = {...f.client, startCandidateReview: async (_context: unknown, candidate: string, consent: boolean, binding: string, previous?: string) => {
+    posts++; assert.equal(journal.entries().length, 2); assert.deepEqual(journal.entries().find(i => !i.previousCampaign), original);
+    assert.deepEqual([candidate, consent, binding, previous], ['0x2', true, '0xc', '0xb']);
+    throw new Error('Lost restart response');
+  }};
+  await assert.rejects(journal.start(client, intent, true), /Lost restart response/);
+  const reopened = new CandidateJournal(path);
+  await assert.rejects(reopened.start(client, intent, true), /not be submitted again/);
+  await reopened.recover(client, intent); await reopened.recover(client, original);
+  assert.equal(posts, 1); assert.equal(reopened.entries().length, 2);
+}));
+test('restart rejects old backend, stale binding, pending job, unknown outcome and decided review', () => temporary(async path => {
+  const f = fixture(path), journal = new CandidateJournal(path);
+  const base = {candidate: '0x2', mode: 'challenge', pending: null, reason: 'local-review-scope-revoked', outcome: '', attempt: 0, binding: '0xb'};
+  const intent = {...f.intent, previousCampaign: '0xb'};
+  f.solo.campaigns = [base];
+  await assert.rejects(journal.start(f.client, intent, true), /changed/);
+  Object.assign(f.solo, {restart: true});
+  for (const row of [{...base, binding: '0xc'}, {...base, pending: '0xd'}, {...base, reason: 'provider-unknown'}, {...base, outcome: 'accept'}]) {
+    f.solo.campaigns = [row];
+    await assert.rejects(journal.start(f.client, intent, true), /changed/);
+  }
+  assert.equal(f.posts(), 0); assert.equal(journal.entries().length, 0);
 }));
 test('real HTTP client sends exact native start and prevents replay after dropped response', async () => {
   let posts = 0, captured: unknown;
@@ -95,5 +146,9 @@ test('real HTTP client sends exact native start and prevents replay after droppe
     await assert.rejects(client.startCandidateReview(context, '0x2', true, '0xa'), OutcomeUnknownError);
     assert.deepEqual(captured, {kind: 'solo-review-start', session: '0x4', candidate: '0x2', scopeBinding: '0xa', nonce: '0v1'});
     await client.codingState('0x4'); await assert.rejects(client.startCandidateReview(context, '0x2', true, '0xa')); assert.equal(posts, 1);
+    await assert.rejects(client.startCandidateReview(context, '0x2', true, '0xc', '0x0')); assert.equal(posts, 1);
+    await assert.rejects(client.startCandidateReview(context, '0x2', true, '0xc', '0xb'), OutcomeUnknownError);
+    assert.deepEqual(captured, {kind: 'solo-review-start', session: '0x4', candidate: '0x2', scopeBinding: '0xc', previousCampaign: '0xb', nonce: '0v1'});
+    await client.codingState('0x4'); await assert.rejects(client.startCandidateReview(context, '0x2', true, '0xc', '0xb')); assert.equal(posts, 2);
   } finally {client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
 });

@@ -51,6 +51,12 @@ async function acceptance(): Promise<JsonObject> {
     assert.equal(selected, 'demo'); assert.match(detail, /Proposal 0x/); assert.ok(detail.includes(`Reason: ${reason}`));
     assert.match(detail, /does not accept code changes/); return confirm();
   }};
+  // Every change the editor reports for the review document, so a failure can show how the document got that way.
+  const timeline: string[] = [], began = Date.now();
+  const watch = vscode.workspace.onDidChangeTextDocument(event => {
+    if (event.document.uri.scheme !== 'readymade-answer-review') return;
+    timeline.push(`${Date.now() - began}ms document v${event.document.version} now ${event.document.getText().length} chars; edits [offset, replaced, inserted]: ${JSON.stringify(event.contentChanges.map(c => [c.rangeOffset, c.rangeLength, c.text.length]))}`);
+  });
   let view = new CompletionView(journal, () => project, () => {}, dialogs);
   try {
     await client.signIn(); await client.codingState('0x1'); view.connect(client);
@@ -65,17 +71,22 @@ async function acceptance(): Promise<JsonObject> {
     await assert.rejects(view.accept(), /Project changed/); assert.equal(posts.length, 0);
     view = new CompletionView(journal, () => project, () => {}, dialogs); view.connect(client);
     confirm = async () => true; drop = true; await view.observe('0x1');
-    await assert.rejects(view.accept(), /outcomeUnknown/);
+    await assert.rejects(view.accept(), /outcome is not known/);
     assert.equal(posts.length, 1); assert.equal(journal.entries()[0].receipt, undefined);
     view.dispose(); view = new CompletionView(new CompletionJournal(directory), () => project, () => {}, dialogs); view.connect(client);
     const recovery = view.rows()[0].children!.find(row => row.command?.command === 'readymade.recoverAnswer')!;
     assert.ok(recovery); await view.recover(String(recovery.command!.arguments![0]));
     assert.equal(posts.length, 1); assert.equal(journal.entries()[0].receipt!.proposal, '0xe');
-    for (let n = 0; n < 100; n++) {
-      try {if (JSON.parse(vscode.window.activeTextEditor!.document.getText()).evidence?.receipt) break;} catch { /* Provider updates can briefly show the cleared scope. */ }
-      await new Promise(resolve => setTimeout(resolve, 50));
+    // The document must end as exactly the recovered result. (The editor mixed two texts here about one run in four,
+    // until changes were announced one at a time: see src/settled-documents.ts.)
+    let shown: {evidence?: {receipt?: {reason?: string}}} | undefined, last = '';
+    for (let n = 0; n < 100 && !shown?.evidence?.receipt; n++) {
+      const editor = vscode.window.activeTextEditor; const seen = editor?.document.getText() ?? ''; let parses = 'parses as JSON'; try {JSON.parse(seen);} catch (error) {parses = `does not parse: ${error instanceof Error ? error.message : 'unknown'}`;}
+      last = `${editor?.document.uri.toString() ?? 'no active editor'} (${seen.length} characters, ${parses}, has a receipt key: ${seen.includes('"receipt"')}); its end: ${seen.slice(-300)}`;
+      try {shown = JSON.parse(editor!.document.getText());} catch { /* Provider updates can briefly show the cleared scope. */ }
+      if (!shown?.evidence?.receipt) await new Promise(resolve => setTimeout(resolve, 50));
     }
-    assert.equal(JSON.parse(vscode.window.activeTextEditor!.document.getText()).evidence.receipt.reason, reason);
+    assert.equal(shown?.evidence?.receipt?.reason, reason, `The recovered receipt never appeared. Last seen: ${last}\nDocument changes:\n${timeline.slice(-12).join('\n')}`);
     proposal = {...proposal, digest: '0xf'}; drop = false; await view.observe('0x1'); await view.accept();
     assert.equal(posts.length, 2); assert.equal(journal.entries().filter(e => e.receipt).length, 2);
     assert.deepEqual(posts[1], {kind: 'completion-accept', session: '0x1', proposal: '0xf', consent: true, reason, nonce: '0v1'});
@@ -84,7 +95,7 @@ async function acceptance(): Promise<JsonObject> {
     await assert.rejects(Promise.resolve(vscode.workspace.fs.writeFile(document.uri, Buffer.from('forbidden'))));
     return {fixture: true, scriptedDialogs: true, cancelledWithoutWrite: true, changedProjectRefused: true, staleProposalRefused: true,
       disposalRefused: true, lostResponseRecoveredWithoutReplay: true, confirmedExactProposal: true, readonlyReceipt: true, posts: posts.length};
-  } finally {view.dispose(); client.close(); api.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
+  } finally {watch.dispose(); view.dispose(); client.close(); api.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
 }
 export async function run(): Promise<void> {
   const file = process.env.READYMADE_HOST_EVIDENCE!;

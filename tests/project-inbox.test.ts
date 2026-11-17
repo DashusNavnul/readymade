@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, readdirSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {ShipClient, ShipClientError, OutcomeUnknownError} from '../src/ship-client';
-import {projectInbox, inboxBasisMatches, importInboxSuggestion, mergeInboxSuggestion, ExistingInboxDraftError, type InboxDetail} from '../src/project-inbox';
+import {projectInbox, inboxBasisMatches, importInboxSuggestion, mergeInboxSuggestion, ExistingInboxDraftError, inboxBundleDetail, importInboxBundle, projectInboxBundles,
+  type InboxDetail, type InboxBundleDetail} from '../src/project-inbox';
 import {remoteSourceHash} from '../src/remote-project-view';
 import {snapshotFrom} from '../src/source-store';
 import {DraftStore} from '../src/draft-store';
@@ -19,6 +20,12 @@ const envelope = (receipts: unknown[] = [catalog]) => ({schema: 'readymade-proje
 const basis = {id: '0x4', owner, desk: 'work', number: 4, root: '0v10', commit: '0v5'};
 const snapshot = snapshotFrom({origin: 'https://zod.example', ship: owner, session: '0x6', source: basis, path: detail.path, blob: '0x7', mark: 'hoon', text: original});
 const context = {origin: snapshot.origin, owner, project, session: snapshot.session, basis, state: {owner, session: snapshot.session, sessions: [{id: snapshot.session, project, source: basis}]}};
+function bundleFixture() {
+  const {path: _path, source: _text, sourceHash: _hash, originalHash: _original, ...common} = detail;
+  const second = snapshotFrom({...snapshot, uri: undefined, key: undefined, path: '/lib/second/hoon', blob: '0x8'});
+  const bundle: InboxBundleDetail = {...common, kind: 'bundle', files: [snapshot, second].map(s => ({path: s.path, originalHash: remoteSourceHash(s.text), sourceHash: remoteSourceHash(source), source}))};
+  return {bundle, sources: [snapshot, second]};
+}
 async function fixture(run: (store: DraftStore) => void | Promise<void>) {
   const directory = mkdtempSync(join(tmpdir(), 'readymade-inbox-'));
   try {await run(new DraftStore(directory));} finally {rmSync(directory, {recursive: true, force: true});}
@@ -33,6 +40,53 @@ test('inbox catalog and exact detail retain immutable native receipt identity', 
   assert.throws(() => projectInbox(envelope([detail]), owner, project));
   assert.throws(() => projectInbox(envelope([detail]), owner, project, '0x9'));
 });
+
+test('whole bundle import retains exact provenance and both originals in one durable draft', () => fixture(store => {
+  const {bundle, sources} = bundleFixture();
+  const imported = importInboxBundle(store, bundle, [...sources].reverse(), context);
+  assert.deepEqual(imported.receipt, bundle); assert.deepEqual(imported.files.map(f => f.snapshot), sources);
+  assert.deepEqual(imported.files.map(f => f.text), [source, source]); assert.equal(store.list().length, 0);
+  assert.equal(store.listBundles().length, 1); assert.deepEqual(readdirSync(store.directory), [`bundle-${imported.id}.json`]);
+  assert.deepEqual(new DraftStore(store.directory).getBundle(imported.id), imported);
+  assert.notEqual(imported.files[0].snapshot.blob, bundle.files[0].originalHash);
+}));
+
+test('bundle decoder and all-file preflight refuse malformed or stale members without partial import', () => fixture(store => {
+  const {bundle, sources} = bundleFixture();
+  for (const files of [[], [bundle.files[0], bundle.files[0]], [bundle.files[0], {...bundle.files[1], source: 'altered'}],
+    [bundle.files[0], {...bundle.files[1], originalHash: '0x01'}], [bundle.files[0], {...bundle.files[1], path: '/sys/a/hoon'}]]) {
+    assert.throws(() => inboxBundleDetail({...bundle, files}, owner, project));
+  }
+  for (const wrong of [sources.slice(0, 1), [sources[0], sources[0]],
+    [sources[0], snapshotFrom({...sources[1], uri: undefined, key: undefined, contentHash: undefined, byteLength: undefined, text: 'different original'})],
+    [sources[0], snapshotFrom({...sources[1], uri: undefined, key: undefined, source: {...basis, commit: '0v9'}})]]) {
+    assert.throws(() => importInboxBundle(store, bundle, wrong, context));
+  }
+  for (const changed of [{owner: '~nec'}, {project: 'other'}, {session: '0x9'}, {origin: 'https://other.example'},
+    {state: {...context.state, sessions: []}}, {state: {...context.state, sessions: [...context.state.sessions, ...context.state.sessions]}}]) {
+    assert.throws(() => importInboxBundle(store, bundle, sources, {...context, ...changed}));
+  }
+  assert.deepEqual(readdirSync(store.directory), []); assert.equal(store.listBundles().length, 0);
+}));
+
+test('bundle import never overwrites a scalar member or leaves the other member behind', () => fixture(store => {
+  const {bundle, sources} = bundleFixture(), original = store.create(sources[1]);
+  store.save(original.id, 'valuable owner edit\n'); const before = readFileSync(join(store.directory, `${original.id}.json`));
+  assert.throws(() => importInboxBundle(store, bundle, sources, context), /another draft/);
+  assert.equal(store.listBundles().length, 0); assert.equal(store.list().length, 1);
+  assert.deepEqual(readFileSync(join(store.directory, `${original.id}.json`)), before);
+  assert.deepEqual(readdirSync(store.directory), [`${original.id}.json`]);
+}));
+
+test('stale windows cannot duplicate a receipt or split its members into scalar drafts', () => fixture(first => {
+  const second = new DraftStore(first.directory), {bundle, sources} = bundleFixture();
+  const row = importInboxBundle(first, bundle, sources, context);
+  assert.throws(() => importInboxBundle(second, bundle, sources, context), /outside this editor/);
+  assert.throws(() => second.create(sources[1]), /another draft/);
+  assert.throws(() => importInboxBundle(second, {...bundle, receiptHash: '0xa'}, sources, context));
+  assert.equal(new DraftStore(first.directory).getBundle(row.id).pending, undefined);
+  assert.equal(readdirSync(first.directory).length, 1);
+}));
 
 test('inbox bounds, canonical atoms, hashes and paths reject ambiguous native data', () => {
   for (const patch of [{request: '0x01'}, {generation: '01'}, {revision: '1000'}, {parentRoot: '0x0'}, {peer: owner}, {receivedAt: '~2026.02.30'},
@@ -159,6 +213,11 @@ test('an answer to a suggestion is one exact request; a refusal or an unknown ou
       reply = res => {res.statusCode = status; res.end(JSON.stringify({status: 'refused', message}));};
       await assert.rejects(client.suggestionAnswer(selected, receipt, 'taken'), e => e instanceof ShipClientError && e.code === 'refused' && e.status === status);
     }
+    // The same answer again, or a ship with no notice store: the ship says nothing was sent, so neither is an unknown outcome.
+    reply = res => {res.statusCode = 409; res.end(JSON.stringify({status: 'refused', message: 'notice-already-sent'}));};
+    await assert.rejects(client.suggestionAnswer(selected, receipt, 'taken'), e => e instanceof ShipClientError && e.code === 'alreadyTold' && e.status === 409);
+    reply = res => {res.statusCode = 503; res.end(JSON.stringify({status: 'unavailable', message: 'Notice store unavailable; nothing was sent.'}));};
+    await assert.rejects(client.suggestionAnswer(selected, receipt, 'taken'), e => e instanceof ShipClientError && e.code === 'unavailable' && e.status === 503);
     // Anything else is an unknown outcome: a receipt for the other answer, a wrong shape, a server error, a dropped connection.
     for (const odd of [sent('declined'), (res: import('node:http').ServerResponse) => {res.statusCode = 200; res.end('{}');},
       (res: import('node:http').ServerResponse) => {res.statusCode = 202; res.end(JSON.stringify({schema: 'readymade-suggestion-answer-receipt-v1', status: 'sent', answer: 'taken', confirmed: true}));},
@@ -168,4 +227,40 @@ test('an answer to a suggestion is one exact request; a refusal or an unknown ou
     const before = posts.length; reply = sent('taken');
     await client.suggestionAnswer(selected, receipt, 'taken'); assert.equal(posts.length, before + 1); // The client stays usable and sends exactly once per call.
   } finally {client.close(); server.close();}
+});
+
+const bundlePage = (bundles: unknown[], extra: Record<string, unknown> = {}) => ({schema: 'readymade-project-inbox-bundles-v1', owner, project,
+  permissionGranted: false, committed: false, total: String(bundles.length), more: false, bundles, ...extra});
+
+test('owner bundle list decodes whole multi-file suggestions and refuses uncorrelated pages', () => {
+  const {bundle} = bundleFixture();
+  const parsed = projectInboxBundles(bundlePage([bundle]), owner, project);
+  assert.deepEqual(parsed.bundles, [bundle]); assert.equal(parsed.total, 1); assert.equal(parsed.more, false);
+  assert.equal(projectInboxBundles(bundlePage([]), owner, project).total, 0);
+  assert.equal(projectInboxBundles(bundlePage([bundle], {total: '9', more: true}), owner, project).more, true);
+  for (const extra of [{schema: 'readymade-project-inbox-v1'}, {owner: '~nec'}, {project: 'other'}, {permissionGranted: true}, {committed: true},
+    {total: '2'}, {total: '9'}, {total: '01'}, {more: 'no'}, {session: 'x'}]) assert.throws(() => projectInboxBundles(bundlePage([bundle], extra), owner, project));
+  assert.throws(() => projectInboxBundles(bundlePage([bundle, bundle]), owner, project));
+  assert.throws(() => projectInboxBundles(bundlePage([{...bundle, files: [bundle.files[0], bundle.files[0]]}]), owner, project));
+  assert.throws(() => projectInboxBundles(bundlePage([{...bundle, files: [bundle.files[0], {...bundle.files[1], source: 'altered'}]}]), owner, project));
+});
+
+test('owner bundle transport is one GET and names an older ship without the route', async () => {
+  const {bundle} = bundleFixture(), seen: string[] = []; let status = 200;
+  const server = createServer((req, res) => {
+    if (req.url === '/~/login') {res.setHeader('set-cookie', 'urbauth-~zod=fixture; Path=/'); res.end('{}'); return;}
+    seen.push(`${req.method} ${req.url} ${req.headers['x-readymade-project']}`);
+    res.setHeader('content-type', 'application/json'); res.statusCode = status;
+    res.end(JSON.stringify(status === 200 ? bundlePage([bundle]) : {status: 'refused', message: 'Unknown collaboration route.'}));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const client = new ShipClient(`http://127.0.0.1:${address.port}`, async () => 'fixture');
+  try {
+    await client.signIn();
+    assert.deepEqual((await client.projectInboxBundles(project)).bundles, [bundle]);
+    status = 404; await assert.rejects(client.projectInboxBundles(project), e => e instanceof ShipClientError && e.code === 'unsupported');
+    status = 409; await assert.rejects(client.projectInboxBundles(project), e => e instanceof ShipClientError && e.code === 'refused');
+    assert.deepEqual(seen, Array(3).fill(`GET /apps/readymade-collab/project-inbox-bundles ${project}`));
+  } finally {client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
 });

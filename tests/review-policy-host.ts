@@ -51,7 +51,7 @@ async function acceptance() {
     solo.providers = [selected]; await view.observe('0x4'); confirm = async () => {view.dispose(); return true;};
     await assert.rejects(view.configure(false, 'reviewer'), /Project changed/);
     view = new ReviewPolicyView(() => project, () => {}, journal, dialog); view.connect(client); confirm = async () => true;
-    await view.observe('0x4'); await assert.rejects(view.configure(false, 'reviewer'), /outcomeUnknown/);
+    await view.observe('0x4'); await assert.rejects(view.configure(false, 'reviewer'), /outcome is not known/);
     assert.deepEqual(posts, [{kind: 'solo-review-enable', session: '0x4', project: 'demo', previous: '0', providerKey: 'reviewer', binding: '0xa', consent: true, nonce: '0v1'}]);
     await assert.rejects(view.configure(false, 'reviewer'), /not be submitted again/);
     view.dispose(); view = new ReviewPolicyView(() => project, () => {}, new ReviewPolicyJournal(directory), dialog); view.connect(client);

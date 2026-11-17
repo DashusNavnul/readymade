@@ -54,7 +54,7 @@ async function acceptance() {
   const extension = vscode.extensions.getExtension<ReadymadeWorkspace>('pataphor.readymade-ship-workspace'); assert.ok(extension);
   if (process.env.READYMADE_BUILTIN_EXTENSION) assert.equal(realpathSync(extension.extensionPath), realpathSync(process.env.READYMADE_BUILTIN_EXTENSION));
   const {CandidateView} = await import(join(extension.extensionPath, 'dist/src/candidate-view.js')) as typeof import('../src/candidate-view');
-  const {CandidateJournal} = await import(join(extension.extensionPath, 'dist/src/candidate-journal.js')) as typeof import('../src/candidate-journal');
+  const {CandidateJournal, CandidateDecisionJournal} = await import(join(extension.extensionPath, 'dist/src/candidate-journal.js')) as typeof import('../src/candidate-journal');
   const {CheckDocumentJournal} = await import(join(extension.extensionPath, 'dist/src/check-document-journal.js')) as typeof import('../src/check-document-journal');
   const {ShipClient} = await import(join(extension.extensionPath, 'dist/src/ship-client.js')) as typeof import('../src/ship-client');
   const api = await extension.activate(); api.codeReview.dispose();
@@ -62,7 +62,9 @@ async function acceptance() {
   const archive = new CheckDocumentJournal(join(directory, 'documents'));
   const basis = {id: '0x1', owner: '~zod', desk: 'work', number: 1, root: '0v1', commit: '0v2'};
   const candidate = {id: '0x2', session: '0x4', request: '0x3', actor: '~zod', basis, sourceId: '0x1', source: '1', stage: 'review', decision: 'pending',
-    workspace: '', artifact: '', reason: '', landed: null as typeof basis | null, edits: [{path: '/lib/a/hoon', kind: 'modify', before: '0x5', after: '0x6'}], checkCount: 0, checks: []};
+    workspace: '', artifact: '', reason: '', landed: null as typeof basis | null,
+    edits: [{path: '/lib/a/hoon', kind: 'modify', before: '0x5', after: '0x6',
+      preview: {schema: 'native-coding-candidate-text-v1', original: 'old\r\n', proposed: 'new\n'}}], checkCount: 0, checks: []};
   const solo = {schema: 'native-coding-solo-review-view-v1', available: true, project: 'demo',
     scope: {project: 'demo', generation: '1', enabled: true, providerKey: 'reviewer', provider: 'codex', model: 'fixture-model', binding: '0xa' as string | undefined}, campaigns: [] as JsonObject[]};
   let canApply = true;
@@ -75,7 +77,11 @@ async function acceptance() {
     if (req.url === '/~/login') {req.resume(); res.setHeader('Set-Cookie', 'urbauth-~zod=fixture; Path=/'); res.end('{}'); return;}
     if (req.method === 'GET' && failReads) {res.statusCode = 503; res.end('{}'); return;}
     if (req.method === 'GET') {res.end(JSON.stringify(state(req.url!.split('?')[1].split('&')[0]))); return;}
-    let body = ''; req.on('data', c => {body += c.toString();}); req.on('end', () => {posts.push(JSON.parse(body)); req.socket.destroy();});
+    let body = ''; req.on('data', c => {body += c.toString();}); req.on('end', () => {
+      posts.push(JSON.parse(body));
+      if (candidate.reason === 'local-review-owner-incompatible') {res.statusCode = 409; res.end(JSON.stringify({error: 'candidate-not-ready'})); return;}
+      req.socket.destroy();
+    });
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -86,6 +92,12 @@ async function acceptance() {
   try {
     await client.signIn(); await client.codingState('0x4'); view.connect(client); await view.observe('0x4');
     await view.show('0x2'); const first = vscode.window.activeTextEditor!.document, firstText = first.getText();
+    const diff = vscode.window.tabGroups.all.flatMap(group => group.tabs).map(tab => tab.input)
+      .find((input): input is vscode.TabInputTextDiff => input instanceof vscode.TabInputTextDiff && input.original.scheme === 'readymade-candidate');
+    assert.ok(diff, 'Candidate inspection must open a real diff editor');
+    const sourceSnapshots = await Promise.all([diff.original, diff.modified].map(async uri => ({uri, text: (await vscode.workspace.openTextDocument(uri)).getText()})));
+    assert.deepEqual(sourceSnapshots.map(row => row.text), ['old\r\n', 'new\n']);
+    for (const saved of sourceSnapshots) await assert.rejects(Promise.resolve(vscode.workspace.fs.writeFile(saved.uri, Buffer.from('forbidden'))));
     await view.show('0x7'); const second = vscode.window.activeTextEditor!.document;
     assert.notEqual(first.uri.toString(), second.uri.toString(), 'Different candidates need distinct documents');
     assert.equal(JSON.parse(second.getText()).id, '0x7'); assert.equal(first.getText(), firstText);
@@ -102,7 +114,7 @@ async function acceptance() {
     await assert.rejects(view.start('0x2'), /scope changed/); assert.equal(posts.length, 0);
     await view.observe('0x4'); confirm = async () => {view.dispose(); return true;}; await assert.rejects(view.start('0x2'), /Project changed/);
     view = new CandidateView(() => project, () => {}, journal, dialog, archive); view.connect(client); confirm = async () => true;
-    await view.observe('0x4'); await assert.rejects(view.start('0x2'), /outcomeUnknown/); assert.equal(posts.length, 1);
+    await view.observe('0x4'); await assert.rejects(view.start('0x2'), {name: 'OutcomeUnknownError'}); assert.equal(posts.length, 1);
     assert.deepEqual(posts[0], {kind: 'solo-review-start', session: '0x4', candidate: '0x2', scopeBinding: '0xa', nonce: '0v1'});
     assert.ok(!view.rows()[0].children!.some(r => r.command?.command === 'readymade.startCodeReview' && r.command.arguments?.[0] === '0x2'));
     view.dispose(); view = new CandidateView(() => project, () => {}, new CandidateJournal(directory), dialog, archive); view.connect(client);
@@ -129,6 +141,10 @@ async function acceptance() {
       await assert.rejects(Promise.resolve(vscode.workspace.openTextDocument(saved.uri.with({query: 'alias=1'}))));
       await assert.rejects(Promise.resolve(vscode.workspace.openTextDocument(saved.uri.with({path: saved.uri.path.replace(/(candidate|recovery)\.json$/, 'other.json')}))));
     }
+    for (const saved of sourceSnapshots) {
+      assert.equal((await vscode.workspace.openTextDocument(saved.uri)).getText(), saved.text);
+      await assert.rejects(Promise.resolve(vscode.workspace.openTextDocument(saved.uri.with({query: 'alias=1'}))));
+    }
     await assert.rejects(view.start('0x2')); await assert.rejects(view.recover('0x4', '0x2'));
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     const picker = view.openSaved();
@@ -140,7 +156,12 @@ async function acceptance() {
     assert.equal(posts.length, 1);
     failReads = false; project = 'demo'; candidate.id = '0x1234.5678'; candidate.decision = 'approve'; solo.campaigns = [];
     let applyConsent: () => Promise<boolean> = async () => false;
-    const applyDialog = async (detail: string) => {assert.match(detail, /working project/); assert.match(detail, /deployed separately/); return applyConsent();};
+    let continuationDialogs = 0;
+    const applyDialog = async (detail: string, continuation?: boolean) => {
+      assert.match(detail, /working project/); assert.match(detail, /deployed separately/);
+      if (continuation) {continuationDialogs++; assert.match(detail, /earlier Apply request stays recorded/);}
+      return applyConsent();
+    };
     view.dispose(); view = new CandidateView(() => project, () => {}, journal, dialog, archive, applyDialog); view.connect(client);
     await view.observe('0x4'); assert.ok(view.rows()[0].children!.some(r => r.command?.command === 'readymade.applyCandidate'));
     await view.apply(candidate.id); assert.equal(posts.length, 1);
@@ -149,7 +170,7 @@ async function acceptance() {
     project = 'demo'; applyConsent = async () => true; canApply = false; await view.observe('0x4');
     assert.ok(!view.rows()[0].children!.some(r => r.command?.command === 'readymade.applyCandidate'));
     await assert.rejects(view.apply(candidate.id), /Update the backend/); assert.equal(posts.length, 1);
-    canApply = true; await view.observe('0x4'); await assert.rejects(view.apply(candidate.id), /outcomeUnknown/);
+    canApply = true; await view.observe('0x4'); await assert.rejects(view.apply(candidate.id), {name: 'OutcomeUnknownError'});
     assert.equal(posts.length, 2);
     assert.deepEqual(posts[1], {kind: 'candidate-decide', owner: '~zod', project: 'demo', session: '0x4', candidate: candidate.id, basis: '0x1', consent: true, nonce: '0v1'});
     assert.ok(!view.rows()[0].children!.some(r => r.command?.command === 'readymade.applyCandidate' && r.command.arguments?.[0] === candidate.id));
@@ -165,10 +186,28 @@ async function acceptance() {
     const dottedPicker = view.openSaved(); await new Promise(resolve => setTimeout(resolve, 750));
     await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem'); await dottedPicker;
     assert.equal(vscode.window.activeTextEditor!.document.getText(), appliedText); assert.equal(posts.length, 2);
+    candidate.id = '0x3456.789a'; candidate.stage = 'review'; candidate.landed = null; candidate.reason = 'local-review-owner-incompatible';
+    view.dispose(); view = new CandidateView(() => project, () => {}, journal, dialog, archive, applyDialog); view.connect(client);
+    await view.observe('0x4'); await assert.rejects(view.apply(candidate.id), {code: 'refused'}); assert.equal(posts.length, 3);
+    const decisions = new CandidateDecisionJournal(join(directory, 'apply')), original = JSON.stringify(decisions.entries());
+    assert.ok(!view.rows()[0].children!.some(r => r.label === 'Continue approved change…'));
+    candidate.reason = ''; await view.observe('0x4');
+    assert.ok(view.rows()[0].children!.some(r => r.label === 'Continue approved change…' && r.command?.command === 'readymade.applyCandidate'));
+    applyConsent = async () => false; await view.apply(candidate.id); assert.equal(posts.length, 3);
+    applyConsent = async () => true; await assert.rejects(view.apply(candidate.id), {name: 'OutcomeUnknownError'});
+    assert.equal(posts.length, 4); assert.equal(continuationDialogs, 2); assert.equal(JSON.stringify(decisions.entries()), original);
+    assert.equal(new CandidateDecisionJournal(join(directory, 'apply', 'continuation')).entries().length, 1);
+    view.dispose(); view = new CandidateView(() => project, () => {}, new CandidateJournal(directory), dialog, archive, applyDialog); view.connect(client);
+    await view.observe('0x4'); assert.ok(!view.rows()[0].children!.some(r => r.label === 'Continue approved change…'));
+    await assert.rejects(view.apply(candidate.id), /will not be sent again/);
+    await view.checkApplied('0x4', candidate.id); assert.equal(JSON.parse(vscode.window.activeTextEditor!.document.getText()).applied, false);
+    candidate.stage = 'applied'; candidate.landed = {...basis, id: '0xb', number: 2, root: '0v5', commit: '0v6'};
+    await view.checkApplied('0x4', candidate.id); assert.equal(JSON.parse(vscode.window.activeTextEditor!.document.getText()).applied, true); assert.equal(posts.length, 4);
     return {fixture: true, scriptedDialogs: true, cancellation: true, projectIsolation: true, staleScopeRefused: true, disposalRefused: true,
       distinctCandidates: true, immutableRecoveryObservations: true, failedRefreshPreservesEvidence: true, offlineSnapshotRecovery: true, savedReviewPicker: true,
       lostResponseRecoveredWithoutReplay: true, acceptanceSeparateFromLanding: true, explicitApply: true, applyCancellation: true, legacyBackendRefused: true,
-      applyUnknownRecoveredWithoutReplay: true, canonicalDottedIDOfflinePicker: true, readonly: true, posts: posts.length};
+      applyUnknownRecoveredWithoutReplay: true, canonicalDottedIDOfflinePicker: true, exactCandidateDiff: true, offlineDiffRecovery: true,
+      explicitCompatibilityContinuation: true, continuationCancellation: true, originalApplyRetained: true, continuationNeverReplayed: true, readonly: true, posts: posts.length};
   } finally {view.dispose(); client.close(); api.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
 }
 export async function run(): Promise<void> {

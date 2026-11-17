@@ -32,3 +32,29 @@ export function candidateCommand(source: {path: string; blob: string; mark: stri
   if (Buffer.byteLength(patch) > 65_536) throw new Error('Candidate patch exceeds the native command limit.');
   return patch;
 }
+
+/** One native batch command, never separate per-file requests. The protocol is not a grant. */
+export function bundleCandidateCommand(files: readonly {snapshot: {path: string; blob: string; mark: string; text: string}; text: string}[]): string {
+  if (files.length < 1 || files.length > 8) throw new Error('A bundle needs one to eight files.');
+  const paths = new Set<string>(); let total = 0;
+  const items = files.map(({snapshot: source, text}) => {
+    if (!validPath(source.path) || source.mark !== 'hoon' || !/^0x[1-9a-f][0-9a-f]{0,3}(?:\.[0-9a-f]{4})*$/.test(source.blob) ||
+        source.blob.replaceAll('.', '').length > 66 || paths.has(source.path)) throw new Error('Invalid or duplicate bundle source.');
+    paths.add(source.path);
+    for (const value of [source.text, text]) {
+      if (!validUnicode(value) || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value) || Buffer.byteLength(value) > 32768) throw new Error('Bundle files must be valid LF text within 32 KiB.');
+    }
+    total += Buffer.byteLength(text);
+    if (text === source.text) throw new Error('Every bundle member must contain a change.');
+    const lines = (value: string) => value.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+    const before = lines(source.text), after = lines(text);
+    let first = 0, oldEnd = before.length, newEnd = after.length;
+    while (first < oldEnd && first < newEnd && before[first] === after[first]) first++;
+    while (oldEnd > first && newEnd > first && before[oldEnd - 1] === after[newEnd - 1]) {oldEnd--; newEnd--;}
+    const expected = before.slice(first, oldEnd).join(''), replacement = after.slice(first, newEnd).join('');
+    return `${source.path} ${source.blob} ${first + 1} ${oldEnd - first} ${Buffer.byteLength(expected)} ${Buffer.byteLength(replacement)}\n${expected}${replacement}`;
+  });
+  const command = `/patches ${items.length}\n${items.join('')}`;
+  if (total > 65536 || items.length > 16 || Buffer.byteLength(command) > 65536) throw new Error('The whole bundle exceeds the native batch limit. Nothing was split or submitted.');
+  return command;
+}

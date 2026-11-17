@@ -10,6 +10,8 @@ ui.env = {uriScheme: 'readymade'};
 ui.Uri = {parse: uri, from: value => uri(value.scheme + '://' + (value.authority ?? '') + value.path + (value.query ? '?' + value.query : ''))};
 const contentProviders = new Map();
 ui.workspace = {
+  // No document is ever open in these tests, so every change is announced at once, as before.
+  textDocuments: [], onDidChangeTextDocument: () => ({dispose() {}}),
   registerTextDocumentContentProvider: (scheme, provider) => {
     contentProviders.set(scheme, provider);
     return {dispose() {if (contentProviders.get(scheme) === provider) contentProviders.delete(scheme);}};
@@ -64,7 +66,7 @@ test('resume reconstructs project context from durable draft and freshly reads w
   const {directory, row, observation} = savedProject(t), store = new RemoteDraftStore(directory);
   let posts = 0, status = 'ready';
   const client = {origin: observation.origin, browserCookies: () => [{name: 'urbauth-~nec'}],
-    projectViewSubmit: async target => {assert.deepEqual(target, {owner: '~zod', project: 'shared', generation: '1'}); posts++; return {status: 'pending', ...target, request: '0x2'};},
+    projectViewSubmit: async target => {assert.deepEqual({...target, request: undefined}, {owner: '~zod', project: 'shared', generation: '1', request: undefined}); assert.match(target.request, /^0x[1-9a-f]/); posts++; return {status: 'pending', ...target, request: '0x2'};},
     projectViewResult: async () => ({status, request: '0x2', observation: status === 'ready' ? {...observation, request: '0x2', revision: '2',
       files: [{path: row.path, text: 'new canonical', hash: remoteSourceHash('new canonical')}]} : null})};
   let current;
@@ -95,6 +97,19 @@ test('resume refuses foreign origin, peer, changed connection and disposed views
 });
 
 const projectLink = file => uri('readymade://test.extension/shared-project?' + new URLSearchParams({owner: '~zod', project: 'shared', generation: '1', peer: '~nec', ...(file === undefined ? {} : {file})}));
+test('lost shared-read answer keeps a Check action and observes its exact request without reconnecting', async t => {
+  const {observation} = savedProject(t); let posts = 0, gets = 0, connects = 0, selected;
+  const client = {origin: observation.origin, browserCookies: () => [{name: 'urbauth-~nec'}],
+    projectViewSubmit: async target => {posts++; selected = {...target}; throw Error('lost answer');},
+    projectViewResult: async target => {gets++; assert.deepEqual(target, selected); return {...target, status: 'ready', observation: {...observation, request: target.request}};}};
+  const view = new RemoteSourceView('test.extension', () => client, async () => {connects++; return client;}, () => {});
+  t.after(() => view.dispose());
+  await assert.rejects(view.open(projectLink()), /lost answer/);
+  assert.match(JSON.stringify(view.rows()), /readymade.checkSharedProject/);
+  await assert.rejects(view.refresh(), /pending request/); assert.equal(posts, 1);
+  await view.check(); assert.equal(posts, 1); assert.equal(gets, 1); assert.equal(connects, 1);
+  assert.equal(view.observation.request, selected.request); assert.equal(view.state, 'Read-only shared files');
+});
 test('shared file links validate exact fields and never fall back to another file', async t => {
   const {observation} = savedProject(t); let shown, posts = 0, status = 'ready';
   const second = {path: '/lib/second/hoon', text: 'second', hash: remoteSourceHash('second')};
@@ -158,3 +173,37 @@ for (const mode of ['ready', 'revoked', 'missing-file', 'pending', 'changed-peer
     if (mode === 'revoked') {const before = queries;await assert.rejects(view.refreshActivity());assert.equal(queries, before);assert.ok(view.observation, 'Historical source remains retained without admission');}
   });
 }
+
+test('a suggestion refused as stale rebases onto the current files as NEW drafts, keeps the old ones and sends nothing', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'readymade-rebase-')); t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const store = new RemoteDraftStore(directory);
+  const files = (texts, request, revision) => ({origin: 'https://peer.example', owner: '~zod', peer: '~nec', project: 'shared', generation: '1', request,
+    grant: '0x2', observedAt: '~2026.11.09', root: '0x3', snapshotDigest: '0x4', desk: 'shared', revision,
+    files: Object.entries(texts).map(([p, text]) => ({path: p, text, hash: remoteSourceHash(text)}))});
+  const old = files({'/lib/a/hoon': 'a1\nkeep\n', '/lib/b/hoon': 'b1\n'}, '0x1', '1');
+  const fresh = files({'/lib/a/hoon': 'a1\nkeep\nowner line\n', '/lib/b/hoon': 'b1 owner\n'}, '0x2', '2');
+  const da = store.create(old, '/lib/a/hoon'); store.save(da.id, 'a1 edited\nkeep\n');
+  const db = store.create(old, '/lib/b/hoon'); store.save(db.id, 'b1 edited\n');
+  const before = [store.get(da.id), store.get(db.id)];
+  let held = {version: 1, request: '0x9', drafts: [da.id, db.id], phase: 'refused', reason: 'stale-parent', updatedAt: 1,
+    intent: {observation: old, request: '0x9', files: [{path: '/lib/a/hoon', source: 'a1 edited\nkeep\n'}, {path: '/lib/b/hoon', source: 'b1 edited\n'}]}};
+  const bundles = {get: () => held, list: () => [held], claimedDrafts: () => new Set(held.drafts), submit: async () => {throw new Error('must not send');}};
+  const diffs = []; ui.commands = {executeCommand: async (...args) => {diffs.push(args.map(String));}};
+  t.after(() => {ui.commands = {executeCommand: async () => {}};});
+  let reads = 0;
+  const client = {origin: 'https://peer.example', browserCookies: () => [{name: 'urbauth-~nec'}],
+    projectViewSubmit: async target => {reads++; return {status: 'pending', ...target, request: '0x2'};},
+    projectViewResult: async () => ({status: 'ready', request: '0x2', observation: fresh})};
+  const view = new RemoteSourceView('test.extension', () => client, async () => client, () => {}, store, undefined, bundles); t.after(() => view.dispose());
+  await view.resume(da.id);
+  const rebaseRow = JSON.stringify(view.rows()).includes('readymade.rebaseSharedBundle');
+  assert.ok(rebaseRow, 'a stale refusal offers Rebase onto Current Files');
+  await view.rebaseBundle('0x9');
+  const created = store.list().filter(d => d.observation.request === '0x2');
+  assert.deepEqual(created.map(d => [d.path, d.text]).sort(), [['/lib/a/hoon', 'a1 edited\nkeep\nowner line\n'], ['/lib/b/hoon', 'b1 owner\n']]);
+  const opened = diffs.filter(d => d[0] === "vscode.diff"); assert.equal(opened.length, 1); assert.match(opened[0][3], /^\/lib\/b\/hoon · your refused suggestion/);
+  assert.deepEqual([store.get(da.id), store.get(db.id)], before, 'the refused drafts are kept unchanged');
+  held = {...held, reason: 'grant-revoked'};
+  await assert.rejects(view.rebaseBundle('0x9'), /Only a suggestion refused because the shared files moved/);
+  assert.ok(reads >= 2);
+});

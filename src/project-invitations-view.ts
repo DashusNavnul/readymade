@@ -499,7 +499,10 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const outcome = this.observed.get(this.key(intent)), accepted = outcome?.status === 'accepted', command = intent.command;
       const offerLeave = leave.has(command.request);
       children.push({label: command.project, description: `${command.operation} · ${outcome?.status ?? 'retained — check result'}`,
-        children: [{label: 'Check Result', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]}},
+        children: [{label: 'Check Result', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]},
+          problem: command.operation === 'join' && !accepted ? {key: this.key(intent), category: 'join',
+            status: outcome?.status === 'refused' ? 'blocked' : 'unknown',
+            label: `${command.project}: join ${outcome?.status ?? 'outcome unconfirmed'}`} : undefined},
           ...(accepted && command.operation === 'invite-member' ? [{label: 'Copy Join Link', command: {command: 'readymade.copyProjectJoinLink', title: 'Copy Join Link', arguments: [command.request]}}] : []),
           ...(accepted && command.operation === 'join' ? [{label: offerLeave ? 'Joined — ask owner for shared files' : 'Joined earlier'},
             ...(offerLeave ? [{label: 'Leave Project…', command: {command: 'readymade.leaveProject', title: 'Leave Project', arguments: [command.request]}}] : [])] : [])]});

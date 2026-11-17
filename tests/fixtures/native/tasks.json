@@ -1,0 +1,52 @@
+{
+ "available": true,
+ "observedAt": "~2026.11.17..12.42.42..70f6",
+ "openQuestions": 1,
+ "proposals": [
+  {
+   "at": "~2026.11.17..12.35.52..d753",
+   "depends": [],
+   "evidence": "lib/session-rate has no proof generator beside it.",
+   "id": "0xf9d6.9e0f.b419.6e42.7e6b.7392.fbd8.1b09.e1a8.a48e.10a2.5137.f60e.2c35.ce09.9e5d",
+   "outcome": "One proof that the rate estimate never goes negative.",
+   "paths": [
+    "/lib/session-rate/hoon"
+   ],
+   "policyVersion": 4,
+   "project": "pataphor-demo-mp",
+   "task": "demo-rate-test",
+   "who": "claude"
+  }
+ ],
+ "questions": [
+  {
+   "answer": null,
+   "at": "~2026.11.17..11.20.31..ef57",
+   "consequence": "Raising it lets collaborators spend more subscription turns.",
+   "id": "0x2422.c382.7d3f.87d8.6494.b726.3925.d34a.9d3d.4e3c.8783.cce3.4225.f161.817f.668e",
+   "open": true,
+   "task": "demo-rate-cap",
+   "text": "Should the session rate cap stay at 60 turns a day for the demo project?",
+   "who": "claude"
+  }
+ ],
+ "schema": "owner-tasks-v1",
+ "tasks": [
+  {
+   "blockedBy": [
+    "0x2422.c382.7d3f.87d8.6494.b726.3925.d34a.9d3d.4e3c.8783.cce3.4225.f161.817f.668e"
+   ],
+   "claims": 2,
+   "holder": null,
+   "task": "demo-rate-cap",
+   "until": null
+  },
+  {
+   "blockedBy": [],
+   "claims": 1,
+   "holder": null,
+   "task": "demo-docs",
+   "until": null
+  }
+ ]
+}

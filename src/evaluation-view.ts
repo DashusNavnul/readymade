@@ -3,6 +3,7 @@ import type {ShipClient} from './ship-client';
 import type {MediaTreeRow} from './media-workbench';
 import type {SourceSnapshot} from './source-store';
 import {EvaluationStore, type EvaluationRecord} from './evaluation-store';
+import { SettledDocuments } from './settled-documents';
 
 /** Explicit bounded evaluation of saved ship source; never local draft text or model execution. */
 export class EvaluationView implements vscode.Disposable {
@@ -10,15 +11,18 @@ export class EvaluationView implements vscode.Disposable {
   private closed = false;
   private notice = 'Open an immutable Hoon source, then Run Expression.';
   private readonly provider: vscode.Disposable;
-  private readonly updates = new vscode.EventEmitter<vscode.Uri>();
+  /** Changes reach the document one at a time; overlapping ones can leave it as a mix of two texts. */
+  private readonly documents = new SettledDocuments(uri => {try {return this.text(uri);} catch {return undefined;}});
   constructor(readonly store: EvaluationStore, private readonly current: () => ShipClient | undefined,
     private readonly project: () => string | undefined, private readonly selectedSource: () => SourceSnapshot | undefined,
     private readonly changed: () => void) {
-    this.provider = vscode.workspace.registerTextDocumentContentProvider('readymade-evaluation', {onDidChange: this.updates.event, provideTextDocumentContent: uri => {
-      const match = /^\/([a-f0-9]{64})\/result\.txt$/.exec(uri.path);
-      if (uri.authority || uri.query || uri.fragment || !match) throw vscode.FileSystemError.FileNotFound(uri);
-      return this.document(this.store.get(match[1]));
-    }});
+    this.provider = vscode.workspace.registerTextDocumentContentProvider('readymade-evaluation', {onDidChange: this.documents.onDidChange, provideTextDocumentContent: uri => this.text(uri)});
+  }
+  /** The text of one result document; throws for anything that is not one. */
+  private text(uri: vscode.Uri): string {
+    const match = /^\/([a-f0-9]{64})\/result\.txt$/.exec(uri.path);
+    if (uri.authority || uri.query || uri.fragment || !match) throw vscode.FileSystemError.FileNotFound(uri);
+    return this.document(this.store.get(match[1]));
   }
   private document(row: EvaluationRecord): string {
     return [`Native evaluation · ${row.phase}`, `${row.snapshot.ship} · ${row.snapshot.origin}`, `${row.project} · ${row.snapshot.path}`,
@@ -39,7 +43,7 @@ export class EvaluationView implements vscode.Disposable {
         if (event.document.uri.toString() === uri.toString() && event.document.getText() === expected) finish();
       });
       const timer = setTimeout(() => finish(new Error('Native result is saved, but its editor did not refresh. Reopen Show Result.')), 5000);
-      this.updates.fire(uri);
+      this.documents.changed(uri);
     });
     if (this.closed) throw new Error('Evaluation view closed.');
     await vscode.window.showTextDocument(document, {preview: false});
@@ -80,5 +84,5 @@ export class EvaluationView implements vscode.Disposable {
         {label: 'Show Result', command: {command: 'readymade.showEvaluation', title: 'Show Result', arguments: [row.id]}},
         ...(row.phase !== 'complete' ? [{label: 'Observe Result', command: {command: 'readymade.observeEvaluation', title: 'Observe Result', arguments: [row.id]}}] : [])]}))]}];
   }
-  dispose(): void {this.closed = true; this.provider.dispose(); this.updates.dispose();}
+  dispose(): void {this.closed = true; this.provider.dispose(); this.documents.dispose();}
 }

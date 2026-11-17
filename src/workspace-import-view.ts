@@ -80,7 +80,9 @@ export class WorkspaceImportView implements vscode.Disposable {
     const rows: MediaTreeRow[] = [{label: 'Import Shared Message…', description: this.busy ? 'In progress' : 'Retain a request; do not execute', command: {command: 'readymade.importSharedMessage', title: 'Import Shared Message'}}];
     const b = this.binding(); if (!b || this.closed) return rows;
     try {for (const intent of this.store(b).list().slice(-8).reverse()) rows.push({label: 'Check message import', description: intent.events.at(-1)?.status === 'observed' ? 'Native receipt observed' : 'Outcome unconfirmed — no resend',
-      tooltip: intent.preview.author + ' · ' + intent.preview.text.slice(0, 160), command: {command: 'readymade.checkSharedMessageImport', title: 'Check Import Result', arguments: [intent.preview.nonce]}});}
+      tooltip: intent.preview.author + ' · ' + intent.preview.text.slice(0, 160), command: {command: 'readymade.checkSharedMessageImport', title: 'Check Import Result', arguments: [intent.preview.nonce]},
+      problem: intent.events.at(-1)?.status !== 'observed' ? {key: JSON.stringify([b.client.origin, b.owner, b.project, intent.preview.nonce]),
+        category: 'import', status: 'unknown', label: `${b.project}: shared message import unconfirmed`} : undefined});}
     catch {rows.push({label: 'Import journal unavailable. Existing intents were preserved.'});}
     return rows;
   }

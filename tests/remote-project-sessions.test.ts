@@ -31,7 +31,7 @@ test('a ready list decodes to an immutable past observation with every allowed p
   (source.observation.sessions[0] as {phase: string}).phase = 'changed'; assert.equal(result.observation.sessions[0].phase, 'idle');
   assert.equal(decode(ready([])).status, 'ready'); assert.equal(decode(pending(), 202).status, 'pending');
   assert.equal(remoteProjectSessionsReply(202, pending(), target, peer).request, '0x1');
-  assert.equal(decode(ready(Array.from({length: 64}, (_, i) => session('0x' + (i + 1).toString(16))), true)).status, 'ready');
+  assert.equal(decode(ready(Array.from({length: 64}, (_, i) => session('0x' + (i + 1).toString(16))), true)).status, 'refused');
   assert.equal(decode(ready([session('0x' + 'f'.repeat(4) + '.ffff'.repeat(15), {}, {revision: '18.446.744.073.709.551.615', root: '0v1v.' + Array(10).fill('vvvvv').join('.')})])).status, 'ready');
 });
 
@@ -102,9 +102,27 @@ test('rows say in plain language what one reply means', () => {
   assert.deepEqual(remoteProjectSessionRows(decode(ready([]))), [{label: 'No sessions are shared with you in this project'}]);
   assert.deepEqual(remoteProjectSessionRows(decode(settled('refused', 'watch-refused'))), [{label: 'The owner did not share a session list with this ship'}]);
   assert.deepEqual(remoteProjectSessionRows(decode(settled('uncertain', 'sessions-timeout'))), [{label: 'No answer from the owner; nothing was retried'}]);
-  assert.equal(remoteProjectSessionRows(decode(ready(Array.from({length: 64}, (_, i) => session('0x' + (i + 1).toString(16))), true))).at(-1)!.label, 'Showing the first 64');
+  assert.match(remoteProjectSessionRows(decode(ready(Array.from({length: 64}, (_, i) => session('0x' + (i + 1).toString(16))), true)))[0].label, /^Update Readymade/);
   assert.equal(remoteProjectSessionRows(decode(pending(), 202))[0].label, 'Waiting for the owner');
   assert.match(remoteProjectSessionRows(decode(unknown, 404))[0].label, /nothing was retried$/); assert.match(remoteProjectSessionRows(decode(expired, 410))[0].label, /nothing was retried$/);
+});
+
+test('legacy overflow yields an exact upgrade refusal without usable partial sessions or a fabricated permission diagnosis', () => {
+  const modern = settled('refused', 'sessions-upgrade-required'), old = ready([session()], true);
+  const expected = decode(modern), retained = JSON.stringify(old);
+  assert.deepEqual(decode(old), expected); assert.equal(JSON.stringify(old), retained);
+  assert.ok('observation' in expected && expected.observation === null);
+  const rows = remoteProjectSessionRows(expected);
+  assert.equal(rows.length, 1); assert.match(rows[0].label, /^Update Readymade/);
+  assert.match(rows[0].description!, /no partial sessions/); assert.ok(!rows[0].tooltip);
+  assert.doesNotMatch(remoteProjectSessionRows(decode(settled('refused', 'watch-refused')))[0].label, /[Uu]pdate/);
+  for (const input of [modern, old]) {
+    for (const patch of [{owner: '~wes'}, {peer: '~wes'}, {project: 'other'}, {request: '0x2'}, {permissionGranted: true}])
+      assert.throws(() => decode({...input, ...patch}));
+  }
+  for (const status of ['pending', 'ready', 'uncertain']) assert.throws(() => decode(settled(status, 'sessions-upgrade-required'), status === 'pending' ? 202 : 200));
+  assert.throws(() => decode({...modern, observation: old.observation}));
+  assert.throws(() => decode({...old, observation: {...old.observation, peer: '~wes'}}));
 });
 
 type Capture = {method: string; url: string; headers: http.IncomingHttpHeaders; body: string};

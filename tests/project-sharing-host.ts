@@ -182,7 +182,7 @@ async function inboxAcceptance() {
     await replace('first\nsecond\nconflict\n'); confirmMerge = async () => {throw Error('Conflicting edits must not offer automatic apply');};
     await view.import(receipt.receiptHash); assert.equal(document.getText(), 'first\nsecond\nconflict\n'); assert.equal(drafts.get(draft.id).text, source);
     stale = true; await assert.rejects(view.import(receipt.receiptHash), /No current owner session/); assert.equal(drafts.get(draft.id).text, source);
-    project = 'other'; await assert.rejects(view.import(receipt.receiptHash), /Refresh/); assert.equal(writes, 0);
+    project = 'other'; await assert.rejects(view.import(receipt.receiptHash), /Read the inbox or history before opening this receipt/); assert.equal(writes, 0);
     return {renderedInbox: true, openedSuggestion: true, realSourceStoreLoaderPath: true, importedOwnerDraft: true, originalAndCommitPreserved: true,
       existingDraftPreserved: true, mergePreview: true, scriptedMergeConfirmation: true, ownerLocalUndo: true, overlapPreserved: true, documentDriftRefused: true, staleSessionRefused: true, noAutomaticAcceptance: true, nativeWrites: writes};
   } finally {view.dispose(); registrations.forEach(item => item.dispose()); client.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));}
@@ -200,9 +200,19 @@ async function invitationAcceptance() {
     res.setHeader('content-type', 'application/json');
     if (req.url === '/~/login') {req.resume(); res.setHeader('set-cookie', `urbauth-${peer ? '~nec' : '~zod'}=fixture; Path=/`); res.end('{}'); return;}
     if (req.method === 'GET') {
+      // Copying a join link first reads whether this ship serves the guest desk. This fixture's ship predates that
+      // (protocol 0), so the link carries no source, as the assertions below expect.
+      if (req.url?.endsWith('/guest-desk')) {
+        // The guest's ship already runs the current collaboration service, so joining installs and updates nothing.
+        res.end(JSON.stringify({schema: 'readymade-guest-desk-v1', desk: 'readymade-peer', protocol: peer ? 1 : 0, published: false, public: false, revision: 0, source: 'host-readymade-collab', files: 0, missing: []}));
+        return;
+      }
+      // Joining first asks whether the collaboration service answers on the guest's ship; any JSON object means it does.
+      if (peer && req.url?.endsWith('/project-invitation-requests')) {res.end('{}'); return;}
       if (req.url?.endsWith('/project-members')) {
         const kind = req.headers['x-readymade-project-kind'];
-        const list = kind === 'members' ? [{ship: '~nec', role: 'contributor', joinedAt: '~2026.11.09'}] : ambiguous ? [...rows, {...rows[0], id: '0xabd'}] : rows;
+        // ~nec is a member only once it has been invited: the product refuses to invite a member to the role it already holds.
+        const list = kind === 'members' ? (posts.length ? [{ship: '~nec', role: 'contributor', joinedAt: '~2026.11.09'}] : []) : ambiguous ? [...rows, {...rows[0], id: '0xabd'}] : rows;
         res.end(JSON.stringify({schema: 'readymade-project-members-v1', project: 'demo', authority: '~zod', permissionGranted: false,
           inviteUntil: '~2026.11.10', kind, catalog: '0x9', offset: 0, total: list.length, next: null, rows: list}));
       } else if (req.url?.endsWith('/project-invitation-result')) res.end(JSON.stringify(results.get(String(req.headers['x-readymade-project-request']))));
@@ -233,7 +243,8 @@ async function invitationAcceptance() {
     assert.equal(view.rows()[0].label, 'Project Invitations');
     await view.observe('members');
     const member = view.rows()[0].children!.find(row => row.label === '~nec')!;
-    assert.deepEqual(member.children![0].command, {command: 'readymade.projectSharing', title: 'Manage Shared Files', arguments: ['~nec']});
+    // The member's rows now start with what is shared; the action is found by its command, wherever it sits.
+    assert.deepEqual(member.children!.find(row => row.command?.command === 'readymade.projectSharing')?.command, {command: 'readymade.projectSharing', title: 'Manage Shared Files', arguments: ['~nec']});
     assert.equal(posts.length, 1);
     const invitation = ownerJournal.entries()[0]; await view.copyLink(invitation.command.request);
     const copied = await vscode.env.clipboard.readText(), link = joinProjectLink(vscode.Uri.parse(copied), extension.id);

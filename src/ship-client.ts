@@ -9,21 +9,27 @@ import { createHash } from 'node:crypto';
 import { completionId, type CompletionContext } from './completion-store';
 import { reviewPolicyCommand, type ReviewPolicyChange } from './review-policy';
 import {invitationCommand, invitationResult, invitationCatalog, invitationMembers, invitationUuid, invitationHash, invitationProject, type InvitationCommand} from './project-invitations';
-import {projectInbox as decodeProjectInbox} from './project-inbox';
+import {projectInbox as decodeProjectInbox, projectInboxHistory as decodeInboxHistory, projectInboxBundles as decodeInboxBundles, projectInboxDetail as decodeInboxDetail, inboxHistorySelector,
+  type InboxHistorySelector} from './project-inbox';
 import {remoteShip, remoteProjectViewTarget, remoteProjectViewSelector, remoteProjectViewHeaders, remoteProjectViewJSON,
   remoteProjectViewRefused, remoteProjectViewReply, REMOTE_PROJECT_VIEW_LIMIT,
-  type RemoteProjectViewTarget, type RemoteProjectViewSelector, type RemoteProjectViewReply} from './remote-project-view';
+  type RemoteProjectViewSelector, type RemoteProjectViewReply} from './remote-project-view';
 import {remoteProjectSessionsTarget, remoteProjectSessionsSelector, remoteProjectSessionsHeaders, remoteProjectSessionsRefused, remoteProjectSessionsReply,
   type RemoteProjectSessionsReply} from './remote-project-sessions';
+import {SessionPageError, SESSION_PAGE_BYTES, sessionPageSelector, sessionPageHeaders, sessionPageReply,
+  type SessionPageSelector, type SessionPageReply} from './remote-project-session-pages';
 import {sessionSharingTarget, sessionSharingCommand, sessionSharingHeaders, sessionSharingRefusal, sessionSharingSnapshot, sessionSharingReceipt,
   type SessionSharingCommand, type SessionSharingSnapshot, type SessionSharingReceipt} from './session-sharing';
 import {shareNotices, type ShareNotices} from './share-notices';
 import {remoteSuggestionIntent, remoteSuggestionBody, remoteSuggestionHeaders, remoteSuggestionReply, remoteSuggestionRefused, remoteSuggestionRecoveryBody, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
+import {remoteBundleIntent, remoteBundleBody, remoteBundleHeaders, remoteBundleReply, remoteBundleRefused, type RemoteBundleIntent, type RemoteBundleReply} from './remote-bundle-suggest';
 import {FULL_SOURCE, GUEST_DESK_PATH, GUEST_DESK_PUBLISH, GUEST_PIKES_PATH, GUEST_PROBE_PATH, GUEST_SOURCE, fullDesk, fullFollowActions, guestDeskReceipt, guestDeskStatus, guestInstallActions, guestRemoveActions,
   guestServiceDesk, guestServiceProbe, guestServiceState, type GuestDeskStatus, type GuestServiceState, type GuestSource} from './guest-service';
 import { activityBody, activityCommand, activityHeaders, activityReply, activitySelector, type ActivityCommand, type ActivityReply, type ActivitySelector } from './editing-activity';
+import {CodingCatalogError, CodingSessionCatalog, CODING_CATALOG_BYTES} from './coding-session-catalog';
 import { asRecord, codingSnapshot, isInteger, isUv, isUx, validJSON, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
+import {nativeRequestAllowed, type NativeReply, type NativeRequest} from './native-pages';
 
 /** Why a request never got an answer, when the network layer said: the ship answered too slowly, nothing listens there, the name does not resolve, or the connection dropped. */
 export type TransportDetail = 'slow' | 'down' | 'unknownHost' | 'dropped';
@@ -34,9 +40,12 @@ export class ShipClientError extends Error {
       : code === 'certificateUntrusted'
         ? 'The HTTPS certificate cannot be verified. Ask the host to provide a certificate trusted by this computer and its complete certificate chain.'
         : undefined;
+    const catalogMessage = code === 'catalogChanged' ? 'The session list changed while loading. Refresh to read the current list.'
+      : code === 'catalogDeadline' ? 'The complete session list did not arrive within one minute. Refresh to observe it again.'
+      : ['catalogMalformed', 'catalogUnavailable'].includes(code) ? 'The ship could not provide a complete, valid session list. Refresh or update its Readymade backend; no partial list was accepted.' : undefined;
     const plain = code === 'commandBusy' ? 'Readymade is still finishing another request to your ship. Try again in a moment; nothing was sent.'
       : code === 'outcomeUnknown' ? 'No answer came back from your ship, so the outcome is not known. Nothing was sent again. Check the result before trying again.' : undefined;
-    super(certificateMessage ?? plain ?? `Ship request failed: ${code}${status === undefined ? '' : ` (HTTP ${status})`}.`); this.name = 'ShipClientError';
+    super(certificateMessage ?? catalogMessage ?? plain ?? `Ship request failed: ${code}${status === undefined ? '' : ` (HTTP ${status})`}.`); this.name = 'ShipClientError';
   }
 }
 export class OutcomeUnknownError extends ShipClientError {
@@ -119,6 +128,8 @@ export class ShipClient {
   private readonly projectSuggestions = new Set<string>();
   private readonly requests = new Set<http.ClientRequest>();
   private current?: CodingSnapshot;
+  private catalogConnection = 0;
+  private readonly sessionCatalog = new CodingSessionCatalog();
   get snapshot(): CodingSnapshot | undefined { return this.current; }
   /** Trusted local UI bridge only: never put this session capability in documents or logs. */
   browserCookies(origin: string): readonly BrowserSessionCookie[] {
@@ -133,12 +144,14 @@ export class ShipClient {
   constructor(origin: string, private readonly savedCode: SavedCode = readSavedCode) { this.origin = originOf(origin); }
   close(): void {
     this.closed = true; this.generation++; this.cookies = []; this.current = undefined;
+    this.catalogConnection++; this.sessionCatalog.clear();
     for (const request of this.requests) request.destroy(new ShipClientError('closed'));
     this.requests.clear();
   }
   async signIn(): Promise<void> {
     if (this.closed) failure('closed'); if (this.busy) failure('commandBusy');
     this.busy = true; const epoch = ++this.generation; this.cookies = []; this.current = undefined;
+    this.catalogConnection++; this.sessionCatalog.clear();
     try {
       let code: string | undefined;
       try { code = await this.savedCode(this.origin); } catch { return failure('credentialStorage'); }
@@ -168,9 +181,14 @@ export class ShipClient {
   async codingState(session = '0x0', after = 0, cursor = '0x0'): Promise<CodingSnapshot> {
     if (!isUx(session) || !isUx(cursor) || !isInteger(after, 0, 4096)) failure('contextChanged');
     const epoch = ++this.generation;
-    const next = this.decodeCoding(await this.requestJSON(`${BASE}/state?${session}&${after}&${cursor}`));
-    if (epoch !== this.generation || next.session !== session) failure('contextChanged');
-    this.current = next; this.observedGeneration = epoch;
+    const observed = this.decodeCoding(await this.requestJSON(`${BASE}/state?${session}&${after}&${cursor}`));
+    const current = (): void => { if (this.closed || epoch !== this.generation || observed.session !== session) failure('contextChanged'); };
+    let next: CodingSnapshot;
+    try {
+      next = this.decodeCoding(await this.sessionCatalog.resolve(observed, this.catalogConnection,
+        (path, timeoutMs) => this.json(path, {timeoutMs}, CODING_CATALOG_BYTES), current));
+    } catch (error) { if (error instanceof CodingCatalogError) failure(error.code); throw error; }
+    current(); this.current = next; this.observedGeneration = epoch;
     return next;
   }
   async codingTool(session: string, source: string, input: string): Promise<CodingSnapshot> {
@@ -221,18 +239,20 @@ export class ShipClient {
     } finally { this.busy = false; }
   }
   /** Starts native challenge/resolution; caller must persist its intent first. */
-  async startCandidateReview(context: CompletionContext, candidate: string, consent: boolean, scopeBinding: string): Promise<CodingSnapshot> {
-    const current = this.snapshot, identity = `candidate-review:${context.owner}:${context.session}:${candidate}`;
+  async startCandidateReview(context: CompletionContext, candidate: string, consent: boolean, scopeBinding: string, previousCampaign?: string): Promise<CodingSnapshot> {
+    const current = this.snapshot, identity = `candidate-review:${context.owner}:${context.session}:${candidate}${previousCampaign ? `:${previousCampaign}` : ''}`;
     if (this.closed) failure('closed');
     if (this.busy || this.completionSubmitted.has(identity) || this.completionSubmitted.size >= 4096) failure('commandBusy');
     if (!current?.ready) failure('notReady');
     if (this.observedGeneration !== this.generation || current.owner !== context.owner || current.session !== context.session ||
         current.sessions.filter(s => s.id === context.session && s.project === context.project).length !== 1 ||
-        !completionId(context.session) || !completionId(candidate) || !completionId(scopeBinding) || consent !== true) failure('contextChanged');
+        !completionId(context.session) || !completionId(candidate) || !completionId(scopeBinding) ||
+        previousCampaign !== undefined && !completionId(previousCampaign) || consent !== true) failure('contextChanged');
     this.busy = true; const epoch = this.generation;
     try {
       const next = this.decodeCoding(await this.json(BASE + '/action', {method: 'POST', body: {
-        kind: 'solo-review-start', session: context.session, candidate, scopeBinding, nonce: current.nonce
+        kind: 'solo-review-start', session: context.session, candidate, scopeBinding, nonce: current.nonce,
+        ...(previousCampaign === undefined ? {} : {previousCampaign})
       }}));
       if (this.closed || epoch !== this.generation || next.owner !== context.owner || next.session !== context.session) failure('contextChanged');
       this.completionSubmitted.add(identity);
@@ -459,23 +479,24 @@ export class ShipClient {
     return result;
   }
   /** A fresh remote read, submitted once. No local Viki session is required. */
-  async projectViewSubmit(value: RemoteProjectViewTarget): Promise<RemoteProjectViewReply> {
+  async projectViewSubmit(value: RemoteProjectViewSelector): Promise<RemoteProjectViewReply> {
     if (this.closed) failure('closed');
-    const target = remoteProjectViewTarget(value), peer = this.projectViewPeer();
+    const target = remoteProjectViewSelector(value), peer = this.projectViewPeer();
     if (target.owner === peer) failure('contextChanged');
     const key = JSON.stringify([peer, target.owner, target.project, target.generation]);
     if (this.busy || this.projectViews.has(key) || this.projectViews.size >= 32) failure('commandBusy');
-    const body = this.encode({schema: 'readymade-project-view-v1', ...target});
+    const body = this.encode({schema: 'readymade-project-view-v2', ...target});
     if (body.length > 4096) failure('tooLarge');
-    this.busy = true; const epoch = this.generation; this.projectViews.set(key, {});
+    this.busy = true; const epoch = this.generation; this.projectViews.set(key, {request: target.request});
     try {
       const reply = await this.wire('/apps/readymade-collab/project-view', 'POST', body,
-        {'Content-Type': 'application/json', 'x-readymade-project-view': 'v1'}, {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
+        {'Content-Type': 'application/json', 'x-readymade-project-view': 'v2'}, {timeoutMs: 15000}, REMOTE_PROJECT_VIEW_LIMIT);
       if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) throw new OutcomeUnknownError();
       const json = this.projectViewJSON(reply);
       if (remoteProjectViewRefused(reply.status, json)) {this.projectViews.delete(key); failure('refused', reply.status);}
       const result = remoteProjectViewReply(reply.status, json, target, peer, this.origin);
-      this.projectViews.set(key, {request: result.request}); return result;
+      if (result.status !== 'pending') throw new OutcomeUnknownError();
+      return result;
     } catch (error) {
       if (error instanceof ShipClientError && error.code === 'refused') throw error;
       throw new OutcomeUnknownError();
@@ -530,6 +551,48 @@ export class ShipClient {
     if (held?.request === selected.request && this.projectSessionLists.get(key) === held && result.status !== 'pending') this.projectSessionLists.delete(key);
     return result;
   }
+  /** Presentation scope only, not a credential or permission. Reauthentication invalidates page traversal. */
+  projectSessionPageScope(): string {
+    if (this.closed) failure('closed');
+    return JSON.stringify([this.origin, this.generation, this.projectViewPeer()]);
+  }
+  /** The caller retains this exact selector before dispatch; unknown results are observed by GET. */
+  async projectSessionPageSubmit(value: SessionPageSelector, timeoutMs = 15000): Promise<SessionPageReply> {
+    if (this.closed) failure('closed');
+    const selected = sessionPageSelector(value), peer = this.projectViewPeer(), epoch = this.generation;
+    if (selected.owner === peer) failure('contextChanged');
+    if (this.busy) failure('commandBusy');
+    const body = this.encode({schema: 'readymade-project-session-page-v2', ...selected, offset: String(selected.offset)});
+    if (body.length > 4096) failure('tooLarge');
+    this.busy = true;
+    try {
+      const reply = await this.wire('/apps/readymade-collab/project-session-pages', 'POST', body,
+        {'Content-Type': 'application/json', 'x-readymade-project-session-pages': 'v2'}, {timeoutMs: Math.max(1, Math.min(15000, timeoutMs))}, SESSION_PAGE_BYTES);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) throw new OutcomeUnknownError();
+      if (reply.status === 404) throw new SessionPageError('upgrade');
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      const json = this.projectViewJSON(reply);
+      if (Object.keys(json).length === 2 && json.status === 'refused' &&
+          (reply.status === 400 && json.message === 'Exact owner-origin shared session page command required.' ||
+           reply.status === 409 && ['sessions-selector-invalid', 'sessions-request-expired', 'sessions-request-conflict', 'sessions-capacity'].includes(String(json.message))))
+        throw new SessionPageError('refused');
+      return sessionPageReply(reply.status, json, selected, peer, false);
+    } catch (error) {
+      if (error instanceof SessionPageError && ['upgrade', 'refused'].includes(error.code)) throw error;
+      throw new OutcomeUnknownError();
+    } finally {this.busy = false;}
+  }
+  async projectSessionPageResult(value: SessionPageSelector, timeoutMs = 15000): Promise<SessionPageReply> {
+    if (this.closed) failure('closed');
+    const selected = sessionPageSelector(value), peer = this.projectViewPeer(), epoch = this.generation;
+    if (selected.owner === peer) failure('contextChanged');
+    const reply = await this.wire('/apps/readymade-collab/project-session-pages-result', 'GET', undefined,
+      sessionPageHeaders(selected), {timeoutMs: Math.max(1, Math.min(15000, timeoutMs))}, SESSION_PAGE_BYTES);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) failure('contextChanged');
+    if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+    if (reply.status === 404 && !String(reply.headers['content-type']).startsWith('application/json')) throw new SessionPageError('upgrade');
+    return sessionPageReply(reply.status, this.projectViewJSON(reply), selected, peer, true);
+  }
   /** One collaborator's standing in one of this ship's own projects. A read: it shares and changes nothing. */
   async sessionSharingRead(project: string, peer: string): Promise<SessionSharingSnapshot> {
     if (this.closed) failure('closed');
@@ -563,11 +626,15 @@ export class ShipClient {
       const json = this.projectViewJSON(reply);
       // Each of these means nothing was sent: no such receipt, or a ship that does not know this request (an older service).
       if (reply.status === 404 && json.message === 'receipt-missing') failure('receiptMissing', 404);
+      // The ship keeps each answer as one durable notice: the same answer again is refused, not resent.
+      if (reply.status === 409 && json.status === 'refused' && json.message === 'notice-already-sent') failure('alreadyTold', 409);
+      // No notice store, or it could not be read: the ship says plainly that nothing was sent.
+      if (reply.status === 503 && json.status === 'unavailable') failure('unavailable', 503);
       if ([400, 404, 405, 409].includes(reply.status) && json.status === 'refused') failure('refused', reply.status);
       if (reply.status !== 202 || Object.keys(json).length !== 4 || json.schema !== 'readymade-suggestion-answer-receipt-v1' || json.status !== 'sent' ||
           json.answer !== answer || json.confirmed !== false) throw new OutcomeUnknownError();
     } catch (error) {
-      if (error instanceof ShipClientError && ['refused', 'authenticationRequired', 'receiptMissing'].includes(error.code)) throw error;
+      if (error instanceof ShipClientError && ['refused', 'authenticationRequired', 'receiptMissing', 'alreadyTold', 'unavailable'].includes(error.code)) throw error;
       throw new OutcomeUnknownError();
     } finally {this.busy = false;}
   }
@@ -735,6 +802,37 @@ export class ShipClient {
       throw new OutcomeUnknownError();
     } finally {this.busy = false;}
   }
+  /** One multi-file suggestion. Caller must persist the exact intent first; never retried here. */
+  async projectBundleSubmit(value: RemoteBundleIntent, consent: boolean): Promise<RemoteBundleReply> {
+    if (this.closed) failure('closed');
+    if (consent !== true) failure('consentRequired');
+    const intent = remoteBundleIntent(value), o = intent.observation, peer = this.projectViewPeer();
+    if (o.origin !== this.origin || o.peer !== peer) failure('contextChanged');
+    const key = JSON.stringify([peer, o.owner, o.project, o.generation, intent.request]);
+    if (this.busy || this.projectSuggestions.has(key) || this.projectSuggestions.size >= 256) failure('commandBusy');
+    const body = this.encode(remoteBundleBody(intent));
+    if (body.length > 262144) failure('tooLarge');
+    this.busy = true; const epoch = this.generation; this.projectSuggestions.add(key);
+    try {
+      const reply = await this.wire('/apps/readymade-collab/project-bundle', 'POST', body,
+        {'Content-Type': 'application/json', 'x-readymade-project-suggest': 'v1'}, {timeoutMs: 15000}, 16384);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) throw new OutcomeUnknownError();
+      const json = this.projectViewJSON(reply);
+      if (remoteBundleRefused(reply.status, json)) failure('refused', reply.status);
+      return remoteBundleReply(reply.status, json, intent, true);
+    } catch (error) {
+      if (error instanceof ShipClientError && error.code === 'refused') throw error;
+      throw new OutcomeUnknownError();
+    } finally {this.busy = false;}
+  }
+  async projectBundleResult(value: RemoteBundleIntent): Promise<RemoteBundleReply> {
+    if (this.closed) failure('closed');
+    const intent = remoteBundleIntent(value), o = intent.observation, peer = this.projectViewPeer(), epoch = this.generation;
+    if (o.origin !== this.origin || o.peer !== peer) failure('contextChanged');
+    const reply = await this.wire('/apps/readymade-collab/project-bundle-result', 'GET', undefined, remoteBundleHeaders(intent), {timeoutMs: 15000}, 16384);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== peer) failure('contextChanged');
+    return remoteBundleReply(reply.status, this.projectViewJSON(reply), intent);
+  }
   /** Reads an exact durable intent after reconnect; missing evidence never resubmits. */
   async projectSuggestionResult(value: RemoteSuggestionIntent): Promise<RemoteSuggestionReply> {
     if (this.closed) failure('closed');
@@ -786,6 +884,63 @@ export class ShipClient {
     const body = this.projectViewJSON(reply);
     if (reply.status !== 200) failure(reply.status === 404 ? 'receiptMissing' : 'refused', reply.status);
     try {decodeProjectInbox(body, owner, project, receipt);} catch {return failure('malformed');}
+    return body;
+  }
+  /** Read whole multi-file suggestions as the authenticated project owner. A 404 means an older ship without the route. */
+  async projectInboxBundles(project: string): Promise<JsonObject> {
+    if (this.closed) failure('closed');
+    const owner = this.projectViewPeer(), epoch = this.generation;
+    remoteProjectViewTarget({owner, project, generation: '1'});
+    if (this.current && this.current.owner !== owner) failure('contextChanged');
+    const headers = {'x-readymade-project': Buffer.from(project, 'utf8').toString('latin1')};
+    const reply = await this.wire('/apps/readymade-collab/project-inbox-bundles', 'GET', undefined, headers, {timeoutMs: 15000}, 524288);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== owner || this.current && this.current.owner !== owner) failure('contextChanged');
+    if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+    const body = this.projectViewJSON(reply);
+    if (reply.status !== 200) failure(reply.status === 404 ? 'unsupported' : 'refused', reply.status);
+    try {decodeInboxBundles(body, owner, project);} catch {return failure('malformed');}
+    return body;
+  }
+  /**
+   * Observe one archive page. This GET never archives or resends a suggestion. The v2 route also lists archived multi-file
+   * suggestions; an older ship (no route, or a Cantrip without the v2 read) answers the v1 route instead.
+   */
+  async projectInboxHistory(project: string, selector?: InboxHistorySelector): Promise<JsonObject> {
+    if (this.closed) failure('closed');
+    const owner = this.projectViewPeer(), epoch = this.generation, query = inboxHistorySelector(selector);
+    remoteProjectViewTarget({owner, project, generation: '1'});
+    if (this.current && this.current.owner !== owner) failure('contextChanged');
+    const headers = {'x-readymade-project': Buffer.from(project, 'utf8').toString('latin1'), 'x-readymade-history-revision': query.revision,
+      'x-readymade-history-after': query.after, 'x-readymade-history-limit': String(query.limit)};
+    for (const route of ['project-inbox-history-v2', 'project-inbox-history']) {
+      const reply = await this.wire(`/apps/readymade-collab/${route}`, 'GET', undefined, headers, {timeoutMs: 15000}, 524288);
+      if (this.closed || epoch !== this.generation || this.projectViewPeer() !== owner || this.current && this.current.owner !== owner) failure('contextChanged');
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      const older = route.endsWith('-v2') && reply.status === 404;
+      const body = older ? undefined : this.projectViewJSON(reply);
+      if (older || route.endsWith('-v2') && reply.status === 409 && body?.message === 'receipt-history-unavailable') continue;
+      if (!body || reply.status !== 200) failure(reply.status === 409 && body?.message === 'receipt-page-head-changed' ? 'historyChanged' : 'refused', reply.status);
+      try {decodeInboxHistory(body, owner, project, query);} catch {return failure('malformed');}
+      return body;
+    }
+    return failure('unsupported');
+  }
+  /** Read one hot or archived receipt of either kind with its sources. A 404 without receipt-missing means an older ship. */
+  async projectInboxDetail(project: string, receipt: string): Promise<JsonObject> {
+    if (this.closed) failure('closed');
+    const owner = this.projectViewPeer(), epoch = this.generation;
+    remoteProjectViewTarget({owner, project, generation: '1'});
+    if (this.current && this.current.owner !== owner) failure('contextChanged');
+    if (!isUx(receipt) || receipt.startsWith('0x0') || BigInt(receipt.replaceAll('.', '')) >= (1n << 256n)) failure('contextChanged');
+    const headers = {'x-readymade-project': Buffer.from(project, 'utf8').toString('latin1'), 'x-readymade-project-receipt': receipt};
+    const reply = await this.wire('/apps/readymade-collab/project-inbox-detail-v2', 'GET', undefined, headers, {timeoutMs: 15000}, 524288);
+    if (this.closed || epoch !== this.generation || this.projectViewPeer() !== owner || this.current && this.current.owner !== owner) failure('contextChanged');
+    if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+    if (reply.status === 404 && reply.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') failure('unsupported', 404);
+    const body = this.projectViewJSON(reply);
+    if (reply.status === 404) failure(body.message === 'receipt-missing' ? 'receiptMissing' : 'unsupported', 404);
+    if (reply.status !== 200) failure(reply.status === 409 && body.message === 'receipt-history-unavailable' ? 'unsupported' : 'refused', reply.status);
+    try {decodeInboxDetail(body, owner, project, receipt);} catch {return failure('malformed');}
     return body;
   }
   async projectInvitation<K extends keyof ProjectInvitationParameters>(operation: K, value: ProjectInvitationParameters[K]): Promise<WorkspaceRequestReply> {
@@ -942,6 +1097,39 @@ export class ShipClient {
       this.uncertain.add(id); throw new OutcomeUnknownError();
     } finally { this.busy = false; }
   }
+  /**
+   * One read or command on a listed native page (`native-pages.ts`). A refusal is returned, not thrown, so the caller
+   * can show the ship's own reason. A command whose answer never arrived is unknown and is never sent again here.
+   */
+  async nativePage(path: string, request: NativeRequest = {}): Promise<NativeReply> {
+    if (this.closed) failure('closed');
+    const method = request.method ?? 'GET', epoch = this.generation;
+    if (!nativeRequestAllowed(path, request) || !isInteger(request.timeoutMs ?? 20000, 1, 60000)) failure('contextChanged');
+    this.path(path);
+    const body = request.body === undefined ? undefined : this.encode(request.body);
+    let reply: Wire;
+    try {
+      reply = await this.wire(path, method, body, {...(body ? {'Content-Type': 'application/json'} : {}), ...(request.headers ?? {})}, {timeoutMs: request.timeoutMs}, LIMIT);
+    } catch (error) {
+      if (method === 'POST' && error instanceof ShipClientError && error.code === 'transport') throw new OutcomeUnknownError();
+      throw error;
+    }
+    // A command that was put on the wire and then lost its window or its readable answer may have been carried
+    // out: its outcome is unknown, never "failed". Only a sign-in refusal or a missing page means nothing was done.
+    if (this.closed || epoch !== this.generation) {if (method === 'POST') throw new OutcomeUnknownError(); failure('contextChanged');}
+    if (reply.status === 401 || reply.status >= 300 && reply.status < 400) failure('authenticationRequired', reply.status);
+    let value: JsonObject;
+    try {
+      if (reply.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') failure('malformed');
+      value = asRecord(JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(reply.data)) as unknown);
+      if (!validJSON(value)) failure('malformed');
+    } catch {
+      if (reply.status === 404) return failure('unavailable', reply.status);
+      if (method === 'POST') throw new OutcomeUnknownError();
+      return failure('malformed', reply.status);
+    }
+    return Object.freeze({status: reply.status, value});
+  }
   private knownRefusal(error: unknown): boolean { return error instanceof ShipClientError && ['refused', 'authenticationRequired', 'cancelledBeforeSend'].includes(error.code); }
   private decodeCoding(value: JsonObject): CodingSnapshot {
     try {
@@ -966,11 +1154,11 @@ export class ShipClient {
     })); if (data.length > 131072) failure('tooLarge'); return data; }
     catch (error) { if (error instanceof ShipClientError) throw error; return failure('malformed'); }
   }
-  private async json(path: string, options: RequestOptions): Promise<JsonObject> {
+  private async json(path: string, options: RequestOptions, limit = LIMIT): Promise<JsonObject> {
     const body = options.body === undefined ? undefined : this.encode(options.body);
     const reply = await this.wire(path, options.method ?? 'GET', body, {
       ...(body ? { 'Content-Type': 'application/json' } : {}), ...(options.terminalNonce ? { 'x-terminal-nonce': options.terminalNonce } : {})
-    }, options, LIMIT);
+    }, options, limit);
     if (reply.status >= 300 && reply.status < 400) {
       const location = reply.headers.location;
       if (location) { try { const url = new URL(location, this.origin); if (url.origin === this.origin && url.pathname === '/~/login') failure('authenticationRequired'); }

@@ -107,7 +107,8 @@ export class CheckView implements vscode.Disposable {
   }
   rows(): MediaTreeRow[] {
     this.sync(); const observation = this.observation;
-    const children: MediaTreeRow[] = [{label: 'Observe retained checks…', command: {command: 'readymade.checks', title: 'Observe checks'}}];
+    const children: MediaTreeRow[] = [{label: 'Observe retained checks…', command: {command: 'readymade.checks', title: 'Observe checks'},
+      problem: !observation && this.project() ? {key: this.scope ?? 'unobserved', category: 'check', status: 'unknown', label: `${this.project()}: checks not observed`} : undefined}];
     children.push({label: 'Open Problems', command: {command: 'workbench.actions.view.problems', title: 'Open Problems'}});
     if (this.archiveError) children.push({label: this.archiveError});
     if (observation) {
@@ -117,7 +118,10 @@ export class CheckView implements vscode.Disposable {
         children.push({label: `Record ${report.sequence} · ${failures ? `${failures} failed` : `${report.values.length} passed`}`,
           icon: failures ? 'error' : 'pass', description: sameBasis(report.source, observation.source) ? 'observed session source' : 'historical source',
           tooltip: `Session ${report.session}\nRequest ${report.request}\nRecorded configuration ${report.configuration}`,
-          command: {command: 'readymade.showCheck', title: 'Inspect check evidence', arguments: [report.key]}});
+          command: {command: 'readymade.showCheck', title: 'Inspect check evidence', arguments: [report.key]},
+          problem: failures ? {key: JSON.stringify([observation.origin, report.key]), category: 'check',
+            status: sameBasis(report.source, observation.source) ? 'blocked' : 'historical',
+            label: `${this.project()}: ${failures} failed checks${sameBasis(report.source, observation.source) ? '' : ' on historical source'}`} : undefined});
       }
     }
     return [{id: 'checks', label: 'Checks', icon: 'checklist', description: observation ? `${observation.reports.length} reports` : 'not observed', children}];

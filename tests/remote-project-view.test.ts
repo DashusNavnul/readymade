@@ -72,61 +72,79 @@ async function fixture(run: (client: ShipClient, steps: Step[], captures: Captur
 }
 
 test('real HTTP uses cookie peer without codingState and UTF8 project header bytes', () => fixture(async (client, steps, captures) => {
-  steps.push((_c, r) => json(r, pending(), 202)); await client.projectViewSubmit(target);
+  steps.push((_c, r) => json(r, pending(), 202)); await client.projectViewSubmit(selector);
   const post = captures.at(-1)!;
   assert.equal(post.url, '/apps/readymade-collab/project-view'); assert.equal(post.method, 'POST');
   assert.equal(post.headers.origin, client.origin); assert.equal(post.headers.cookie, 'urbauth-~nec=fixture');
-  assert.equal(post.headers['x-readymade-project-view'], 'v1');
-  assert.deepEqual(JSON.parse(post.body), {schema: 'readymade-project-view-v1', ...target});
-  await assert.rejects(client.projectViewSubmit(target), blocked);
+  assert.equal(post.headers['x-readymade-project-view'], 'v2');
+  assert.deepEqual(JSON.parse(post.body), {schema: 'readymade-project-view-v2', ...selector});
+  await assert.rejects(client.projectViewSubmit(selector), blocked);
   steps.push((_c, r) => json(r, ready())); const result = await client.projectViewResult(selector);
   assert.equal(result.status, 'ready'); const get = captures.at(-1)!;
   assert.equal(get.method, 'GET'); assert.equal(get.url, '/apps/readymade-collab/project-view-result'); assert.equal(get.body, '');
   assert.equal(Buffer.from(get.headers['x-readymade-project'] as string, 'latin1').toString('utf8'), target.project);
   assert.equal(get.headers['x-readymade-project-view-request'], selector.request); assert.equal(client.snapshot, undefined);
-  steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await client.projectViewSubmit(target);
+  steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await client.projectViewSubmit({...selector, request: '0x2'});
 }));
 
-test('unknown publication never resends; missing and expired are observations only', async () => {
+test('lost read submission is recoverable by exact observation without resending', async () => {
   for (const [code, body, status] of [[404, {status: 'unknown', message: 'Observation not retained; no retry was issued.'}, 'missing'], [410, {status: 'expired', message: 'Historical observation expired.'}, 'expired']] as const) await fixture(async (client, steps, captures) => {
-    steps.push((_c, r) => r.socket!.destroy()); await assert.rejects(client.projectViewSubmit(target), OutcomeUnknownError);
+    steps.push((_c, r) => r.socket!.destroy()); await assert.rejects(client.projectViewSubmit(selector), OutcomeUnknownError);
+    await assert.rejects(client.projectViewSubmit({...selector, request: '0x2'}), blocked);
     steps.push((_c, r) => json(r, body, code)); assert.equal((await client.projectViewResult(selector)).status, status);
-    await assert.rejects(client.projectViewSubmit(target), blocked); assert.equal(captures.filter(c => c.method === 'POST' && c.url.includes('project-view')).length, 1);
+    assert.equal(captures.filter(c => c.method === 'POST' && c.url.includes('project-view')).length, 1);
+    steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await client.projectViewSubmit({...selector, request: '0x2'});
   });
 });
 
 test('known predispatch refusal permits a new explicit read; malformed reply and redirects do not', async () => {
   await fixture(async (client, steps) => {
     steps.push((_c, r) => json(r, {status: 'refused', message: 'view-capacity'}, 409));
-    await assert.rejects(client.projectViewSubmit(target), e => e instanceof ShipClientError && e.code === 'refused');
-    steps.push((_c, r) => json(r, pending(), 202)); await client.projectViewSubmit(target);
+    await assert.rejects(client.projectViewSubmit(selector), e => e instanceof ShipClientError && e.code === 'refused');
+    steps.push((_c, r) => json(r, pending(), 202)); await client.projectViewSubmit(selector);
   });
   for (const step of [((_c, r) => {r.writeHead(302, {location: '/elsewhere'}); r.end();}) as Step, ((_c, r) => json(r, {...pending(), peer: '~wes'}, 202)) as Step,
     ((_c, r) => {r.writeHead(202, {'content-type': 'application/json'}); r.end(' '.repeat(524289));}) as Step]) await fixture(async (client, steps) => {
-    steps.push(step); await assert.rejects(client.projectViewSubmit(target), OutcomeUnknownError); await assert.rejects(client.projectViewSubmit(target), blocked);
+    steps.push(step); await assert.rejects(client.projectViewSubmit(selector), OutcomeUnknownError); await assert.rejects(client.projectViewSubmit(selector), blocked);
   });
 });
 
+test('lost POST answer recovers retained source with GET and rejects a substituted request', () => fixture(async (client, steps, captures) => {
+  steps.push((_c, r) => r.socket!.destroy()); await assert.rejects(client.projectViewSubmit(selector), OutcomeUnknownError);
+  steps.push((_c, r) => json(r, {...ready(), request: '0x2'})); await assert.rejects(client.projectViewResult(selector));
+  await assert.rejects(client.projectViewSubmit({...selector, request: '0x2'}), blocked);
+  steps.push((_c, r) => json(r, ready())); assert.equal((await client.projectViewResult(selector)).status, 'ready');
+  assert.equal(captures.filter(c => c.method === 'POST' && c.url.includes('project-view')).length, 1);
+  steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await client.projectViewSubmit({...selector, request: '0x2'});
+}));
+
+test('a substituted submit nonce stays unknown and cannot release the original hold', () => fixture(async (client, steps) => {
+  steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await assert.rejects(client.projectViewSubmit(selector), OutcomeUnknownError);
+  steps.push((_c, r) => json(r, {status: 'unknown', message: 'Observation not retained; no retry was issued.'}, 404));
+  await client.projectViewResult({...selector, request: '0x2'});
+  await assert.rejects(client.projectViewSubmit({...selector, request: '0x3'}), blocked);
+}));
+
 test('correlated missing or expired permits only a new explicit read; old observations cannot release its hold', async () => {
   for (const [code, body] of [[404, {status: 'unknown', message: 'Observation not retained; no retry was issued.'}], [410, {status: 'expired', message: 'Historical observation expired.'}]] as const) await fixture(async (client, steps, captures) => {
-    steps.push((_c, r) => json(r, pending(), 202)); await client.projectViewSubmit(target);
+    steps.push((_c, r) => json(r, pending(), 202)); await client.projectViewSubmit(selector);
     steps.push((_c, r) => json(r, body, code)); await client.projectViewResult(selector);
     assert.equal(captures.filter(c => c.method === 'POST').length, 2); // Login and one read; GET never retries.
-    steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await client.projectViewSubmit(target);
+    steps.push((_c, r) => json(r, {...pending(), request: '0x2'}, 202)); await client.projectViewSubmit({...selector, request: '0x2'});
     steps.push((_c, r) => json(r, body, code)); await client.projectViewResult(selector);
-    await assert.rejects(client.projectViewSubmit(target), blocked);
+    await assert.rejects(client.projectViewSubmit(selector), blocked);
   });
 });
 
 test('unknown read on one project does not block a different target', () => fixture(async (client, steps) => {
-  steps.push((_c, r) => r.socket!.destroy()); await assert.rejects(client.projectViewSubmit(target), OutcomeUnknownError);
+  steps.push((_c, r) => r.socket!.destroy()); await assert.rejects(client.projectViewSubmit(selector), OutcomeUnknownError);
   const other = {...target, project: 'other'};
-  steps.push((_c, r) => json(r, {...pending(), ...other, request: '0x2'}, 202)); await client.projectViewSubmit(other);
-  await assert.rejects(client.projectViewSubmit(target), blocked);
+  steps.push((_c, r) => json(r, {...pending(), ...other, request: '0x2'}, 202)); await client.projectViewSubmit({...other, request: '0x2'});
+  await assert.rejects(client.projectViewSubmit(selector), blocked);
 }));
 
 test('ambiguous authenticated peer is rejected before dispatch', () => fixture(async (client, _steps, captures) => {
-  await assert.rejects(client.projectViewSubmit(target), e => e instanceof ShipClientError && e.code === 'authenticationRequired'); assert.equal(captures.length, 1);
+  await assert.rejects(client.projectViewSubmit(selector), e => e instanceof ShipClientError && e.code === 'authenticationRequired'); assert.equal(captures.length, 1);
 }, ['urbauth-~nec=fixture; Path=/', 'urbauth-~wes=fixture; Path=/']));
 
 test('in-flight observation cannot survive a new authentication epoch', () => fixture(async (client, steps) => {

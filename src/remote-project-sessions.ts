@@ -97,7 +97,7 @@ export function remoteProjectSessionsReply(status: number, value: unknown, expec
   const key = remoteProjectSessionsSelector({owner: r.owner, project: r.project, request: r.request});
   if (r.schema !== 'readymade-project-sessions-result-v1' || r.permissionGranted !== false || r.peer !== peer ||
       key.owner !== wanted.owner || key.project !== wanted.project || selected && key.request !== selected.request) invalid();
-  const reasons: Record<string, readonly string[]> = {pending: ['awaiting-owner'], ready: ['observed'], refused: ['watch-refused'],
+  const reasons: Record<string, readonly string[]> = {pending: ['awaiting-owner'], ready: ['observed'], refused: ['watch-refused', 'sessions-upgrade-required'],
     uncertain: ['sessions-timeout', 'closed-without-list', 'invalid-list', 'list-mismatch', 'unexpected-poke-ack']};
   if (typeof r.status !== 'string' || typeof r.reason !== 'string' || !Object.hasOwn(reasons, r.status) || !reasons[r.status].includes(r.reason) ||
       (!get && r.status !== 'pending') || status !== (r.status === 'pending' ? 202 : 200)) invalid();
@@ -106,6 +106,10 @@ export function remoteProjectSessionsReply(status: number, value: unknown, expec
   let observation: RemoteSessionsObservation | null = null;
   if (r.status === 'ready') observation = sessionsObservation(r.observation, key.owner, peer);
   else if (r.observation !== null) invalid();
+  // Older servers truthfully report truncation. Preserve that distinction as
+  // an upgrade refusal, never a usable partial catalog or a permission failure.
+  if (observation?.truncated) return Object.freeze({...key, peer, permissionGranted: false, status: 'refused',
+    reason: 'sessions-upgrade-required', deadline: r.deadline as string, retainedUntil: r.retainedUntil as string, observation: null});
   return Object.freeze({...key, peer, permissionGranted: false, status: r.status as 'pending' | 'ready' | 'refused' | 'uncertain',
     reason: r.reason, deadline: r.deadline as string, retainedUntil: r.retainedUntil as string, observation});
 }
@@ -129,6 +133,8 @@ export function remoteSessionShortId(id: string): string {
 /** Plain-language presentation of one reply. Nothing here requests, retries or renews anything. */
 export function remoteProjectSessionRows(reply: RemoteProjectSessionsReply): RemoteSessionRow[] {
   if (reply.status === 'pending') return [{label: 'Waiting for the owner', description: 'Refresh reads this same request again'}];
+  if (reply.status === 'refused' && reply.reason === 'sessions-upgrade-required' || reply.status === 'ready' && reply.observation?.truncated)
+    return [{label: 'Update Readymade and the collaboration service to read all shared sessions', description: 'This legacy endpoint cannot represent the complete catalog; no partial sessions are offered'}];
   if (reply.status === 'refused') return [{label: 'The owner did not share a session list with this ship'}];
   if (reply.status === 'uncertain') return [{label: 'No answer from the owner; nothing was retried'}];
   if (reply.status === 'missing') return [{label: 'Your ship no longer holds this list; nothing was retried'}];
@@ -137,7 +143,6 @@ export function remoteProjectSessionRows(reply: RemoteProjectSessionsReply): Rem
   if (!seen) return [];
   const rows: RemoteSessionRow[] = seen.sessions.map(s => ({label: remoteSessionShortId(s.id), description: s.phase,
     tooltip: `${s.working.desk} @ ${s.working.revision}\nObserved ${seen.observedAt}\nSession ${s.id}`}));
-  if (!rows.length && !seen.truncated) rows.push({label: 'No sessions are shared with you in this project'});
-  if (seen.truncated) rows.push({label: 'Showing the first ' + seen.sessions.length, description: 'The owner has more shared sessions'});
+  if (!rows.length) rows.push({label: 'No sessions are shared with you in this project'});
   return rows;
 }

@@ -69,6 +69,80 @@ test('changing project during either preflight prevents retaining or sending an 
     assert.equal(f.posts(), 0); assert.equal(j.entries().length, 0);
   }
 }));
+async function compatibilityFixture(directory: string) {
+  const f = fixture(directory), j = new CandidateDecisionJournal(directory);
+  f.row.reason = 'local-review-owner-incompatible'; f.intent.candidate = readCandidate(f.row, '~zod', '0x4');
+  await j.apply(f.client, f.intent, true);
+  f.row.reason = '';
+  return {...f, j, current: {...f.intent, candidate: readCandidate(f.row, '~zod', '0x4')}};
+}
+test('one explicit compatibility continuation preserves the original intent after a lost reply', () => temporary(async directory => {
+  const f = await compatibilityFixture(directory), file = join(directory, fs.readdirSync(directory).find(name => name.endsWith('.intent.json'))!);
+  const original = fs.readFileSync(file, 'utf8');
+  Object.assign(f.row.edits[0], {preview: {schema: 'native-coding-candidate-text-v1', original: 'old\n', proposed: 'new\n'}});
+  f.current.candidate = readCandidate(f.row, '~zod', '0x4');
+  assert.equal(f.j.canContinue(f.current), true);
+  await assert.rejects(f.j.continue(f.client, f.current, false), /consent/); assert.equal(f.posts(), 1);
+  f.lose(); await assert.rejects(f.j.continue(f.client, f.current, true), /Lost reply/);
+  assert.equal(fs.readFileSync(file, 'utf8'), original); assert.equal(f.posts(), 2);
+  const reopened = new CandidateDecisionJournal(directory), continuation = new CandidateDecisionJournal(join(directory, 'continuation')).entries();
+  assert.equal(continuation.length, 1); assert.deepEqual(continuation[0], f.current);
+  assert.equal(reopened.canContinue(f.current), false);
+  await assert.rejects(reopened.continue(f.client, f.current, true), /cannot be continued/);
+  assert.equal((await reopened.recover(f.client, f.intent)).applied, false);
+  f.row.stage = 'applied'; f.row.landed = {...f.row.basis, id: '0x9', number: 2, root: '0v3', commit: '0v4'};
+  assert.equal((await reopened.recover(f.client, f.intent)).applied, true); assert.equal(f.posts(), 2);
+}));
+test('two windows can submit only one separate compatibility continuation', () => temporary(async directory => {
+  const f = await compatibilityFixture(directory);
+  const results = await Promise.allSettled([new CandidateDecisionJournal(directory).continue(f.client, f.current, true),
+    new CandidateDecisionJournal(directory).continue(f.client, f.current, true)]);
+  assert.equal(f.posts(), 2); assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(f.j.entries().length, 1); assert.equal(new CandidateDecisionJournal(join(directory, 'continuation')).entries().length, 1);
+}));
+test('unknown or unrelated retained requests never authorize a compatibility continuation', async () => {
+  for (const reason of [undefined, '', 'candidate-outcome-unknown', 'local-review-scope-revoked']) await temporary(async directory => {
+    const f = fixture(directory), j = new CandidateDecisionJournal(directory);
+    if (reason !== undefined) {
+      f.row.reason = reason; f.intent.candidate = readCandidate(f.row, '~zod', '0x4'); await j.apply(f.client, f.intent, true);
+    }
+    const current = {...f.intent, candidate: {...f.intent.candidate, reason: ''}};
+    assert.equal(j.canContinue(current), false); await assert.rejects(j.continue(f.client, current, true), /cannot be continued/);
+    assert.equal(f.posts(), reason === undefined ? 0 : 1);
+  });
+});
+test('continuation refuses changed approval evidence, source, identity and uncleared reasons', () => temporary(async directory => {
+  const f = await compatibilityFixture(directory);
+  const changes: ((intent: CandidateDecisionIntent) => void)[] = [
+    i => {i.origin = 'https://other.example';}, i => {i.project = 'other';}, i => {i.candidate.request = '0xa';},
+    i => {i.candidate.basis = {...i.candidate.basis, number: 2};}, i => {i.candidate.edits[0].after = '0xb';},
+    i => {i.candidate.checks[0].passed = false;}, i => {i.candidate.checks[0].detail = 'Changed';},
+    i => {i.candidate.checks.push({...i.candidate.checks[0]}); i.candidate.checkCount++;},
+    i => {i.candidate.artifact = 'changed';}, i => {i.candidate.reason = 'local-review-owner-incompatible';},
+    i => {i.candidate.reason = 'another-refusal';}, i => {i.candidate.stage = 'unknown';},
+    i => {i.candidate.stage = 'landing';}, i => {i.candidate.stage = 'refused';}, i => {i.candidate.decision = 'revise';},
+    i => {i.candidate.stage = 'applied'; i.candidate.landed = {...i.candidate.basis, id: '0xc', number: 2};}
+  ];
+  for (const change of changes) {
+    const altered = structuredClone(f.current); change(altered); await assert.rejects(f.j.continue(f.client, altered, true));
+  }
+  assert.equal(f.posts(), 1); assert.equal(new CandidateDecisionJournal(join(directory, 'continuation')).entries().length, 0);
+}));
+test('continuation freshly rechecks native evidence and the active project before retaining intent', async () => {
+  for (const mode of ['source', 'approval', 'project']) await temporary(async directory => {
+    const f = await compatibilityFixture(directory); let reads = 0, active = true;
+    f.client.codingState = async () => {
+      if (mode === 'source') f.state.sessions[0].source = {...f.row.basis, id: '0x9', number: 2};
+      if (++reads === 2) {
+        if (mode === 'approval') f.row.checks[0].passed = false;
+        if (mode === 'project') active = false;
+      }
+      return f.state;
+    };
+    await assert.rejects(f.j.continue(f.client, f.current, true, () => active), /changed/);
+    assert.equal(f.posts(), 1); assert.equal(new CandidateDecisionJournal(join(directory, 'continuation')).entries().length, 0);
+  });
+});
 test('HTTP apply carries only exact identity, basis and consent and never repeats lost delivery', async () => {
   let posts = 0, captured: unknown;
   const state = {candidateDecide: true, nonce: '0v1', cursor: '0x1', owner: '~zod', session: '0x4', ready: true, after: 0, projects: [], records: [],

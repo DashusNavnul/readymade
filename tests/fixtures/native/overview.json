@@ -1,0 +1,55 @@
+{
+ "blockers": [
+  {
+   "kind": "blocker attention",
+   "what": "Candidate check queue: 115 candidates, 5 in progress, 8 unknown."
+  }
+ ],
+ "changes": [
+  {
+   "kind": "landed",
+   "what": "0xad3a landed in pataphor-demo-mp-work at revision 8"
+  },
+  {
+   "kind": "peer work done",
+   "what": "~nec request 0x1002 finished: judgment"
+  }
+ ],
+ "decisions": [
+  {
+   "kind": "candidate review",
+   "what": "0x6690 in readymade-multifile-parity waits for a review decision"
+  },
+  {
+   "kind": "candidate review",
+   "what": "0x4d0d in readymade-moon-build-proof waits for a review decision"
+  },
+  {
+   "kind": "candidate review",
+   "what": "0x2147 in readymade-live-console-20261115 waits for a review decision"
+  },
+  {
+   "kind": "candidate review",
+   "what": "0xaffc in readymade-moon-build-proof waits for a review decision"
+  },
+  {
+   "kind": "candidate review",
+   "what": "0x7516 in readymade-moon-build-proof waits for a review decision"
+  },
+  {
+   "kind": "question",
+   "what": "claude asks on demo-rate-cap: Should the session rate cap stay at 60 turns a day for the demo project? (consequence: Raising it lets collaborators spend more subscription turns.)"
+  }
+ ],
+ "next": [
+  {
+   "kind": "peer work queued",
+   "what": "~nec request 0x1003: dispatches on the next 30 s tick once session 0xe1b1 is idle"
+  }
+ ],
+ "observedAt": "~2026.11.17..12.42.40..ef7d",
+ "policyAdmissionsLeft": 2,
+ "running": [],
+ "schema": "owner-overview-v1",
+ "unavailable": []
+}

@@ -13,8 +13,9 @@ import { ComposerJournal, attachComposerJournal } from './composer-journal';
 import {authenticateShip, normalizeShipAddress, switchTarget, type SwitchTarget, connectionFailureMessage, automaticShip, lastShip, type LastShip} from './ship-connection';
 import {discoverLocalPlanets, recheckLocalPlanet, slowShipNotice, type LocalPlanet} from './planet-discovery';
 import {queryLoginCode} from './planet-discovery-wire';
+import type {ProjectProblem} from './project-problems';
 
-export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[] }
+export interface MediaTreeRow { label: string; id?: string; icon?: string; tooltip?: string; bindingId?: string; description?: string; command?: vscode.Command; children?: MediaTreeRow[]; problem?: ProjectProblem }
 interface SelectedOrigin {origin: string; planet?: LocalPlanet}
 const SWITCH_KEY = 'readymade.switchTo';
 interface PlanetChoice extends vscode.QuickPickItem {planet?: LocalPlanet; operation?: 'manual' | 'refresh'}

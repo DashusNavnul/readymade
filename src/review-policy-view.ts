@@ -3,6 +3,7 @@ import type { ShipClient } from './ship-client';
 import type { MediaTreeRow } from './media-workbench';
 import { reviewPolicy, type ReviewPolicy } from './review-policy';
 import { ReviewPolicyJournal } from './review-policy-journal';
+import { SettledDocuments } from './settled-documents';
 
 export class ReviewPolicyView implements vscode.Disposable {
   private client?: ShipClient;
@@ -11,13 +12,14 @@ export class ReviewPolicyView implements vscode.Disposable {
   private busy = false;
   private text = 'Observe a session to configure its project reviewer.';
   private readonly uri = vscode.Uri.parse('readymade-review-policy:/policy.json');
-  private readonly event = new vscode.EventEmitter<vscode.Uri>();
+  /** Changes reach the document one at a time; overlapping ones can leave it as a mix of two texts. */
+  private readonly documents = new SettledDocuments(uri => uri.toString() === this.uri.toString() ? this.text : undefined);
   private readonly registration: vscode.Disposable;
   constructor(private readonly project: () => string | undefined, private readonly changed: () => void,
     private readonly journal: ReviewPolicyJournal, private readonly confirm: (detail: string) => Thenable<boolean> = async detail =>
       (await vscode.window.showWarningMessage('Change project review policy?', {modal: true, detail}, 'Confirm')) === 'Confirm') {
     this.registration = vscode.workspace.registerTextDocumentContentProvider('readymade-review-policy', {
-      onDidChange: this.event.event, provideTextDocumentContent: uri => {
+      onDidChange: this.documents.onDidChange, provideTextDocumentContent: uri => {
         if (uri.toString() !== this.uri.toString()) throw vscode.FileSystemError.FileNotFound(uri);
         return this.text;
       }
@@ -27,7 +29,7 @@ export class ReviewPolicyView implements vscode.Disposable {
   private sync(): void {
     const key = JSON.stringify([this.client?.origin, this.client?.snapshot?.owner, this.project()]);
     if (key === this.context) return;
-    this.context = key; this.held = undefined; this.text = 'Observe the selected project review policy.'; this.event.fire(this.uri);
+    this.context = key; this.held = undefined; this.text = 'Observe the selected project review policy.'; this.documents.changed(this.uri);
   }
   private entries() {return this.client && this.project() ? this.journal.entries().filter(i =>
     i.origin === this.client?.origin && i.owner === this.client?.snapshot?.owner && i.project === this.project()) : [];}
@@ -99,8 +101,8 @@ export class ReviewPolicyView implements vscode.Disposable {
     } finally {this.busy = false; this.changed();}
   }
   private async show(value: unknown): Promise<void> {
-    this.text = JSON.stringify(value, null, 2); this.event.fire(this.uri);
+    this.text = JSON.stringify(value, null, 2); this.documents.changed(this.uri);
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(this.uri), {preview: false});
   }
-  dispose(): void {this.client = undefined; this.held = undefined; this.context = ''; this.registration.dispose(); this.event.dispose();}
+  dispose(): void {this.client = undefined; this.held = undefined; this.context = ''; this.registration.dispose(); this.documents.dispose();}
 }
