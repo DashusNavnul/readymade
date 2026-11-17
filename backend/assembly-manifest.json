@@ -35,8 +35,8 @@
     "app/cantrip.hoon": {
       "component": "application",
       "source": "app/cantrip.hoon",
-      "sha256": "0ab06649ed073db18657176b64fa20d003c7631b609aa23e96d1c3b22e385c11",
-      "bytes": 153831
+      "sha256": "5e297ed8e3eedaaccad100753b2424557e41ab65709190b76cb9d5b07bd98eb3",
+      "bytes": 167245
     },
     "app/claz.hoon": {
       "component": "upstream",
@@ -47,8 +47,8 @@
     "app/cli-inference.hoon": {
       "component": "application",
       "source": "app/cli-inference.hoon",
-      "sha256": "f54f79493b825ef153ab8d443ebf3fd06c04a7539f00de5a8d3c86f41f217ddd",
-      "bytes": 10501
+      "sha256": "8c43077f8ed9c0c63dfe500eabbe3bd3dd513dfd7a37220345be1a7055cb8c1e",
+      "bytes": 11094
     },
     "app/dbug.hoon": {
       "component": "upstream",
@@ -149,8 +149,8 @@
     "app/multiplayer-runtime.hoon": {
       "component": "application",
       "source": "app/multiplayer-runtime.hoon",
-      "sha256": "b7637bcc3453f172cc8ca501527fa90efc0933270ae9461acdb911196568f835",
-      "bytes": 8521
+      "sha256": "da555aeb25bc01e56642c919dc84f6c744a4126971b502c8d14d45814bf3c8fa",
+      "bytes": 8993
     },
     "app/native-coding-source-import.hoon": {
       "component": "application",
@@ -161,8 +161,8 @@
     "app/pataphor-native-console.hoon": {
       "component": "application",
       "source": "app/pataphor-native-console.hoon",
-      "sha256": "d78c629fe71af069be0579806f008b6413524a39b3508955c771131196823d2e",
-      "bytes": 22811
+      "sha256": "a7445ac06bc4e320eff8ff63a75c7f7bef76bf2b7e4f5b4e023b2fa86352e81c",
+      "bytes": 26615
     },
     "app/pataphor-page.hoon": {
       "component": "application",
@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "8bf1c9cbeb2f0bb04f7c0e87374243b9074f981eed47dcde19092fb2d8ece57c",
-      "bytes": 78600
+      "sha256": "50b9396f38f3e1c11ddd77dc543d94730d1f7bbec66f4343c8c9e4887ef396c4",
+      "bytes": 107989
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -233,8 +233,8 @@
     "app/viki.hoon": {
       "component": "application",
       "source": "app/viki.hoon",
-      "sha256": "1b1d58f41822e49975a36f352d73e5168313437d2754a2e095548c2cab73eb18",
-      "bytes": 189223
+      "sha256": "325885e09bc0c10cb595086ce1c09d2967d93b209b98f40182c412bb3ea4a50d",
+      "bytes": 196076
     },
     "data/cli-connector.txt": {
       "component": "application",
@@ -245,8 +245,8 @@
     "data/readymade-guest-manifest.txt": {
       "component": "application",
       "source": "data/readymade-guest-manifest.txt",
-      "sha256": "5966acdd4985e14900a75f93b62f18d5fa5480698693d50558d32a9cc66dd3c9",
-      "bytes": 13167
+      "sha256": "06f47ee641a3dc88c8a19e5770d3152ffcd79de8ae7f63bd5d90a4165e93e2c8",
+      "bytes": 14241
     },
     "desk.bill": {
       "component": "application",
@@ -1385,8 +1385,8 @@
     "gen/readymade-project-view-http-proof.hoon": {
       "component": "application",
       "source": "gen/readymade-project-view-http-proof.hoon",
-      "sha256": "3dcb383f1c9ef795ff1d6883d125ba4b90f75e86d56823ae334c0ce252ee93ea",
-      "bytes": 3712
+      "sha256": "2b2699ebb9557c5ff5c3ea938b40e63fec34cb41eb100ffe678c1b9f253f5d13",
+      "bytes": 4858
     },
     "gen/readymade-workspace-result-proof.hoon": {
       "component": "application",
@@ -1826,6 +1826,12 @@
       "sha256": "8b48e63b520001d1329707ffe411f4977c05fce481cef1d1abdf6bacaf084215",
       "bytes": 3580
     },
+    "lib/cantrip-grant-archive.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-grant-archive.hoon",
+      "sha256": "0ccf4860b48e69e9ba89db8aee8ce1fab23becd5ed3ead80b5119b74c222cf89",
+      "bytes": 5118
+    },
     "lib/cantrip-land-flect.hoon": {
       "component": "application",
       "source": "lib/cantrip-land-flect.hoon",
@@ -1877,8 +1883,8 @@
     "lib/cantrip-native-coding.hoon": {
       "component": "application",
       "source": "lib/cantrip-native-coding.hoon",
-      "sha256": "4978f1072d01622fdb01f6ae7b453852f9622a850cb293fe9bfdc579c7ac6d15",
-      "bytes": 25627
+      "sha256": "b909bfe156dc2ff4acd7506c487367070b630f0ca40e7b7270f8e06ff811f854",
+      "bytes": 29181
     },
     "lib/cantrip-native-completion-review.hoon": {
       "component": "application",
@@ -1931,8 +1937,32 @@
     "lib/cantrip-project-access.hoon": {
       "component": "application",
       "source": "lib/cantrip-project-access.hoon",
-      "sha256": "e521ae5a30f5716ab1edadd51da488aa51672d1e8f5b14e378d7e7c1e826f72d",
-      "bytes": 9001
+      "sha256": "b9ac84ed1bdf2922aa81dea0f5ac30e6ef7384242a5f4cf8e0f19978f375eac1",
+      "bytes": 11534
+    },
+    "lib/cantrip-project-bundle-owner-state.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-bundle-owner-state.hoon",
+      "sha256": "12f76d69a3db4604a926b3ec591ad67785b6f7e11146d6619c20c9def09678bc",
+      "bytes": 3964
+    },
+    "lib/cantrip-project-bundle-read.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-bundle-read.hoon",
+      "sha256": "d513eb86d4a14d79c9a9a0b66063e9cb1e892297a670d267cd68e0f4bd851a4f",
+      "bytes": 5002
+    },
+    "lib/cantrip-project-bundle-runtime.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-bundle-runtime.hoon",
+      "sha256": "ee930b36bce0a14fc0ac27213888501cc3de5e0a1d1f497719a553b2a62e1bdf",
+      "bytes": 7071
+    },
+    "lib/cantrip-project-receipt-archive.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-receipt-archive.hoon",
+      "sha256": "dc3c545f5a44783a09cefc1517e5a210a94d0b9e74f5f88a4ec3616f66ca21c3",
+      "bytes": 13371
     },
     "lib/cantrip-project-receipt.hoon": {
       "component": "application",
@@ -1958,11 +1988,29 @@
       "sha256": "4486ec6e2acba987f69e67e96faa32ee0b497c7c974929ab361e478eb5f91285",
       "bytes": 2120
     },
+    "lib/cantrip-project-session-stream.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-session-stream.hoon",
+      "sha256": "56e136c17c6f74ba129e3067935f06e27ff303312f30a45a8ad065a7186ae1a8",
+      "bytes": 4794
+    },
     "lib/cantrip-project-session.hoon": {
       "component": "application",
       "source": "lib/cantrip-project-session.hoon",
-      "sha256": "4b59064228be75b9cd5d7b28f60f591fc969566b65be3bfe43df8a26863af9c8",
-      "bytes": 4723
+      "sha256": "636759db011c553b50f536926fa7af1d86fbcf1614778c377ff5e82c052a1a96",
+      "bytes": 4769
+    },
+    "lib/cantrip-project-sessions-page-runtime.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-sessions-page-runtime.hoon",
+      "sha256": "550956819879ba3b391b2f074f70541850c293d77d89f4b413de8d4ef52186f6",
+      "bytes": 2211
+    },
+    "lib/cantrip-project-sessions-page.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-sessions-page.hoon",
+      "sha256": "73e57d24c6ebb07343458cc09fd6ffdedafcfcd2316e0d78792a7b2c41de0c49",
+      "bytes": 5219
     },
     "lib/cantrip-project-sessions-runtime.hoon": {
       "component": "application",
@@ -1973,8 +2021,26 @@
     "lib/cantrip-project-sessions.hoon": {
       "component": "application",
       "source": "lib/cantrip-project-sessions.hoon",
-      "sha256": "2939cba4a57ced9fc3c5b186f5451c492f85e0a7efd873c9243b05d287c29e21",
-      "bytes": 5081
+      "sha256": "66dfdca678092c5c62e65af427d5a4ced9c9ef1ae9811837d06dccbbc9807a7b",
+      "bytes": 5120
+    },
+    "lib/cantrip-project-suggestion-archive-io.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-suggestion-archive-io.hoon",
+      "sha256": "0ce8262a0e3d51a11cf4f4c98431f5ef6233ab771f34c3cd539b8c208822e679",
+      "bytes": 14011
+    },
+    "lib/cantrip-project-suggestion-archive-runtime.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-suggestion-archive-runtime.hoon",
+      "sha256": "a87754ab5b02fa6c2f9acb26b9412953af1286bb9afce1f95d4bd885f859d5bc",
+      "bytes": 22276
+    },
+    "lib/cantrip-project-suggestion-journal.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-project-suggestion-journal.hoon",
+      "sha256": "b02b6ef085514410e0fd9eb159fea1a0eb4a9bba127f83331a28657eb6683473",
+      "bytes": 6777
     },
     "lib/cantrip-ratification-readiness.hoon": {
       "component": "application",
@@ -2011,6 +2077,12 @@
       "source": "lib/cantrip-shadow.hoon",
       "sha256": "6ecf311fd4a9970d942c452d30f6c07162d8dce14077142535209b578dfa050e",
       "bytes": 2048
+    },
+    "lib/cantrip-standing-policy.hoon": {
+      "component": "application",
+      "source": "lib/cantrip-standing-policy.hoon",
+      "sha256": "11826353e3aa652b6edce563f8cc4498a20e4b9320afcc2d731fb82b2f27a5f2",
+      "bytes": 6136
     },
     "lib/cantrip-star-govern-law.hoon": {
       "component": "application",
@@ -2107,6 +2179,12 @@
       "source": "lib/cli-connector-source.hoon",
       "sha256": "89c14ed6ab9ae623b93bddc95ade35c8a1c1aab6e1e23e7529a8929d74cb3731",
       "bytes": 3095
+    },
+    "lib/cli-inference-diagnostics.hoon": {
+      "component": "application",
+      "source": "lib/cli-inference-diagnostics.hoon",
+      "sha256": "5ec3ebab7a082869968a70223c8dcde9b5609275eee1e8329d5620b00454f959",
+      "bytes": 6515
     },
     "lib/cli-inference-http.hoon": {
       "component": "application",
@@ -2702,6 +2780,12 @@
       "sha256": "f5846f397719c56beb177ed302ebd95ea143a4daffe32a6c645c177d5e3f09d1",
       "bytes": 88253
     },
+    "lib/memory-packet.hoon": {
+      "component": "application",
+      "source": "lib/memory-packet.hoon",
+      "sha256": "60e5bb4d751401722d394dcd9ec5b6a9473c4d96ffc1f19088452557ba857ef8",
+      "bytes": 12319
+    },
     "lib/memory-tier.hoon": {
       "component": "application",
       "source": "lib/memory-tier.hoon",
@@ -2828,6 +2912,12 @@
       "sha256": "a4e97a20575d7c1f5e723ea6c47413df10cc60eda83dcea7c13bba1f77cff0b4",
       "bytes": 10486
     },
+    "lib/multiplayer-project-graf.hoon": {
+      "component": "application",
+      "source": "lib/multiplayer-project-graf.hoon",
+      "sha256": "8f0e0f8d5e0550a007a0238224d2e9d9e94ffb4912f9b9a924fd1315fb1be6a3",
+      "bytes": 5132
+    },
     "lib/multiplayer-project-role.hoon": {
       "component": "application",
       "source": "lib/multiplayer-project-role.hoon",
@@ -2888,11 +2978,17 @@
       "sha256": "47bca4fef0476de82db482414287493c7d0dc848a7914e1dc3c6845e0564a559",
       "bytes": 27108
     },
+    "lib/native-capacity-http.hoon": {
+      "component": "application",
+      "source": "lib/native-capacity-http.hoon",
+      "sha256": "3bbce7660775ef9fa409562a27f920fc8b699f506370dede8b22ac87d90f943d",
+      "bytes": 6001
+    },
     "lib/native-coding-accept.hoon": {
       "component": "application",
       "source": "lib/native-coding-accept.hoon",
-      "sha256": "6f99bd95222a5e4089a8b90e2ec37ea417d711a407744047722adc91a0e153b2",
-      "bytes": 17549
+      "sha256": "2442d9ed2875ea95a18c57e5ccf083ae8fa40deb5983464ecf4a68177d947138",
+      "bytes": 23591
     },
     "lib/native-coding-bootstrap.hoon": {
       "component": "application",
@@ -2918,11 +3014,23 @@
       "sha256": "162e42f084b96a37ead1d8c31ecb6ee738c68a6bee8fa01e229e23fc636b1755",
       "bytes": 2659
     },
+    "lib/native-coding-candidate-preview.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-candidate-preview.hoon",
+      "sha256": "d5402bbb4b89873e9a74db56fd55a2b495a9adb5e934c91ce406b2f50c01cd0f",
+      "bytes": 2078
+    },
     "lib/native-coding-check-authorization.hoon": {
       "component": "application",
       "source": "lib/native-coding-check-authorization.hoon",
       "sha256": "0b758b27c50fbb883384ec7cfcb844e6be79089c6bd6fe7e5122094ba2766874",
       "bytes": 9727
+    },
+    "lib/native-coding-check-slot-http.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-check-slot-http.hoon",
+      "sha256": "2fd42b837dacd55b97cc3a6783c4c19fa8ba59a1e533ec8e549d8649ac9a9f07",
+      "bytes": 5537
     },
     "lib/native-coding-compile-trace.hoon": {
       "component": "application",
@@ -3134,6 +3242,12 @@
       "sha256": "7f72c623c1939fb37b78c8f1155f8200f7a2d0446066d4a9ca936883a2b8a2ee",
       "bytes": 12749
     },
+    "lib/native-coding-editor-delivery.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-editor-delivery.hoon",
+      "sha256": "9541822171dbd7a911ef8a6868f67dc2b4ebeebc20f9e359eda1678eb7a1d48b",
+      "bytes": 944
+    },
     "lib/native-coding-editor-profile.hoon": {
       "component": "application",
       "source": "lib/native-coding-editor-profile.hoon",
@@ -3239,8 +3353,8 @@
     "lib/native-coding-http.hoon": {
       "component": "application",
       "source": "lib/native-coding-http.hoon",
-      "sha256": "ca68232cda7f20abd7d2ef49460fd1b37bf8631ab8833d386a205620af08f803",
-      "bytes": 26550
+      "sha256": "ef0e5cbb6ff6179215a476ccf824599ccf1440c7a8fecb60cc08b648ea3d9fcb",
+      "bytes": 29107
     },
     "lib/native-coding-inference.hoon": {
       "component": "application",
@@ -3257,8 +3371,8 @@
     "lib/native-coding-job-runner.hoon": {
       "component": "application",
       "source": "lib/native-coding-job-runner.hoon",
-      "sha256": "9914941b7a2cf6ba3d592d20a11fa3ce4af1dbb6507dcfe62559363b621da50b",
-      "bytes": 13429
+      "sha256": "6febbd177e882d3a673595a7e660180484973615f0d5df2dba520e7aee25d13a",
+      "bytes": 16147
     },
     "lib/native-coding-judgment.hoon": {
       "component": "application",
@@ -3269,14 +3383,14 @@
     "lib/native-coding-local-decision.hoon": {
       "component": "application",
       "source": "lib/native-coding-local-decision.hoon",
-      "sha256": "7bde9ac4d05408fa37c20ca4e24d479e8240a6b64079b590a802eaa7f6ece65c",
-      "bytes": 7796
+      "sha256": "88ed700540107ae5133e8e8652a8eb66f5409805479e8a4928f08b95debf266a",
+      "bytes": 8312
     },
     "lib/native-coding-local-review-agent.hoon": {
       "component": "application",
       "source": "lib/native-coding-local-review-agent.hoon",
-      "sha256": "6ef8f2d3daf93440386aa10d3d9ed7d58e8a3935bb602433f40b18dbcb007e98",
-      "bytes": 14799
+      "sha256": "41fd967c3383fdf354e8277300c07bf5871673aa3e091bdd7acdd814db7dba04",
+      "bytes": 16390
     },
     "lib/native-coding-local-review-artifact.hoon": {
       "component": "application",
@@ -3287,14 +3401,14 @@
     "lib/native-coding-local-review-state.hoon": {
       "component": "application",
       "source": "lib/native-coding-local-review-state.hoon",
-      "sha256": "1d059c90db2be3e77f7d77b9f3108a6353ec3bf5b2389921e06d674e78b1fd4f",
-      "bytes": 11394
+      "sha256": "310850dc77be38a2d8347a58d91b22ec530f47a2290964b2b1e060a932a8c538",
+      "bytes": 13230
     },
     "lib/native-coding-local-review.hoon": {
       "component": "application",
       "source": "lib/native-coding-local-review.hoon",
-      "sha256": "933dc910cd7d554f1b797ae0b484e321063712fdb0079fd4060191c7f353d1ef",
-      "bytes": 24412
+      "sha256": "7cebd26e633159ef43079d17c557cc64d7f5fe4e5c0de45d8988271e2fd508fb",
+      "bytes": 26183
     },
     "lib/native-coding-loop-law.hoon": {
       "component": "application",
@@ -3305,8 +3419,8 @@
     "lib/native-coding-loop.hoon": {
       "component": "application",
       "source": "lib/native-coding-loop.hoon",
-      "sha256": "5bbbfe6886e3f3c8944763fb7e73744054b4b06c522ee85f76bf1cf44a1a5e68",
-      "bytes": 60761
+      "sha256": "4206c30412ba123d63077d1231f8854d6224bb06dee2a635d9e1daf99a9d0bcb",
+      "bytes": 60925
     },
     "lib/native-coding-module-sources.hoon": {
       "component": "application",
@@ -3347,8 +3461,14 @@
     "lib/native-coding-project.hoon": {
       "component": "application",
       "source": "lib/native-coding-project.hoon",
-      "sha256": "a32fd8a83b3cfc1b018be3bd7000bbad0a8a6c0f4243873c1fbe61689051ca26",
-      "bytes": 8667
+      "sha256": "cb7714142dd492fe4318b49e7fae28674af20648c5396536ea08723b7052e0cf",
+      "bytes": 9411
+    },
+    "lib/native-coding-provenance.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-provenance.hoon",
+      "sha256": "4296fda7c1d88ee65f32970d7a2ce7edda084f3283d380b18289f044062bfd7a",
+      "bytes": 5967
     },
     "lib/native-coding-provider-attestation.hoon": {
       "component": "application",
@@ -3401,8 +3521,8 @@
     "lib/native-coding-review-http.hoon": {
       "component": "application",
       "source": "lib/native-coding-review-http.hoon",
-      "sha256": "d45298b24f562b4acd579760a589aedd0b8b3f7e1b13124eb1c0f933cc6b8e38",
-      "bytes": 3499
+      "sha256": "07199dee4ce705c403780bd7f0ec3af139204b88ff1e5b462e520d37fd101787",
+      "bytes": 3727
     },
     "lib/native-coding-review-inspection-orchestration.hoon": {
       "component": "application",
@@ -3458,6 +3578,60 @@
       "sha256": "d02dc0a2cc5ee808a699ba747e21fa5713a5c45f3bfbe5693e7b4d2e3c6a3e63",
       "bytes": 3442
     },
+    "lib/native-coding-session-archive-carried.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-carried.hoon",
+      "sha256": "71178919571dde9a511369fae2a9a96917f10307fa35f4ebb2a2597df1c98ef7",
+      "bytes": 2807
+    },
+    "lib/native-coding-session-archive-history-io.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-history-io.hoon",
+      "sha256": "5bbac1b91749b68fe5609bbce01c321d1483ca593d7a26395e2cd824cad73825",
+      "bytes": 7530
+    },
+    "lib/native-coding-session-archive-history.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-history.hoon",
+      "sha256": "9264833a4aaad1847e4bc8098517007b2e88b3a8d8765ab0b30ac26845e1b4c7",
+      "bytes": 2267
+    },
+    "lib/native-coding-session-archive-http.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-http.hoon",
+      "sha256": "ad2831766d380db566e29d2f128e08dd4035d592b7d9c4066bd9d7484c1cb183",
+      "bytes": 8858
+    },
+    "lib/native-coding-session-archive-list.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-list.hoon",
+      "sha256": "f8c637dbea015aa3fed9da2ae57e4731cc413fbc71546c56926eb2a8fd6b5464",
+      "bytes": 1179
+    },
+    "lib/native-coding-session-archive-retirement.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-retirement.hoon",
+      "sha256": "9fcbde4336f20934a304ef179f6d39720594c38f310f1d0d674de74c1520662b",
+      "bytes": 3494
+    },
+    "lib/native-coding-session-archive-runtime.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-archive-runtime.hoon",
+      "sha256": "627f789d43bcfa17bad6121827c2dfdcb800751deec5cd57576e20635cadb9bc",
+      "bytes": 4967
+    },
+    "lib/native-coding-session-catalog-http.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-catalog-http.hoon",
+      "sha256": "1c53619360cf73203fccc638cb2981253530672589f5cac3dd7d124a0f5d06c4",
+      "bytes": 5880
+    },
+    "lib/native-coding-session-catalog.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-session-catalog.hoon",
+      "sha256": "efec96db59983b44266efb51b7cba2ea3e27837460bf68a3ea6cbba7af27c19c",
+      "bytes": 4598
+    },
     "lib/native-coding-session-project.hoon": {
       "component": "application",
       "source": "lib/native-coding-session-project.hoon",
@@ -3485,8 +3659,8 @@
     "lib/native-coding-solo-review-http.hoon": {
       "component": "application",
       "source": "lib/native-coding-solo-review-http.hoon",
-      "sha256": "ad20a98bac4489579be8eb5ba1a6f21f4a9f5c3d12a650ce1ac7eff94ae981c1",
-      "bytes": 8593
+      "sha256": "464dc3f55b7809bdcc9c13231913957141055f3fcfcac90211b70af6f02f57b4",
+      "bytes": 13262
     },
     "lib/native-coding-source-import-http.hoon": {
       "component": "application",
@@ -3578,6 +3752,18 @@
       "sha256": "a91b1cbdbaa5fb60bb8c0ee76c99f827c6b069d3055aa64937f9b9348a52b13c",
       "bytes": 6146
     },
+    "lib/native-coding-worker-owner-archive-io.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-worker-owner-archive-io.hoon",
+      "sha256": "d61eb1ae0df9d814a8b306643383104fa7071fe47389273f413bf07fab953223",
+      "bytes": 10895
+    },
+    "lib/native-coding-worker-owner-archive.hoon": {
+      "component": "application",
+      "source": "lib/native-coding-worker-owner-archive.hoon",
+      "sha256": "19d20d2f21f757b640ae281bc08915b8192734b1b25283018be79b95ba7d3c82",
+      "bytes": 7240
+    },
     "lib/native-coding-worker-owner-read.hoon": {
       "component": "application",
       "source": "lib/native-coding-worker-owner-read.hoon",
@@ -3587,8 +3773,8 @@
     "lib/native-coding-worker-owner-runtime.hoon": {
       "component": "application",
       "source": "lib/native-coding-worker-owner-runtime.hoon",
-      "sha256": "c0130fc21779dcee00e185f0fa845c62c15a356f74b1310c717dd68df0d648ee",
-      "bytes": 26555
+      "sha256": "01bcae8357444b15fa53e1ebdfaaef95103245b647d563d159abfb47b7e9ac8c",
+      "bytes": 35112
     },
     "lib/native-coding-worker-owner.hoon": {
       "component": "application",
@@ -3599,8 +3785,8 @@
     "lib/native-coding-worker-runtime.hoon": {
       "component": "application",
       "source": "lib/native-coding-worker-runtime.hoon",
-      "sha256": "fcdcc59c7525bde6c3db808493a1e37d13689b1d9abff92980a04a6731621526",
-      "bytes": 14079
+      "sha256": "fc780a9911ad30ca25958337b3d9379b82364008ee5a821b11c571bd750104da",
+      "bytes": 16162
     },
     "lib/native-coding-worker-source.hoon": {
       "component": "application",
@@ -3617,8 +3803,8 @@
     "lib/native-coding-worker-tool-owner.hoon": {
       "component": "application",
       "source": "lib/native-coding-worker-tool-owner.hoon",
-      "sha256": "d6314967e7251268d8767b2e819a5a1b88605c756531b30f5e0ef6140b1f24de",
-      "bytes": 26874
+      "sha256": "dc1535e1576ca74bde3bb50f688ca6e563d7b4560dc513bb2626dbb5882d9e7d",
+      "bytes": 28816
     },
     "lib/native-coding-worker-tool-source-v3.hoon": {
       "component": "application",
@@ -3656,6 +3842,18 @@
       "sha256": "2e32d5b89984067d773831bd13afca3ebc12f87a8613260f28c9a2bf16ade449",
       "bytes": 2347
     },
+    "lib/native-diagnostics-http.hoon": {
+      "component": "application",
+      "source": "lib/native-diagnostics-http.hoon",
+      "sha256": "e46cfb26b357f33e3bbb950764701612fd8a4b541ca74f5b3b2182b306560442",
+      "bytes": 7960
+    },
+    "lib/native-review-availability.hoon": {
+      "component": "application",
+      "source": "lib/native-review-availability.hoon",
+      "sha256": "88ce88d15992bddd6b6cb319375e565b43adb3e87aaee5d6b9fa3b970a56f091",
+      "bytes": 2015
+    },
     "lib/native-review-provider-catalog.hoon": {
       "component": "application",
       "source": "lib/native-review-provider-catalog.hoon",
@@ -3691,6 +3889,18 @@
       "source": "lib/old-phon.hoon",
       "sha256": "460e0f5b347c7afc83b6da396ff1df878128fdd7b58764ab81bfda64e7b4be6a",
       "bytes": 8622
+    },
+    "lib/owner-overview.hoon": {
+      "component": "application",
+      "source": "lib/owner-overview.hoon",
+      "sha256": "a071381428242f6dd1712b9aa72a20c42842bf869ba096966a8d59064eb94e5f",
+      "bytes": 5313
+    },
+    "lib/owner-tasks.hoon": {
+      "component": "application",
+      "source": "lib/owner-tasks.hoon",
+      "sha256": "052b04e8a0322a6252fb5f415abb25e6c39f24c6014c004e5f0b4ca2d98c7a5d",
+      "bytes": 14366
     },
     "lib/pataphor-chat-http.hoon": {
       "component": "application",
@@ -3731,8 +3941,8 @@
     "lib/pataphor-development-workspace.hoon": {
       "component": "application",
       "source": "lib/pataphor-development-workspace.hoon",
-      "sha256": "07b8b28a06046fb2d3cb16e9b3e9cbddc75a65f656faa482c14b2e19135c3acd",
-      "bytes": 8630
+      "sha256": "0f5f75afb3b274bbf78f19d2c4ef3df8f953a708d7fc2b273898efee144b73cc",
+      "bytes": 9140
     },
     "lib/pataphor-editor-model.hoon": {
       "component": "application",
@@ -4013,8 +4223,8 @@
     "lib/qpc-native-app-state.hoon": {
       "component": "application",
       "source": "lib/qpc-native-app-state.hoon",
-      "sha256": "ec18c3d843d46ef7310b386825a5e3131f8a46187923f211b008b098685a2827",
-      "bytes": 6777
+      "sha256": "4677342fab41b849d904f5b590c026c38f9b8d528c913efc1a63bb8234c357ad",
+      "bytes": 9773
     },
     "lib/qpc-native-assessment-agent.hoon": {
       "component": "application",
@@ -4199,8 +4409,8 @@
     "lib/qpc-native-released-check.hoon": {
       "component": "application",
       "source": "lib/qpc-native-released-check.hoon",
-      "sha256": "5cc7f9106e6784c8ac390150023711334b5f54b0a1d3b35aa8cb5eca08d630ce",
-      "bytes": 1705
+      "sha256": "58ef976d4b82b4cc71ecccb815b0685d7261d818257c9516c699a887e48eb3a7",
+      "bytes": 1950
     },
     "lib/qpc-native-review-state.hoon": {
       "component": "application",
@@ -4247,14 +4457,14 @@
     "lib/qpc-native-task-completion-runtime.hoon": {
       "component": "application",
       "source": "lib/qpc-native-task-completion-runtime.hoon",
-      "sha256": "e65c823db60dc8b79771c4270d8d6439ff81e4f5b71bda3b5582c65f3698d522",
-      "bytes": 23769
+      "sha256": "eefdc69584d4953dea4dc3dda7dc1ac6fd6e11b40bcad103f12d738332742d9b",
+      "bytes": 23935
     },
     "lib/qpc-native-task-completion.hoon": {
       "component": "application",
       "source": "lib/qpc-native-task-completion.hoon",
-      "sha256": "163954248b26d28a7f94ec4d3298adbf7a7ac652ad78561093b2d3667198c7bf",
-      "bytes": 12209
+      "sha256": "7ac852845e46ae6c3f1fd0408565362adf2646748e5ec53863c467d1685b5e77",
+      "bytes": 12253
     },
     "lib/qpc-native-task-handoff-runtime.hoon": {
       "component": "application",
@@ -4487,8 +4697,8 @@
     "lib/readymade-artifact-task.hoon": {
       "component": "application",
       "source": "lib/readymade-artifact-task.hoon",
-      "sha256": "e6d5b4c3a53e7118f69632cd7017dde19e04e0c672a254c704edf4c2dd15bee7",
-      "bytes": 18583
+      "sha256": "0f29e1edbda5b74e124268aecb5d42e91be0654af2997a51993e5cd475482d47",
+      "bytes": 20430
     },
     "lib/readymade-bench-compose.hoon": {
       "component": "application",
@@ -4549,6 +4759,18 @@
       "source": "lib/readymade-collab-jobs.hoon",
       "sha256": "bb7ecb7edf401a5537324072cdd08105c7ab3a49e8f0988ecb56b855d7de65a2",
       "bytes": 13129
+    },
+    "lib/readymade-collab-landed.hoon": {
+      "component": "application",
+      "source": "lib/readymade-collab-landed.hoon",
+      "sha256": "5e35ae67e247dd4ad846bbf64c0118d4460d87ca3c6ff82277266c4879b65d9f",
+      "bytes": 10310
+    },
+    "lib/readymade-collab-notices.hoon": {
+      "component": "application",
+      "source": "lib/readymade-collab-notices.hoon",
+      "sha256": "eae228380a67148955d80ad66ec25b0539cf1f6420f4d3f42ea20f6d9f588444",
+      "bytes": 8638
     },
     "lib/readymade-collab-operations.hoon": {
       "component": "application",
@@ -4627,6 +4849,12 @@
       "source": "lib/readymade-execution.hoon",
       "sha256": "505368fcc2a8818813ef70e04d39162244f2aa7545dffe7df8f7fbbdaa122f7e",
       "bytes": 3815
+    },
+    "lib/readymade-file-presence.hoon": {
+      "component": "application",
+      "source": "lib/readymade-file-presence.hoon",
+      "sha256": "1a0e2a47be17dbee05b52fce46c04cf36481e92c8566e1782baaad84370b4c2d",
+      "bytes": 7966
     },
     "lib/readymade-fleet-agent.hoon": {
       "component": "application",
@@ -4760,11 +4988,35 @@
       "sha256": "26f14e967c7a434ac1adc2de7c1ad47faa6001afde6b773dc5dc9c63c4c97c63",
       "bytes": 10142
     },
+    "lib/readymade-project-bundle-client.hoon": {
+      "component": "application",
+      "source": "lib/readymade-project-bundle-client.hoon",
+      "sha256": "9d480d3c825003c46c7698ee1c921caa08f528cd18fe3e1ca3411ebf46144997",
+      "bytes": 10735
+    },
+    "lib/readymade-project-bundle-http.hoon": {
+      "component": "application",
+      "source": "lib/readymade-project-bundle-http.hoon",
+      "sha256": "71a6e113ec97a1b8ac6da2987701a3033c45024977a5c07e9b42eaad95d71e6b",
+      "bytes": 4879
+    },
+    "lib/readymade-project-inbox-bundle-history.hoon": {
+      "component": "application",
+      "source": "lib/readymade-project-inbox-bundle-history.hoon",
+      "sha256": "c04ba61bb99e3db5baa299a3c15882666b5b2dbfd7a29254adc2b0b1646bf9a4",
+      "bytes": 9811
+    },
+    "lib/readymade-project-inbox-history.hoon": {
+      "component": "application",
+      "source": "lib/readymade-project-inbox-history.hoon",
+      "sha256": "88e3eb25cfc4ddec2460cf7013d7e12b4a65d2ae17c466ec514472ff72ca2a77",
+      "bytes": 6108
+    },
     "lib/readymade-project-inbox-http.hoon": {
       "component": "application",
       "source": "lib/readymade-project-inbox-http.hoon",
-      "sha256": "ff4a8bbf7f443ccf17bad8569f9d8d7202b8ee00a1d1118d23b5094a5e6bc2c2",
-      "bytes": 6616
+      "sha256": "f725e8397e5a32fc5555d6d4677a7acf252e1f076882301653b89444e756d544",
+      "bytes": 9059
     },
     "lib/readymade-project-invitation-catalog.hoon": {
       "component": "application",
@@ -4802,6 +5054,18 @@
       "sha256": "92137edf29d86d204fc1e4473e4611c084466d4fe04e270c4fc8f4110681b6e2",
       "bytes": 4308
     },
+    "lib/readymade-project-session-pages-client.hoon": {
+      "component": "application",
+      "source": "lib/readymade-project-session-pages-client.hoon",
+      "sha256": "b853cff815fcd32d0318aa991bf3e51b09682f4ddc245e1447cce8ef33dac39c",
+      "bytes": 7546
+    },
+    "lib/readymade-project-session-pages-http.hoon": {
+      "component": "application",
+      "source": "lib/readymade-project-session-pages-http.hoon",
+      "sha256": "fde3e36627444d487c92c1e1a9cd390d4a6a2b0316df721415b299764e6f78fe",
+      "bytes": 4678
+    },
     "lib/readymade-project-sessions-client.hoon": {
       "component": "application",
       "source": "lib/readymade-project-sessions-client.hoon",
@@ -4811,8 +5075,8 @@
     "lib/readymade-project-sessions-http.hoon": {
       "component": "application",
       "source": "lib/readymade-project-sessions-http.hoon",
-      "sha256": "2c1f31b5b6b2796a0fe3c773d7733fc779a8387669c0b5295537cb635a3d56d4",
-      "bytes": 4677
+      "sha256": "c33fd1e988ba274837b14a35fdb1e262363876cf49f8dae5c3f05af3117d6d45",
+      "bytes": 5009
     },
     "lib/readymade-project-sharing-http.hoon": {
       "component": "application",
@@ -4859,8 +5123,8 @@
     "lib/readymade-project-view-http.hoon": {
       "component": "application",
       "source": "lib/readymade-project-view-http.hoon",
-      "sha256": "fcc3cc7050437988864c3743ec48e09ba65ddd3e7c0ac0d1b9653994dbaa74c2",
-      "bytes": 4898
+      "sha256": "3c37b025e655b1663dde820d7235ea090e3ea63fca27d41b464a00ab11929d65",
+      "bytes": 5751
     },
     "lib/readymade-projects.hoon": {
       "component": "application",
@@ -4895,8 +5159,14 @@
     "lib/readymade-session-sharing.hoon": {
       "component": "application",
       "source": "lib/readymade-session-sharing.hoon",
-      "sha256": "f0590f0c2e6d4c33cb562e56d223eb1f615c317f1d4048ab52250d103e5e9697",
-      "bytes": 8601
+      "sha256": "860a6919cdb077d2dc1f759889d09ad9617d0affb5cfc64deada11557ee96824",
+      "bytes": 8758
+    },
+    "lib/readymade-session-stream-client.hoon": {
+      "component": "application",
+      "source": "lib/readymade-session-stream-client.hoon",
+      "sha256": "4d5f9933b386e4ca77df122edeab276ecebd37fb7243e8f16432d41e81fc24ef",
+      "bytes": 6180
     },
     "lib/readymade-share-terms-saved.hoon": {
       "component": "application",
@@ -4915,6 +5185,12 @@
       "source": "lib/readymade-tlon.hoon",
       "sha256": "d723601ca64dcf09b42a9e792fdc1a39cc6d2db00146af614dcdb81a35827aa5",
       "bytes": 5988
+    },
+    "lib/readymade-work-queue.hoon": {
+      "component": "application",
+      "source": "lib/readymade-work-queue.hoon",
+      "sha256": "1de1b687d2249cbb452863d030ff705d85436cf24c5a06db56344a320b1e2d39",
+      "bytes": 19001
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
@@ -5197,6 +5473,12 @@
       "source": "lib/sole.hoon",
       "sha256": "74ba9759e6e333a06b34dcc98464ff8efabdb5bed66eacb05a8d15b83f8d91be",
       "bytes": 4522
+    },
+    "lib/standing-policy-http.hoon": {
+      "component": "application",
+      "source": "lib/standing-policy-http.hoon",
+      "sha256": "b25d5edf17022a2b15a02db59155d94daa0ed2360694d7f9b6cd973909a3e7a7",
+      "bytes": 8115
     },
     "lib/stargame-kernel-legacy.hoon": {
       "component": "application",
@@ -5621,8 +5903,8 @@
     "lib/viki-native-opening.hoon": {
       "component": "application",
       "source": "lib/viki-native-opening.hoon",
-      "sha256": "9ec4ab91ff08efe44d436c859de667561d2ce8e2972dfb2f45dd1b68a9976bb9",
-      "bytes": 9421
+      "sha256": "e3087c148d81f9ce27f1968d495d26c667aa74e3a5586a58b6e4ba2f0c91ec73",
+      "bytes": 9670
     },
     "lib/viki-native-workspace.hoon": {
       "component": "application",
@@ -7121,8 +7403,14 @@
     "sur/cantrip-project-access.hoon": {
       "component": "application",
       "source": "sur/cantrip-project-access.hoon",
-      "sha256": "26a8f3e1f7f0ef3a5097101620e7afd550fcb62f621d71c7a7998d6e9bf732bc",
-      "bytes": 1532
+      "sha256": "881f1e3f7f61ffff43ae34cd4317166df12603a63112166c8c807f96f91497cc",
+      "bytes": 2018
+    },
+    "sur/cantrip-project-bundle.hoon": {
+      "component": "application",
+      "source": "sur/cantrip-project-bundle.hoon",
+      "sha256": "04e78dbd17f535b93946e38b8c7d3bb30c38d0779aed6c86db4504c6b9e22e1b",
+      "bytes": 722
     },
     "sur/cantrip-project-session.hoon": {
       "component": "application",
@@ -7133,8 +7421,14 @@
     "sur/cantrip-project-sessions.hoon": {
       "component": "application",
       "source": "sur/cantrip-project-sessions.hoon",
-      "sha256": "ab4d8ac052fedce3ee2e44a5830df888cd7701436912d5069ecee481135aee33",
-      "bytes": 458
+      "sha256": "a784b6b8dcf6768b01c8fef90f96801f1a2c700337bebfcef7f1bb781d657d80",
+      "bytes": 771
+    },
+    "sur/cantrip-project-suggestion-journal.hoon": {
+      "component": "application",
+      "source": "sur/cantrip-project-suggestion-journal.hoon",
+      "sha256": "303d51d78b9560002179f63abe1327abb3cf31b6dcc3c6ef9cbcdb3a8123962f",
+      "bytes": 555
     },
     "sur/cantrip-project-view.hoon": {
       "component": "application",
@@ -7165,6 +7459,12 @@
       "source": "sur/claz.hoon",
       "sha256": "869f36509085b66b82efedf3408d1bae1491ec6883c099520c1ac6198f0f9ce0",
       "bytes": 2225
+    },
+    "sur/cli-inference-diagnostics.hoon": {
+      "component": "application",
+      "source": "sur/cli-inference-diagnostics.hoon",
+      "sha256": "8f051a8cf8d797158fd7c8e8b450741edd7738a85da9aa425e7465f48ad60ae0",
+      "bytes": 691
     },
     "sur/cli-inference.hoon": {
       "component": "application",
@@ -8783,8 +9083,8 @@
     "ui/dialogue.js": {
       "component": "application",
       "source": "ui/dialogue.js",
-      "sha256": "6da83afa0d903547966287fa9603a7217d40923ea1ad427e4053bbe8935be06f",
-      "bytes": 259242
+      "sha256": "5366ae1021aafe8d2338374bd02f8288ffa78d46cca5748e8b16b353e5f47821",
+      "bytes": 259239
     },
     "ui/hoon-editor.js": {
       "component": "application",
@@ -8855,8 +9155,8 @@
     "ui/native-coding.js": {
       "component": "application",
       "source": "ui/native-coding.js",
-      "sha256": "d9583241dff020a47211417ce589ba13457f0641b4c37ba414c1cc25a5040934",
-      "bytes": 74769
+      "sha256": "413db0ec0536f6e7ec9b08068720f1ee86d8cc4943b989b9911612d237ddd3d3",
+      "bytes": 75004
     },
     "ui/native-console.js": {
       "component": "application",
@@ -8927,8 +9227,8 @@
     "ui/sigil-key.js": {
       "component": "application",
       "source": "ui/sigil-key.js",
-      "sha256": "5a296cf47fd7c2aee06f946f9c475c6d728694a9deab562a27f7519941b69f43",
-      "bytes": 18794
+      "sha256": "90f713d6ec9a59d5e220c7638e400d9cd1bc3fe1741ab4b9e2f26694b22b9e5d",
+      "bytes": 18792
     },
     "ui/sigil.js": {
       "component": "sigil",
