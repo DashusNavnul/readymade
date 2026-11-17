@@ -22,7 +22,16 @@ function finish(run, code) {
   directory(run, true);
   if (!Number.isInteger(code) || code < 0 || code > 255) throw Error('Invalid host exit status');
   const fd = fs.openSync(path.join(run, 'exit.json'), 'wx', 0o600);
-  try { fs.writeFileSync(fd, JSON.stringify({ended: new Date().toISOString(), exitCode: code,
+  // The editor profile a passing run leaves in `user` is about 17 MB and is not evidence: the result and the logs
+  // are. It is removed after a pass (a few hundred runs had filled the disk); a failed run keeps it for diagnosis,
+  // and READYMADE_KEEP_TEST_PROFILE=1 keeps it always. Only this run's own unlinked `user` folder is ever removed.
+  const profile = path.join(run, 'user');
+  let profileRemoved = false;
+  if (code === 0 && process.env.READYMADE_KEEP_TEST_PROFILE !== '1') {
+    const info = fs.lstatSync(profile, {throwIfNoEntry: false});
+    if (info?.isDirectory() && !info.isSymbolicLink()) { fs.rmSync(profile, {recursive: true, force: true}); profileRemoved = true; }
+  }
+  try { fs.writeFileSync(fd, JSON.stringify({ended: new Date().toISOString(), exitCode: code, profileRemoved,
     scope: 'Runner exit; inspect result.json and logs for test acceptance'}, null, 2)); fs.fsyncSync(fd); }
   finally { fs.closeSync(fd); }
 }
