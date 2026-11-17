@@ -65,6 +65,14 @@ service. When you paste an invitation link and your ship does not have it:
 Your ship keeps that desk synced to its source, so the host's updates arrive by
 themselves. A ship that already runs the full backend installs nothing.
 
+If your ship was off for more than a week, updates can stop arriving. The
+publishing ship `~dashus-navnul` pauses its connections to ships it has not
+heard from in a week and takes up to half an hour to notice one that returns.
+If Readymade still says your ship does not have a page after that, run
+**Readymade: Remove Collaboration Service** and join again from your link. On a
+comet that had been off for six days this restarted the updates in six seconds;
+its old update request never recovered by itself.
+
 The result shows in the Readymade sidebar under **Project Invitations**: a row
 named after the project that reads **join · accepted**.
 
