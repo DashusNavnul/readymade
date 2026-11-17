@@ -73,11 +73,17 @@ test('boot rows follow retained evidence and a stop names the step without a sec
 
 test('a port held on every address, or only on loopback, is not offered to a new planet', async t => {
   for (const host of ['0.0.0.0', '127.0.0.1']) {
-    const server = net.createServer(); await new Promise(resolve => server.listen({port: 0, host}, resolve));
-    const port = server.address().port;
-    assert.equal(await tcpFree(port), false, 'held on ' + host);
-    await new Promise(resolve => server.close(resolve));
-    assert.equal(await tcpFree(port), true, 'released from ' + host);
+    // Another program may be given the port the moment it is released (tests run side by side), so "free again" is
+    // asked of up to five different ports; "not free while held" must hold for every one of them.
+    const tried = [];
+    for (let attempt = 0, freed = false; attempt < 5 && !freed; attempt++) {
+      const server = net.createServer(); await new Promise(resolve => server.listen({port: 0, host}, resolve));
+      const port = server.address().port; tried.push(port);
+      assert.equal(await tcpFree(port), false, 'held on ' + host);
+      await new Promise(resolve => server.close(resolve));
+      freed = await tcpFree(port);
+      if (!freed && attempt === 4) assert.fail(`released from ${host}, yet none of the ports ${tried.join(', ')} was free afterwards`);
+    }
   }
   t.diagnostic('wildcard and loopback listeners both refused');
 });
