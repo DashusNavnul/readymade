@@ -117,7 +117,7 @@ export class NativeScreens implements vscode.Disposable {
     try {return await client.nativePage(path, request);}
     catch (error) {
       // A guest ship, or one whose Pataphor is older than this page: say so rather than "request failed".
-      if (error instanceof ShipClientError && error.code === 'unavailable' && error.status === 404) throw new Error('This ship does not have this page. It may be a guest ship, or its Pataphor may need an update.');
+      if (error instanceof ShipClientError && error.code === 'unavailable' && error.status === 404) throw new Error('This ship does not have this page. It may be a guest ship, or its backend may be older than this app. An update arrives by itself from the ship it was installed from; if it has not after half an hour, remove the collaboration service and join again.');
       if (error instanceof ShipClientError && error.code === 'authenticationRequired' && !this.closed && await this.host.recover?.(error)) {
         // The ship refused before doing anything. A read is asked once more; a command is left for the person to press again.
         if ((request?.method ?? 'GET') === 'GET' && this.host.client() === client) return client.nativePage(path, request);
