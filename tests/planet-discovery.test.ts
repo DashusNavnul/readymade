@@ -66,10 +66,10 @@ const shipRanks = [
   {atom: 65536n, ship: '~sampel-palnet'}, {atom: (1n << 32n) - 1n, ship: '~sampel-palnet'},
   {atom: 1n << 32n, ship: '~doznec-sampel-palnet'},
   {atom: (1n << 48n) - 1n, ship: '~doznec-sampel-palnet'},
-  {atom: 1n << 48n, ship: '~bondyl-libpen-dashus-navnul'},
-  {atom: (1n << 64n) - 1n, ship: '~bondyl-libpen-dashus-navnul'},
+  {atom: 1n << 48n, ship: '~sampel-palnet-sampel-palnet'},
+  {atom: (1n << 64n) - 1n, ship: '~sampel-palnet-sampel-palnet'},
   ...[64n, 80n, 96n, 112n].flatMap(bits => {
-    const ship = '~' + Array(Number((bits - 64n) / 16n) + 1).fill('doznec').join('-') + '--bondyl-libpen-dashus-navnul';
+    const ship = '~' + Array(Number((bits - 64n) / 16n) + 1).fill('doznec').join('-') + '--sampel-palnet-sampel-palnet';
     return [{atom: 1n << bits, ship}, {atom: (1n << (bits + 16n)) - 1n, ship}];
   }),
 ];
@@ -113,7 +113,7 @@ test('native names must match their rank and fake must be an explicit false', as
     const result = await api.discover(); assert.deepEqual(result.diagnostics.failureCounts, {real: 1});
     assert.equal(result.planets.length, 0); assert.equal(state.calls.includes('http'), false);
   }
-  for (const ship of ['~doznec-bondyl-libpen-dashus-navnul', '~doznec--bondyl-libpen-dashus', '~doznec-bondyl--libpen-dashus-navnul', '~doznec--bondyl-libpen-dashus-navnul--doznec']) {
+  for (const ship of ['~doznec-sampel-palnet-sampel-palnet', '~doznec--sampel-palnet-sampel', '~doznec-sampel--palnet-sampel-palnet', '~doznec--sampel-palnet-sampel-palnet--doznec']) {
     const {state, api} = fixture(); Object.assign(state, {atom: 1n << 64n, ship});
     const result = await api.discover(); assert.deepEqual(result.diagnostics.failureCounts, {real: 1}); assert.equal(result.planets.length, 0);
   }

@@ -1353,7 +1353,7 @@ Evidence: `shared-backend-source-v1.manifest.json`,
 `bud-shared-source-verify.response`, and the corresponding
 `bud-shared-{graf,cantrip,runtime,cli,collab}-compile.response` files in the existing test
 evidence directory. The frozen bundle preserves the current source; historical
-Kenny/release packets are unchanged.
+release packets are unchanged.
 
 Viki's first build failed with native `%meme` at Bud's 4 GB loom limit. The
 existing successful maintainer build used an 8 GB loom. Bud remains running
@@ -2245,7 +2245,7 @@ incorrectly compared Docket clauses with the parsed Docket value; v2 uses the
 native Docket parser and passes. The HTTP helper's notes probe used an
 object-only client against an array response; native note readback passes.
 Fresh peer-authored request admission/execution remains open. Calls default to
-managed ~nolset service, whose production connectivity this fake ship cannot
+a managed call service, whose production connectivity this fake ship cannot
 prove. This private source bundle is not a qualified public release.
 Desktop type checking and lint pass; no Hoon linter is configured.
 

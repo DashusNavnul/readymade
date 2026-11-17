@@ -7,8 +7,8 @@ import {authenticateShip, normalizeShipAddress, type ShipAuthenticationOptions, 
 import {ShipClient, ShipClientError} from '../src/ship-client';
 
 const hasCode = (code: string) => (error: unknown) => error instanceof ShipClientError && error.code === code;
-const shipNames = ['~zod', '~marzod', '~sampel-palnet', '~doznec-sampel-palnet', '~bondyl-libpen-dashus-navnul',
-  ...Array.from({length: 4}, (_, index) => '~' + Array(index + 1).fill('doznec').join('-') + '--bondyl-libpen-dashus-navnul')];
+const shipNames = ['~zod', '~marzod', '~sampel-palnet', '~doznec-sampel-palnet', '~sampel-palnet-sampel-palnet',
+  ...Array.from({length: 4}, (_, index) => '~' + Array(index + 1).fill('doznec').join('-') + '--sampel-palnet-sampel-palnet')];
 async function fixture(run: (origin: string, requests: string[], replies: Array<(res: http.ServerResponse) => void>) => Promise<void>) {
   const requests: string[] = [], replies: Array<(res: http.ServerResponse) => void> = [];
   const server = http.createServer((req, res) => {
@@ -104,7 +104,7 @@ test('ambiguous or malformed authenticated identity fails before saving without 
   });
 });
 test('invalid selected identity is refused before reading credentials or constructing a client', async () => {
-  for (const expectedShip of [...shipNames.map(ship => ship + '\n'), '~ZOD', '~foo-', '~doznec--sampel-palnet', '~doznec-bondyl-libpen-dashus-navnul', '', null, 123]) {
+  for (const expectedShip of [...shipNames.map(ship => ship + '\n'), '~ZOD', '~foo-', '~doznec--sampel-palnet', '~doznec-sampel-palnet-sampel-palnet', '', null, 123]) {
     let reads = 0, clients = 0;
     await assert.rejects(authenticateShip('http://127.0.0.1:8080', callbacks({expectedShip: expectedShip as string,
       readCode: async () => {reads++; return 'private';}, onClient: () => {clients++;}})), hasCode('identityUnavailable'));
