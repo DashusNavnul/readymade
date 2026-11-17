@@ -328,6 +328,7 @@
   "tests/large-navigation-host.ts",
   "tests/legacy-media.test.ts",
   "tests/line-patches.test.ts",
+  "tests/live-guest-desk.cjs",
   "tests/live-native-pages.cjs",
   "tests/live-newcomer-host.ts",
   "tests/live-owner-host.ts",
