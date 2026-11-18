@@ -5165,8 +5165,8 @@
     "lib/readymade-session-stream-client.hoon": {
       "component": "application",
       "source": "lib/readymade-session-stream-client.hoon",
-      "sha256": "0015b33f96cc44db118737b065fb0b56213ccf2086afcfd1f8cb14af93f2a832",
-      "bytes": 7200
+      "sha256": "24f1ef2f71fe162cb3d7d635845a18f1180b8cd6506f30a78ab3305495b6f194",
+      "bytes": 7210
     },
     "lib/readymade-share-terms-saved.hoon": {
       "component": "application",
@@ -5189,8 +5189,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "6e2a66c571cb650c101f424281e347ffac250bba5f05f7ddc0d24d6631f4754b",
-      "bytes": 20323
+      "sha256": "55b8cc8ed063c9aae7b2eb4a55c2cf8a886a1a2b736a58345a1dd3eafc26c7c9",
+      "bytes": 20666
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
