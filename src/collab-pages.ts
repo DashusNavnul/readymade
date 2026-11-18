@@ -56,7 +56,8 @@ export function noticeText(n: Notice, fileOf: (n: Notice) => string | undefined 
     case 'suggestion-landed': return `${n.from} landed ${yours}.${n.detail ? ` ${n.detail}` : ''}`;
     case 'work-queued': return `${n.from} queued ${work}.`;
     case 'work-started': return `${n.from} started ${work}.${n.detail ? ` ${n.detail}` : ''}`;
-    case 'work-finished': return `${n.from} finished ${work}.${n.detail ? ` ${n.detail}` : ''}`;
+    // "ended", not "finished": the ship's own words follow and may say it never started.
+    case 'work-finished': return `${n.from} ended ${work}.${n.detail ? ` ${n.detail}` : ''}`;
   }
 }
 /**
@@ -134,6 +135,15 @@ export function suggestionHistory(value: unknown, owner: string, wanted: string)
   if (r.archiveComplete !== undefined && typeof r.archiveComplete !== 'boolean') fail('suggestion history');
   return Object.freeze({owner, project: wanted, observedAt: when(r.observedAt, 'history time'), suggestions: count(r.suggestions, 'history'), archiveComplete: r.archiveComplete !== false, rows: Object.freeze(list)});
 }
+/**
+ * How a request this ship asked of another owner ended, from that owner's notice. The notice carries only the owner's
+ * own sentence; a sentence this app knows to mean a normal end is marked done, any other ending is marked for attention.
+ */
+export function workEndedMark(ended: Notice | undefined): 'ok' | 'note' | 'warning' {
+  if (!ended) return 'note';
+  const said = ended.detail ?? '';
+  return /^Finished: (?:complete|judgment) /.test(said) ? 'ok' : /^(?:Dismissed|Withdrawn) /.test(said) ? 'note' : 'warning';
+}
 /** The four steps of one suggestion, each as it stands: authored, reviewed, landed, acknowledged. */
 export function suggestionSteps(s: SuggestionRow): string[] {
   const told = s.landedNotice ?? s.answer;
@@ -145,7 +155,7 @@ export function suggestionSteps(s: SuggestionRow): string[] {
 }
 export function historyReport(h: SuggestionHistory): Report {
   const landed = h.rows.filter(s => s.landed).length;
-  return {title: `Suggestions in ${h.project}`, status: `${h.suggestions} suggestion${h.suggestions === 1 ? '' : 's'}, ${landed} landed${h.suggestions > h.rows.length ? `; the newest ${h.rows.length} are shown` : ''}. Read from the ship at ${h.observedAt}.${h.archiveComplete ? '' : ' The ship\'s archive is longer than it reads at once, so some suggestions may be missing here.'}`,
+  return {title: `Suggestions in ${h.project}`, status: `${h.suggestions} suggestion${h.suggestions === 1 ? '' : 's'}${h.archiveComplete ? '' : ' read'}, ${landed} landed${h.suggestions > h.rows.length ? `; the newest ${h.rows.length} of those are shown` : ''}. Read from the ship at ${h.observedAt}.${h.archiveComplete ? '' : ' The ship\'s archive is longer than it reads at once, so some suggestions are missing here and are not counted.'}`,
     note: 'Landed means an applied candidate holds every suggested file exactly. Each author is told once.',
     sections: [{title: 'Newest first', empty: 'Nobody has suggested anything.', lines: h.rows.map(s => ({text: `${shortHex(s.request)} from ${s.peer}`, detail: suggestionSteps(s).join('\n'), mark: s.landed ? 'ok' as const : 'note' as const}))}]};
 }
@@ -297,15 +307,31 @@ export function workQueue(value: unknown, me: string): WorkQueue {
   return Object.freeze({ship: me, observedAt: when(r.observedAt, 'work time'), store: r.store as boolean, requests: Object.freeze(rows(r.requests, 'work queue', 512, workRow)), asked: Object.freeze(asked),
     withdrawRefused: Object.freeze(withdrawRefused)});
 }
-const workLine = (w: WorkRow): ReportLine => ({text: `${shortHex(w.nonce)} from ${w.peer} in ${w.project}`,
-  detail: `${w.status === 'queued' ? 'Queued' : w.status === 'dispatched' ? `Running since ${w.dispatchedAt ?? 'an unknown time'}`
-    : w.outcome?.phase === 'not-started' ? 'Not started: the session did not take it, so no run began. Its requester was told.'
-    : w.outcome?.phase === 'not-run' ? 'Taken, not run: the session holds this instruction and has not started a run of it. Run the session to do it. Its requester was told.'
-    : w.outcome?.phase === 'stopped' ? `Stopped: the session began it and then sat ready without running for ten minutes (revision ${w.outcome.revision}). Run the session to continue. Its requester was told.`
-    : w.outcome?.phase === 'session-gone' ? 'Not finished: its session no longer exists on this ship. Its requester was told.'
-    : w.outcome?.phase === 'dismissed' ? 'Dismissed by you before it started. Nothing ran.' : w.outcome?.phase === 'withdrawn' ? 'Withdrawn by its requester before it started. Nothing ran.' : w.outcome?.phase === 'revoked' ? 'Not started: its requester lost access to the session while it waited. Nothing ran.' : `Finished: ${w.outcome?.phase ?? 'unknown'} at revision ${w.outcome?.revision ?? '?'}`}` +
-    `${w.policyVersion ? ` · policy version ${w.policyVersion}` : ''}\nSession ${shortHex(w.session)} · asked ${w.at}`, mark: ['not-started', 'not-run', 'stopped', 'session-gone'].includes(w.outcome?.phase ?? '') ? 'warning' : w.status === 'finished' ? 'ok' : 'note',
-  action: w.status === 'queued' ? {id: `dismiss:${w.id}`, label: 'Dismiss…'} : undefined});
+/**
+ * How an ended request reads on its owner's screen, and whether it is done. Only a phase this app knows to be a
+ * normal end is marked done; a phase it does not know is shown by name and marked for attention, never as finished.
+ */
+export function workEnding(w: WorkRow): {readonly text: string; readonly mark: 'ok' | 'note' | 'warning'} {
+  const phase = w.outcome?.phase ?? 'unknown', revision = w.outcome?.revision ?? '?';
+  switch (phase) {
+    case 'complete': case 'judgment': return {text: `Finished: ${phase} at revision ${revision}`, mark: 'ok'};
+    case 'dismissed': return {text: 'Dismissed by you before it started. Nothing ran.', mark: 'note'};
+    case 'withdrawn': return {text: 'Withdrawn by its requester before it started. Nothing ran.', mark: 'note'};
+    case 'revoked': return {text: 'Not started: its requester lost access to the session while it waited. Nothing ran.', mark: 'note'};
+    case 'not-started': return {text: 'Not started: the session did not take it, so no run began.', mark: 'warning'};
+    case 'not-run': return {text: 'Taken, not run: the session holds this instruction and has not started a run of it. It stays in the session and goes with its next run; its requester is not told again.', mark: 'warning'};
+    case 'stopped': return {text: `Stopped: the session began it and then sat ready without running for ten minutes (revision ${revision}). If it continues, its requester is not told again.`, mark: 'warning'};
+    case 'session-gone': return {text: `${w.dispatchedAt ? 'Not finished' : 'Not started'}: its session no longer exists on this ship.`, mark: 'warning'};
+    default: return {text: `Ended with the session ${phase} at revision ${revision}`, mark: 'warning'};
+  }
+}
+const workLine = (w: WorkRow): ReportLine => {
+  const ended = w.status === 'finished' ? workEnding(w) : undefined;
+  return {text: `${shortHex(w.nonce)} from ${w.peer} in ${w.project}`,
+    detail: `${ended ? ended.text : w.status === 'queued' ? 'Queued' : `Running since ${w.dispatchedAt ?? 'an unknown time'}`}` +
+      `${w.policyVersion ? ` · policy version ${w.policyVersion}` : ''}\nSession ${shortHex(w.session)} · asked ${w.at}`, mark: ended ? ended.mark : 'note',
+    action: w.status === 'queued' ? {id: `dismiss:${w.id}`, label: 'Dismiss…'} : undefined};
+};
 /**
  * `inbox` is what owners told this ship. `null` means the notices could not be read: progress is then said to
  * be unknown and no Withdraw is offered, instead of showing every request as queued with nothing reported.
@@ -315,7 +341,7 @@ export function workReport(q: WorkQueue, admissionsLeft?: number, journal: reado
   const unread = inbox === null, told = inbox ?? [];
   const progress = (a: WorkAsked): string => unread && a.answer !== 'refused' && a.answer !== 'unknown' ? 'Progress unknown: the notices could not be read just now.' : workProgress(a, told);
   const mine: ReportLine[] = journal.map(a => workCurrent(a, q.asked)).map(a => ({text: a.text, action: !unread && workWithdrawable(a, told) ? {id: `withdraw:${a.nonce}`, label: 'Withdraw…'} : undefined, detail: `${progress(a)}\n${shortHex(a.nonce)} to ${a.owner} in ${a.project}, session ${shortHex(a.session)}, asked ${new Date(a.at).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
-    mark: a.answer === 'refused' || a.answer === 'unknown' ? 'warning' as const : told.some(n => n.from === a.owner && n.subject === a.nonce && n.kind === 'work-finished') ? 'ok' as const : 'note' as const}));
+    mark: a.answer === 'refused' || a.answer === 'unknown' ? 'warning' as const : workEndedMark(told.find(n => n.from === a.owner && n.subject === a.nonce && n.kind === 'work-finished'))}));
   return {title: 'Work Requests', status: `${open.length} open on this ship, ${new Set([...kept, ...q.asked.map(a => a.nonce)]).size} asked of other owners. Read from the ship at ${q.observedAt}.`,
     note: `${q.store ? '' : 'This ship has no work store, so it cannot take requests. '}A request is admitted only under your standing policy, from a contributor, for a session you shared with them.` +
       `${admissionsLeft === undefined ? '' : ` Your policy has ${admissionsLeft} admission${admissionsLeft === 1 ? '' : 's'} left.`}` +

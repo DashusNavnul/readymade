@@ -36,6 +36,8 @@ test('a refusal reads as the ship’s reason, then what it means when this app k
   assert.equal(refusalSentence('some-future-reason'), 'some future reason.', 'an unknown reason is shown as the ship named it, with nothing invented');
   assert.match(refusalSentence('proposal-history-full'), /^proposal history full\. Your ship already holds as many open proposals as it keeps\./);
   assert.match(refusalSentence('standing-policy-history-full'), /4,096 versions/);
+  assert.match(refusalSentence('work-peer-rate'), /^work peer rate\. The owner's ship has taken thirty work requests from you in the last hour/);
+  assert.match(refusalSentence('work-capacity'), /none of them has finished: try again when one has\. An owner on an older backend has to update first\.$/);
   assert.equal(refusalSentence('The ship answered 503.'), 'The ship answered 503.', 'a sentence is left as it is');
   assert.equal(refusalHelp('constructor'), undefined); assert.equal(refusalHelp('toString'), undefined);
   // Reasons a person can meet from these screens each say what to do, as one or more whole sentences.

@@ -199,7 +199,7 @@ test('a ship that signed the window out: a read is asked once more after signing
 test('new notices from owners are shown once and the mark is kept', async t => {
   const x = setup(t, PEER, {[`GET ${COLLAB}notices`]: page('peer-notices')}), all = page('peer-notices').inbox.length;
   assert.equal(await x.screens.readInbox(true), all); assert.equal(ED.shown.info.length, 1);
-  assert.match(ED.shown.info[0], /^~zod (?:finished|started|queued|landed|took)/); assert.match(ED.shown.info[0], new RegExp(`and ${all - 4} more\\.$`));
+  assert.match(ED.shown.info[0], /^~zod (?:ended|started|queued|landed|took)/); assert.match(ED.shown.info[0], new RegExp(`and ${all - 4} more\\.$`));
   assert.equal(await x.screens.readInbox(true), 0); assert.equal(ED.shown.info.length, 1, 'quiet when nothing is new');
   assert.equal(await x.screens.readInbox(), 0); assert.equal(ED.shown.info.at(-1), 'No new notices from owners.');
   const none = setup(t, PEER, {[`GET ${COLLAB}notices`]: {schema: 'readymade-collab-notices-v1', available: false, error: 'notice-store-unavailable'}});

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesRoom, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, refusalName, rolesReport, sessionRoles,
-  sessionStreams, streamClose, streamOpen, streamText, suggestionHistory, suggestionSteps, workAsk, workDismiss, workJournal, workJournalAdd, workNonce, workCurrent, workProgress, workQueue, workReport, workWithdraw, workWithdrawable, WORK_JOURNAL_MAX} from '../src/collab-pages';
+  sessionStreams, streamClose, streamOpen, streamText, suggestionHistory, suggestionSteps, workAsk, workEndedMark, workDismiss, workJournal, workJournalAdd, workNonce, workCurrent, workProgress, workQueue, workReport, workWithdraw, workWithdrawable, WORK_JOURNAL_MAX} from '../src/collab-pages';
 
 const page = (name: string): Record<string, unknown> => JSON.parse(readFileSync(join(__dirname, '../../tests/fixtures/native', name + '.json'), 'utf8')) as Record<string, unknown>;
 const owner = '~zod', peer = '~nec', demo = 'pataphor-demo-mp';
@@ -14,12 +14,12 @@ test('notices: the owner sees each outcome, the peer reads plain sentences, newe
   assert.equal(got.inbox.length, sent.outbox.length); assert.ok(got.inbox.every(n => n.to === peer));
   const landed = got.inbox.find(n => n.kind === 'suggestion-landed')!, work = got.inbox.find(n => n.kind === 'work-finished')!;
   assert.match(noticeText(landed), /^~zod landed your suggestion 0x[0-9a-f.]+ in pataphor-demo-mp\. Landed in pataphor-demo-mp-work at revision \d+/);
-  assert.match(noticeText(work), /^~zod finished your work request 0x1002 in pataphor-demo-mp\. Finished: judgment/);
+  assert.match(noticeText(work), /^~zod ended your work request 0x1002 in pataphor-demo-mp\. Finished: judgment/);
   assert.match(noticeText(landed, () => '/lib/session-rate/hoon'), /^~zod landed your suggestion for \/lib\/session-rate\/hoon in pataphor-demo-mp\./);
   assert.equal(noticeText(work, () => '/lib/x/hoon'), noticeText(work), 'a work notice names no file');
   const lines = noticeLines(got);
   assert.equal(lines.length, got.inbox.filter(n => !['suggestion-taken', 'suggestion-declined'].includes(n.kind)).length); assert.ok(lines.length < got.inbox.length, 'answers are left to the share notices');
-  assert.match(lines[0]!.day, /^2026-11-17$/); assert.match(lines[0]!.text, /^~zod (?:finished|started|queued|landed) your /);
+  assert.match(lines[0]!.day, /^2026-11-17$/); assert.match(lines[0]!.text, /^~zod (?:ended|started|queued|landed) your /);
   assert.equal(noticesUnseen(got, undefined).length, got.inbox.length); assert.equal(noticesUnseen(got, noticesSeen(got)).length, 0);
   assert.deepEqual(noticesUnseen(got, noticesSeen(got).slice(1)), [got.inbox[0]]);
   // A notice made earlier that arrives later is still new: only what was shown counts, never a time.
@@ -42,14 +42,14 @@ test('suggestion history: four steps per suggestion, as they stand', () => {
   const h = suggestionHistory(page('history'), owner, demo), landed = h.rows.find(s => s.landed && s.answer)!, never = h.rows.find(s => !s.landed)!;
   assert.deepEqual(suggestionSteps(landed).map(s => s.split(' ')[0]), ['Authored', 'Reviewed:', 'Landed', 'Acknowledged']);
   assert.deepEqual(suggestionSteps(never).slice(1), ['Not reviewed', 'Not landed', 'Nothing told to the author yet']);
-  const r = historyReport(h); assert.match(r.status, /^53 suggestions, \d+ landed; the newest \d+ are shown\./); assert.equal(r.sections[0]!.lines.length, h.rows.length);
+  const r = historyReport(h); assert.match(r.status, /^53 suggestions, \d+ landed; the newest \d+ of those are shown\./); assert.equal(r.sections[0]!.lines.length, h.rows.length);
   assert.throws(() => suggestionHistory(page('history'), peer, demo)); assert.throws(() => suggestionHistory(page('history'), owner, 'other'));
   assert.throws(() => suggestionHistory({...page('history'), shown: 1}, owner, demo));
   // a ship from before the field read its whole archive: complete, and nothing is said
   assert.equal(h.archiveComplete, true); assert.doesNotMatch(r.status, /archive/);
   assert.equal(suggestionHistory({...page('history'), archiveComplete: true}, owner, demo).archiveComplete, true);
   const partial = suggestionHistory({...page('history'), archiveComplete: false}, owner, demo);
-  assert.equal(partial.archiveComplete, false); assert.match(historyReport(partial).status, /some suggestions may be missing here\.$/);
+  assert.equal(partial.archiveComplete, false); assert.match(historyReport(partial).status, /^53 suggestions read, \d+ landed; the newest \d+ of those are shown\..* some suggestions are missing here and are not counted\.$/);
   assert.throws(() => suggestionHistory({...page('history'), archiveComplete: 'no'}, owner, demo));
 });
 
@@ -144,15 +144,30 @@ test('the journal of asked work keeps the request text, survives a bad stored va
   assert.deepEqual(workWithdraw(asked('0x1003')), {schema: 'readymade-work-withdraw-v1', owner, nonce: '0x1003', project: demo, session: '0xe1b1.e811'});
   const refusedBack = workQueue({...page('peer-work'), withdrawRefused: [{nonce: '0x1003', reason: 'poke-ack\n | %work-request-started\n', at: '~2026.11.17..14.00.00'}]}, peer);
   assert.deepEqual(refusedBack.withdrawRefused, [{nonce: '0x1003', reason: 'work-request-started'}]); assert.deepEqual(workQueue(page('peer-work'), peer).withdrawRefused, []);
-  for (const [phase, words] of [['dismissed', /^Dismissed by you before it started/], ['withdrawn', /^Withdrawn by its requester before it started/], ['revoked', /^Not started: its requester lost access to the session while it waited\. Nothing ran\./],
-    ['not-started', /^Not started: the session did not take it, so no run began\./], ['session-gone', /^Not finished: its session no longer exists on this ship\./],
-    ['not-run', /^Taken, not run: the session holds this instruction and has not started a run of it\. Run the session to do it\./],
-    ['stopped', /^Stopped: the session began it and then sat ready without running for ten minutes \(revision 8\)\. Run the session to continue\./]] as const) {
-    const ended = workReport(workQueue({...page('owner-work'), requests: [{...raw.find(w => w.status === 'finished')!, outcome: {phase, sequence: 19, revision: 8, at: '~2026.11.17..14.00.00'}}]}, owner)).sections[0]!.lines[0]!;
-    assert.match(ended.detail!, words); assert.equal(ended.action, undefined);
-    // work the session never began is marked for the owner's attention, never as done
-    assert.equal(ended.mark, ['dismissed', 'withdrawn', 'revoked'].includes(phase) ? 'ok' : 'warning');
+  const one = (phase: string, dispatchedAt?: string) => workReport(workQueue({...page('owner-work'), requests: [{...raw.find(w => w.status === 'finished')!, dispatchedAt: dispatchedAt ?? null,
+    outcome: {phase, sequence: 19, revision: 8, at: '~2026.11.17..14.00.00'}}]}, owner)).sections[0]!.lines[0]!;
+  // Only an end this app knows to be normal is marked done; a deliberate end is a note; everything else wants attention.
+  for (const [phase, words, mark] of [['complete', /^Finished: complete at revision 8/, 'ok'], ['judgment', /^Finished: judgment at revision 8/, 'ok'],
+    ['dismissed', /^Dismissed by you before it started/, 'note'], ['withdrawn', /^Withdrawn by its requester before it started/, 'note'],
+    ['revoked', /^Not started: its requester lost access to the session while it waited\. Nothing ran\./, 'note'],
+    ['not-started', /^Not started: the session did not take it, so no run began\./, 'warning'],
+    ['not-run', /^Taken, not run: the session holds this instruction and has not started a run of it\. It stays in the session and goes with its next run; its requester is not told again\./, 'warning'],
+    ['stopped', /^Stopped: the session began it and then sat ready without running for ten minutes \(revision 8\)\. If it continues, its requester is not told again\./, 'warning'],
+    ['refused', /^Ended with the session refused at revision 8/, 'warning'], ['paused', /^Ended with the session paused at revision 8/, 'warning'],
+    ['some-future-phase', /^Ended with the session some-future-phase at revision 8/, 'warning']] as const) {
+    const ended = one(phase); assert.match(ended.detail!, words); assert.equal(ended.mark, mark, phase); assert.equal(ended.action, undefined);
   }
+  // a session that is gone: a request that had been handed to it was not finished; one still waiting never started
+  assert.match(one('session-gone', '~2026.11.17..13.00.00').detail!, /^Not finished: its session no longer exists on this ship\./);
+  assert.match(one('session-gone').detail!, /^Not started: its session no longer exists on this ship\./); assert.equal(one('session-gone').mark, 'warning');
+  // the requester's side: marked done only for the owner's own words for a normal end
+  const finishedNotice = got.inbox.find(n => n.kind === 'work-finished')!;
+  const said = (detail?: string) => workEndedMark(detail === undefined ? undefined : {...finishedNotice, detail});
+  assert.equal(said(), 'note'); assert.equal(said('Finished: complete at sequence 9, revision 2.'), 'ok'); assert.equal(said('Finished: judgment at sequence 19, revision 2.'), 'ok');
+  for (const text of ['Finished: refused at sequence 9, revision 2.', 'Finished: paused at sequence 9, revision 2.', 'Not started: the session did not take this request. Ask again after the session has moved on.',
+    'Taken, not run: the session holds this instruction and has not started a run of it. The owner can run it.', 'Stopped: the session began this and has been ready without running for ten minutes, at sequence 12. The owner can run it again.',
+    'Not finished: the session no longer exists on the owner\'s ship.', '', 'Some sentence a later ship says.']) assert.equal(said(text), 'warning', text);
+  assert.equal(said('Dismissed by the owner before it started. Nothing ran.'), 'note'); assert.equal(said('Withdrawn before it started. Nothing ran.'), 'note');
 });
 
 test('session streams: one line each, and exact open and close commands', () => {
@@ -182,7 +197,7 @@ test('work requests: the owner’s queue, the peer’s asks with the ship’s re
   assert.equal(workReport(mine).sections[0]!.lines.length, 0);
   const raw = page('owner-work'), done = (raw.requests as Record<string, unknown>[]).find(w => w.status === 'finished')!;
   const refusedRun = workReport(workQueue({...raw, requests: [{...done, outcome: {...(done.outcome as object), phase: 'not-started'}}]}, owner)).sections[0]!.lines[0]!;
-  assert.match(refusedRun.detail!, /^Not started: this ship could not start it in the session\. Nothing ran\./); assert.equal(refusedRun.mark, 'warning');
+  assert.match(refusedRun.detail!, /^Not started: the session did not take it, so no run began\./); assert.equal(refusedRun.mark, 'warning');
   const asked = workQueue({...page('peer-work'), asked: [{nonce: '0x1004', owner, project: demo, session: '0xe1b1', status: 'refused', reason: 'poke-ack\n | x\n | %work-peer-limit\n', at: '~2026.11.17..10.47.00'}]}, peer);
   assert.equal(asked.asked[0]!.reason, 'work-peer-limit'); assert.match(workReport(asked).sections[1]!.lines[0]!.detail!, /^Refused: work peer limit/);
   assert.throws(() => workQueue(page('owner-work'), peer));
