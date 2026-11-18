@@ -206,6 +206,32 @@ test('a work request is sent once and the owner’s answer is read once', async 
   assert.equal(lost.posts(COLLAB + 'work-request').length, 1); assert.equal(lost.requests.length, 1, 'nothing else was asked of the ship');
 });
 
+test('an overview that could not be read keeps the owner’s rows and says why; a ship without the page shows none', async t => {
+  let fail = true;
+  const pages = {...ownerPages(), [`GET ${CODING}overview`]: () => {if (fail) throw new ShipClientError('transport'); return page('overview');}};
+  const x = setup(t, OWNER, pages, {project: DEMO});
+  x.screens.rows(); await x.screens.connected();   // the first draw notices the connection; the read after it is awaited here
+  const rows = x.screens.rows(), overview = rows.find(r => r.id === 'native-overview'), labels = rows.find(r => r.id === 'native-pages').children.map(r => r.label);
+  assert.ok(labels.includes('Tasks and Questions') && labels.includes('Standing Policy') && labels.includes('Session Roles'), 'one failed read does not take the owner’s screens away');
+  assert.equal(overview.description, 'could not be read; open it to read again'); assert.match(overview.tooltip, /transport/); assert.equal(overview.children, undefined);
+  fail = false; await x.screens.overview.show();
+  assert.match(x.screens.rows().find(r => r.id === 'native-overview').description, /waiting on you|nothing waiting/);
+  // A guest ship: the page is missing, or the ship says it hosts nothing. No owner rows, no reason to show.
+  for (const answer of [undefined, {status: 404, value: {error: 'owner-pages-unavailable'}}]) {
+    const guest = setup(t, PEER, answer ? {[`GET ${CODING}overview`]: answer} : {}, {project: DEMO});
+    guest.screens.rows(); await guest.screens.connected();
+    const seen = guest.screens.rows(); assert.deepEqual(seen.map(r => r.id), ['native-pages']); assert.ok(!seen[0].children.some(r => r.label === 'Tasks and Questions'));
+  }
+});
+test('the badge and the tree never say nothing is waiting when the ship could not read every source', async t => {
+  const partial = {...page('overview'), decisions: [], unavailable: ['tasks']};
+  const x = setup(t, OWNER, {...ownerPages(), [`GET ${CODING}overview`]: partial}, {project: DEMO});
+  x.screens.rows(); await x.screens.connected();   // the first draw notices the connection; the read after it is awaited here
+  assert.equal(x.screens.rows().find(r => r.id === 'native-overview').description, 'incomplete: the ship could not read every part');
+  const some = setup(t, OWNER, {...ownerPages(), [`GET ${CODING}overview`]: {...page('overview'), unavailable: ['tasks']}}, {project: DEMO});
+  some.screens.rows(); await some.screens.connected();
+  assert.match(some.screens.rows().find(r => r.id === 'native-overview').description, /^\d+ waiting on you \(incomplete\)$/);
+});
 test('a window whose sign-in is gone shows no rows instead of failing to draw the sidebar', async t => {
   let alive = true;
   const x = setup(t, OWNER, ownerPages(), {project: DEMO, shipNow: () => {if (!alive) throw new Error('no session cookie'); return OWNER;}});

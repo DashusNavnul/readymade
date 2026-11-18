@@ -4,7 +4,7 @@ import {OutcomeUnknownError, ShipClientError} from './ship-client';
 import {nativeRefusal, refusalSentence, shortHex, type NativeReply, type NativeRequest} from './native-pages';
 import {ReportPanel} from './report-panel';
 import {unreadable, type Report} from './report';
-import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
+import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, overviewWaiting, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
   POLICY_TOOLS, type OwnerOverview, type PolicyBody} from './owner-pages';
 import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, rolesReport, sessionRoles, sessionStreams,
   streamClose, streamOpen, streamText, suggestionHistory, workAsk, workDismiss, workJournal, workJournalAdd, workQueue, workReport, workWithdraw, type Notice, type PresenceTarget, type PresenceTold, type SessionStream} from './collab-pages';
@@ -38,6 +38,8 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
  * suggestion history, work requests and roles, the standing policy, memory handoffs, session streams and file
  * presence. Every screen states what the ship answered; a refusal is shown with the ship's own reason.
  */
+/** The ship has no such page: a guest ship, or a backend older than this app. Not a failure to read one. */
+class PageMissing extends Error {}
 export class NativeScreens implements vscode.Disposable {
   private readonly panels: ReportPanel[] = [];
   private readonly badge = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
@@ -45,6 +47,8 @@ export class NativeScreens implements vscode.Disposable {
   private readonly presence = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
   private readonly events: vscode.Disposable[] = [];
   private overviewSeen?: OwnerOverview;
+  /** Why the overview could not be read on a ship that has one. The owner's rows stay, with this as the reason. */
+  private overviewFault?: string;
   private streams: SessionStream[] = [];
   private streamTimer?: NodeJS.Timeout;
   private presenceTimer?: NodeJS.Timeout;
@@ -119,7 +123,7 @@ export class NativeScreens implements vscode.Disposable {
     try {return await client.nativePage(path, request);}
     catch (error) {
       // A guest ship, or one whose Pataphor is older than this page: say so rather than "request failed".
-      if (error instanceof ShipClientError && error.code === 'unavailable' && error.status === 404) throw new Error('This ship does not have this page. It may be a guest ship, or its backend may be older than this app. A ship that follows its publisher takes the update by itself. If it has not after half an hour: a hosting ship runs Readymade: Follow Pataphor Updates; a guest ship removes the collaboration service and joins again.');
+      if (error instanceof ShipClientError && error.code === 'unavailable' && error.status === 404) throw new PageMissing('This ship does not have this page. It may be a guest ship, or its backend may be older than this app. A ship that follows its publisher takes the update by itself. If it has not after half an hour: a hosting ship runs Readymade: Follow Pataphor Updates; a guest ship removes the collaboration service and joins again.');
       if (error instanceof ShipClientError && error.code === 'authenticationRequired' && !this.closed && await this.host.recover?.(error)) {
         // The ship refused before doing anything. A read is asked once more; a command is left for the person to press again.
         if ((request?.method ?? 'GET') === 'GET' && this.host.client() === client) return client.nativePage(path, request);
@@ -131,7 +135,9 @@ export class NativeScreens implements vscode.Disposable {
   private get(path: string, headers?: Record<string, string>): Promise<NativeReply> {return this.page(path, headers ? {headers} : undefined);}
   /** A read the ship refused becomes its own words; a page this ship does not have says so plainly. */
   private answered(reply: NativeReply): NativeReply {
-    const why = nativeRefusal(reply); if (why) throw new Error(`The ship did not answer this page: ${refusalSentence(why)}`); return reply;
+    const why = nativeRefusal(reply); if (!why) return reply;
+    const said = `The ship did not answer this page: ${refusalSentence(why)}`;
+    throw why === 'owner-pages-unavailable' ? new PageMissing(said) : new Error(said);
   }
   /**
    * The read that follows a command the ship has already answered. If that read fails, the command's own answer
@@ -155,19 +161,23 @@ export class NativeScreens implements vscode.Disposable {
     const read = ownerOverview(this.answered(await this.get(CODING + 'overview')).value);
     // An answer that arrives after the window moved to another ship says nothing about that ship.
     if (this.host.client() !== client) throw new Error('The connection changed while the overview was being read. Read it again.');
-    this.overviewSeen = read; this.renderBadge(); this.host.changed(); return read;
+    this.overviewSeen = read; this.overviewFault = undefined; this.renderBadge(); this.host.changed(); return read;
   }
   private renderBadge(): void {
     const o = this.overviewSeen; if (!o) {this.badge.hide(); return;}
-    const waiting = o.decisions.length;
-    this.badge.text = waiting ? `$(bell-dot) ${waiting} waiting` : '$(bell) Nothing waiting';
-    this.badge.tooltip = waiting ? `${waiting} decision${waiting === 1 ? '' : 's'} waiting on you, read at ${o.observedAt}. Open the overview.` : `Nothing was waiting on you at ${o.observedAt}.`;
+    const waiting = o.decisions.length, partial = o.unavailable.length > 0;
+    // "Nothing waiting" is said only when the ship could read every source a decision can come from.
+    this.badge.text = waiting ? `$(bell-dot) ${waiting} waiting${partial ? ' (incomplete)' : ''}` : partial ? '$(warning) Overview incomplete' : '$(bell) Nothing waiting';
+    this.badge.tooltip = `${overviewWaiting(o)}, read at ${o.observedAt}.${partial ? ` The ship could not read: ${o.unavailable.join(', ')}.` : ''} Open the overview.`;
     this.badge.show();
   }
   /** Read once after connecting. A ship without the page simply shows no badge. */
   async connected(): Promise<void> {
-    this.overviewSeen = undefined; this.told = undefined; this.renderBadge();
-    try {await this.readOverview();} catch { /* An older ship, or not the owner: no badge. */ }
+    this.overviewSeen = undefined; this.overviewFault = undefined; this.told = undefined; this.renderBadge();
+    // A ship without the page (a guest, or an older backend) shows no badge and no owner rows. Any other failure,
+    // a slow read or one line this app cannot take, is not that: the owner's rows stay and the row says why.
+    try {await this.readOverview();}
+    catch (error) {if (!(error instanceof PageMissing) && this.host.client()) {this.overviewFault = error instanceof Error && error.message ? error.message.slice(0, 300) : 'The overview could not be read.'; this.host.changed();}}
     try {await this.readStreams();} catch { /* No streams page on an older ship. */ }
     // What owners told this ship while the app was closed is said once, without being asked for.
     try {await this.readInbox(true);} catch { /* No notice store on this ship. */ }
@@ -177,7 +187,7 @@ export class NativeScreens implements vscode.Disposable {
     const client = this.host.client();
     if (client !== this.lastClient) {
       // Another ship, or none: what was read from the last one is dropped, and nothing keeps polling it.
-      this.lastClient = client; this.overviewSeen = undefined; this.streams = []; this.told = undefined;
+      this.lastClient = client; this.overviewSeen = undefined; this.overviewFault = undefined; this.streams = []; this.told = undefined;
       clearInterval(this.streamTimer); this.streamTimer = undefined; this.watching.hide(); this.presence.hide(); this.renderBadge();
       // An open screen still shows the last ship, with its buttons. Each is read again now, from the ship connected
       // now (or says none is), so no button built from one ship's page is ever pressed against another ship.
@@ -186,22 +196,23 @@ export class NativeScreens implements vscode.Disposable {
     }
     if (!client || !this.named()) return [];
     const row = (label: string, command: string, tooltip: string, description?: string): MediaTreeRow => ({label, description, tooltip, command: {title: label, command: 'readymade.' + command}});
-    const o = this.overviewSeen, project = !!this.host.project(), shared = this.host.sessions().length, sharing = vscode.workspace.getConfiguration('readymade').get<boolean>('sharePresence', false);
+    const o = this.overviewSeen, owner = !!o || !!this.overviewFault, project = !!this.host.project(), shared = this.host.sessions().length, sharing = vscode.workspace.getConfiguration('readymade').get<boolean>('sharePresence', false);
     // Collaboration pages exist on any ship with the service; the owner's pages only where the overview answered.
     const pages: MediaTreeRow = {id: 'native-pages', label: 'Ship', icon: 'server', children: [
-      ...(o ? [row('Tasks and Questions', 'tasksAndQuestions', 'What agents have claimed, proposed, and asked you.'),
+      ...(owner ? [row('Tasks and Questions', 'tasksAndQuestions', 'What agents have claimed, proposed, and asked you.'),
         row('Work Requests', 'workRequests', 'What collaborators asked this ship\'s agents to do, and what this ship asked of others.'),
         row('Standing Policy', 'standingPolicy', 'What your ship\'s agents may do without asking.'),
         row('Memory Handoff', 'memoryHandoff', 'A bounded packet of the ship\'s memory for a new or returning model.'),
         row('Label or Replace a Memory', 'memoryLabel', 'Say what a memory is: a fact, a hypothesis, an open question, or replaced by a newer one.')] : []),
-      ...(o && project ? [row('Suggestion History', 'suggestionHistory', 'Each suggestion: authored, reviewed, landed, acknowledged.'), row('Session Roles', 'sessionRoles', 'Who controls, asks for work in, and watches each session.')] : []),
+      ...(owner && project ? [row('Suggestion History', 'suggestionHistory', 'Each suggestion: authored, reviewed, landed, acknowledged.'), row('Session Roles', 'sessionRoles', 'Who controls, asks for work in, and watches each session.')] : []),
       row('Notices', 'notices', 'What this ship told collaborators and what owners told this ship, each told once.'),
       row('Who Has What Open', 'presenceBoard', 'Who is viewing, editing or has claimed each shared file, as the owner\'s ship shows it.'),
       ...(shared ? [row('Follow a Shared Session', 'followSession', 'Watch a session another owner shared, live.', `${shared} listed`), row('Ask the Owner\'s Agent for Work', 'askWork', 'One request in a session shared with you; the owner\'s policy decides.')] : []),
       row(sharing ? 'Stop Showing Which Shared File I Have Open' : 'Show Collaborators Which Shared File I Have Open', 'togglePresence', 'Only files already shared are reported, and each report expires after a few minutes.', sharing ? 'on' : 'off')]};
-    if (!o) return [pages];
     const open = {title: 'Open the Overview', command: 'readymade.overview'};
-    return [pages, {id: 'native-overview', label: 'Overview', icon: 'checklist', description: o.decisions.length ? `${o.decisions.length} waiting on you` : 'nothing waiting', tooltip: `Read from the ship at ${o.observedAt}`, command: open,
+    if (!o) return this.overviewFault ? [pages, {id: 'native-overview', label: 'Overview', icon: 'warning', description: 'could not be read; open it to read again', tooltip: this.overviewFault, command: open}] : [pages];
+    const partial = o.unavailable.length > 0;
+    return [pages, {id: 'native-overview', label: 'Overview', icon: 'checklist', description: o.decisions.length ? `${o.decisions.length} waiting on you${partial ? ' (incomplete)' : ''}` : partial ? 'incomplete: the ship could not read every part' : 'nothing waiting', tooltip: `Read from the ship at ${o.observedAt}`, command: open,
       children: overviewProblems(o).map((b, i) => ({label: b.title, description: b.detail, tooltip: b.detail, command: open,
         problem: {key: `overview-${i}-${b.title}`, category: /review/i.test(b.title) ? 'review' as const : /check/i.test(b.title) ? 'check' as const : 'delivery' as const, status: 'blocked' as const, label: `${b.title}: ${b.detail}`.slice(0, 200)}}))}];
   }

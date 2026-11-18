@@ -17,7 +17,9 @@ export interface OwnerOverview {
 }
 const overviewLine = (value: unknown): OverviewLine => {
   const r = record(value, 'overview line');
-  return Object.freeze({kind: text(r.kind, 'overview kind', 64), what: text(r.what, 'overview line', 2048)});
+  // The ship builds a line from stored text: a question line alone can carry 2,048 bytes of question and 1,024 of
+  // consequence. One long open question once made the whole overview unreadable at the old 2,048 limit.
+  return Object.freeze({kind: text(r.kind, 'overview kind', 64), what: text(r.what, 'overview line', 8192)});
 };
 export function ownerOverview(value: unknown): OwnerOverview {
   const r = record(value, 'overview');
@@ -30,12 +32,21 @@ export function ownerOverview(value: unknown): OwnerOverview {
 export function overviewReport(o: OwnerOverview): Report {
   const part = (title: string, lines: readonly OverviewLine[], empty: string, mark: ReportLine['mark'] = 'note'): ReportSection =>
     ({title, empty, lines: lines.map(l => ({text: l.what, detail: l.kind, mark}))});
-  const waiting = o.decisions.length, trouble = o.blockers.length;
-  return {title: 'Overview', status: `${waiting ? `${waiting} decision${waiting === 1 ? '' : 's'} waiting on you` : 'Nothing is waiting on you'}${trouble ? `, ${trouble} blocker${trouble === 1 ? '' : 's'}` : ''}. Read from the ship at ${o.observedAt}.`,
+  const trouble = o.blockers.length;
+  return {title: 'Overview', status: `${overviewWaiting(o)}${trouble ? `, ${trouble} blocker${trouble === 1 ? '' : 's'}` : ''}. Read from the ship at ${o.observedAt}.`,
     note: o.unavailable.length ? `The ship could not read: ${o.unavailable.join(', ')}. Those parts are missing below, not empty.` : undefined,
     sections: [part('Waiting on you', o.decisions, 'No decision is waiting.', 'warning'), part('Blockers', o.blockers, 'Nothing is blocked.', 'problem'),
       part('Running now', o.running, 'Nothing is running.'), part('Next', o.next, 'Nothing is queued.'),
       part('Changed in the last day', o.changes, 'Nothing landed or finished.', 'ok')]};
+}
+/**
+ * How many decisions wait, in words. When the ship could not read some of its sources, "nothing" is not claimed:
+ * the count covers only what it could read, and a decision may sit in a part it could not.
+ */
+export function overviewWaiting(o: OwnerOverview): string {
+  const waiting = o.decisions.length, partial = o.unavailable.length > 0;
+  if (waiting) return `${waiting} decision${waiting === 1 ? '' : 's'} waiting on you${partial ? ' in the parts the ship could read' : ''}`;
+  return partial ? 'No decision found, but the ship could not read every part' : 'Nothing is waiting on you';
 }
 /** Blockers as problems a project list can show: one per line, titled by the area before the first colon. */
 export function overviewProblems(o: OwnerOverview): {readonly title: string; readonly detail: string}[] {

@@ -15,6 +15,13 @@ test('the overview reads the real page and says what waits on the owner', () => 
   if (blocked.length) {assert.ok(blocked[0]!.title.length > 0); assert.ok(!blocked[0]!.title.includes(': '));}
   assert.match(overviewReport({...o, unavailable: ['candidate ledger']}).note!, /could not read: candidate ledger.*missing below, not empty/);
   assert.match(overviewReport({...o, decisions: [], blockers: []}).status, /^Nothing is waiting on you\./);
+  // With a source the ship could not read, "nothing" is not claimed, and a count is said to be partial.
+  assert.match(overviewReport({...o, decisions: [], blockers: [], unavailable: ['tasks']}).status, /^No decision found, but the ship could not read every part\./);
+  assert.match(overviewReport({...o, blockers: [], unavailable: ['tasks']}).status, /^\d+ decisions? waiting on you in the parts the ship could read\./);
+  // A question line can carry 2,048 bytes of question and 1,024 of consequence; the page must still read.
+  const long = {kind: 'question', what: 'Question on task x: ' + 'q'.repeat(2048) + ' If unanswered: ' + 'c'.repeat(1024)};
+  assert.equal(ownerOverview({...page('overview'), decisions: [long]}).decisions[0]!.what.length, long.what.length);
+  assert.throws(() => ownerOverview({...page('overview'), decisions: [{kind: 'question', what: 'q'.repeat(8193)}]}));
   assert.throws(() => ownerOverview({...page('overview'), schema: 'owner-overview-v2'}));
   assert.throws(() => ownerOverview({...page('overview'), running: [{kind: 'x'}]}));
   assert.throws(() => ownerOverview({...page('overview'), policyAdmissionsLeft: -1}));
