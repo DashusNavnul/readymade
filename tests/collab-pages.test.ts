@@ -136,7 +136,7 @@ test('the journal of asked work keeps the request text, survives a bad stored va
   assert.deepEqual(workWithdraw(asked('0x1003')), {schema: 'readymade-work-withdraw-v1', owner, nonce: '0x1003', project: demo, session: '0xe1b1.e811'});
   const refusedBack = workQueue({...page('peer-work'), withdrawRefused: [{nonce: '0x1003', reason: 'poke-ack\n | %work-request-started\n', at: '~2026.11.17..14.00.00'}]}, peer);
   assert.deepEqual(refusedBack.withdrawRefused, [{nonce: '0x1003', reason: 'work-request-started'}]); assert.deepEqual(workQueue(page('peer-work'), peer).withdrawRefused, []);
-  for (const [phase, words] of [['dismissed', /^Dismissed by you before it started/], ['withdrawn', /^Withdrawn by its requester before it started/]] as const) {
+  for (const [phase, words] of [['dismissed', /^Dismissed by you before it started/], ['withdrawn', /^Withdrawn by its requester before it started/], ['revoked', /^Not started: its requester lost access to the session while it waited\. Nothing ran\./]] as const) {
     const ended = workReport(workQueue({...page('owner-work'), requests: [{...raw.find(w => w.status === 'finished')!, outcome: {phase, sequence: 19, revision: 8, at: '~2026.11.17..14.00.00'}}]}, owner)).sections[0]!.lines[0]!;
     assert.match(ended.detail!, words); assert.equal(ended.action, undefined);
   }

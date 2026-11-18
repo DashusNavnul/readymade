@@ -296,7 +296,7 @@ export function workQueue(value: unknown, me: string): WorkQueue {
 const workLine = (w: WorkRow): ReportLine => ({text: `${shortHex(w.nonce)} from ${w.peer} in ${w.project}`,
   detail: `${w.status === 'queued' ? 'Queued' : w.status === 'dispatched' ? `Running since ${w.dispatchedAt ?? 'an unknown time'}`
     : w.outcome?.phase === 'not-started' ? 'Not started: this ship could not start it in the session. Nothing ran.'
-    : w.outcome?.phase === 'dismissed' ? 'Dismissed by you before it started. Nothing ran.' : w.outcome?.phase === 'withdrawn' ? 'Withdrawn by its requester before it started. Nothing ran.' : `Finished: ${w.outcome?.phase ?? 'unknown'} at revision ${w.outcome?.revision ?? '?'}`}` +
+    : w.outcome?.phase === 'dismissed' ? 'Dismissed by you before it started. Nothing ran.' : w.outcome?.phase === 'withdrawn' ? 'Withdrawn by its requester before it started. Nothing ran.' : w.outcome?.phase === 'revoked' ? 'Not started: its requester lost access to the session while it waited. Nothing ran.' : `Finished: ${w.outcome?.phase ?? 'unknown'} at revision ${w.outcome?.revision ?? '?'}`}` +
     `${w.policyVersion ? ` · policy version ${w.policyVersion}` : ''}\nSession ${shortHex(w.session)} · asked ${w.at}`, mark: w.outcome?.phase === 'not-started' ? 'warning' : w.status === 'finished' ? 'ok' : 'note',
   action: w.status === 'queued' ? {id: `dismiss:${w.id}`, label: 'Dismiss…'} : undefined});
 /**
