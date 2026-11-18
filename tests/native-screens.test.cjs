@@ -45,7 +45,7 @@ function setup(t, me, pages = {}, host = {}) {
     return 'status' in value && 'value' in value ? value : {status: 200, value};
   }};
   let changes = 0;
-  const screens = new NativeScreens({client: () => host.disconnected ? undefined : client, ship: () => me, project: () => host.project, shared: uri => host.shared?.(uri), sessions: () => host.sessions ?? [], state, recover: host.recover,
+  const screens = new NativeScreens({client: () => host.disconnected ? undefined : client, ship: () => host.shipNow ? host.shipNow() : me, project: () => host.project, shared: uri => host.shared?.(uri), sessions: () => host.sessions ?? [], state, recover: host.recover,
     changed: () => {changes++;}}, 1);
   t.after(() => screens.dispose());
   return {screens, requests, state: held, writes, changes: () => changes, posts: where => requests.filter(r => r.method === 'POST' && r.path === where).map(r => r.body)};
@@ -200,6 +200,40 @@ test('a work request is sent once and the owner’s answer is read once', async 
   assert.equal(lost.posts(COLLAB + 'work-request').length, 1); assert.equal(lost.requests.length, 1, 'nothing else was asked of the ship');
 });
 
+test('a command the ship answered is never reported as failed when the read after it fails', async t => {
+  const s = {owner: OWNER, project: DEMO, session: '0xe1b1.e811', generation: '1', inspection: '0xabc'};
+  const down = () => {throw new ShipClientError('transport');};
+  // Ask: the request left; only the read of the owner's answer failed.
+  const ask = setup(t, PEER, {[`POST ${COLLAB}work-request`]: {status: 202, value: {status: 'sent'}}, [`GET ${COLLAB}work-queue`]: down});
+  const asked = await ask.screens.ask(s, 'Add a test.');
+  assert.match(asked.said, /^Request 0x[0-9a-f.]+ was sent, but ~zod's answer could not be read just now\. It is kept under Work Requests and will not be sent again\.$/); assert.equal(asked.refused, false);
+  assert.equal(ask.posts(COLLAB + 'work-request').length, 1); assert.deepEqual(ask.state.get('readymade.workAsked:~nec').map(a => a.answer), ['unanswered']);
+  // Withdraw: the same, and the journal entry is still there to read again from.
+  const back = setup(t, PEER, {[`POST ${COLLAB}work-withdraw`]: {status: 202, value: {status: 'sent'}}, [`GET ${COLLAB}work-queue`]: down});
+  back.state.set('readymade.workAsked:~nec', [{nonce: '0x1002', owner: OWNER, project: DEMO, session: s.session, text: 'x', at: 1, answer: 'queued'}]);
+  assert.equal(await back.screens.withdraw('0x1002'), 'Asked ~zod to withdraw it, but the answer could not be read just now. It was not sent again; read the page again to see.');
+  assert.equal(back.posts(COLLAB + 'work-withdraw').length, 1);
+  // Follow and stop following: the ship's answer to the command is what is said.
+  const watch = setup(t, PEER, {[`POST ${COLLAB}session-stream`]: {status: 202, value: {status: 'submitted'}}, [`GET ${COLLAB}session-stream`]: down});
+  assert.match(await watch.screens.follow(s), /^Following\. Its status appears in the status bar\. The page could not be read again just now; nothing was sent twice\./);
+  assert.match(await watch.screens.unfollow(s), /^Stopped following\. The page could not be read again just now/);
+  assert.equal(watch.posts(COLLAB + 'session-stream').length, 2);
+});
+test('a request in flight when the window leaves its ship is still kept, under the ship that sent it', async t => {
+  const s = {owner: OWNER, project: DEMO, session: '0xe1b1.e811'};
+  let now = PEER;
+  // The answer is lost and, by the time that is known, the window is on another ship.
+  const moved = setup(t, PEER, {[`POST ${COLLAB}work-request`]: () => {now = '~bud'; throw new OutcomeUnknownError();}}, {shipNow: () => now});
+  const said = await moved.screens.ask(s, 'Add a test.');
+  assert.match(said.said, /unknown whether request/); assert.deepEqual([...moved.state.keys()], ['readymade.workAsked:~nec']);
+  // The same when the window has no ship at all by then.
+  now = PEER;
+  const gone = setup(t, PEER, {[`POST ${COLLAB}work-request`]: () => {now = undefined; throw new OutcomeUnknownError();}}, {shipNow: () => now});
+  assert.match((await gone.screens.ask(s, 'Add a test.')).said, /unknown whether request/); assert.deepEqual(gone.state.get('readymade.workAsked:~nec').map(a => a.answer), ['unknown']);
+  // With no ship before sending, nothing is sent.
+  const none = setup(t, PEER, {[`POST ${COLLAB}work-request`]: {status: 202, value: {status: 'sent'}}}, {shipNow: () => undefined});
+  await assert.rejects(none.screens.ask(s, 'x'), /Connect your ship first/); assert.equal(none.requests.length, 0);
+});
 test('an open screen is read again when the connection changes, so no button from one ship is pressed against another', async t => {
   const moved = {};
   const x = setup(t, OWNER, ownerPages(), moved);

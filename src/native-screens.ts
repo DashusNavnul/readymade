@@ -131,6 +131,14 @@ export class NativeScreens implements vscode.Disposable {
   private answered(reply: NativeReply): NativeReply {
     const why = nativeRefusal(reply); if (why) throw new Error(`The ship did not answer this page: ${refusalSentence(why)}`); return reply;
   }
+  /**
+   * The read that follows a command the ship has already answered. If that read fails, the command's own answer
+   * still stands and is what the person is told: a failure here once read as "the request failed", which invites
+   * pressing the button again and sending the same command a second time.
+   */
+  private async thenRead(said: string, read: () => Promise<unknown>): Promise<string> {
+    try {await read(); return said;} catch {return `${said} The page could not be read again just now; nothing was sent twice. Read it again to see where it stands.`;}
+  }
   /** One command. Returns the sentence to show: what the ship did, or exactly why it refused. Never sent twice. */
   private async send(path: string, body: Record<string, unknown>, done: string): Promise<string> {
     try {const why = nativeRefusal(await this.page(path, {method: 'POST', body})); return why ? `Refused by the ship: ${refusalSentence(why)} Nothing changed.` : done;}
@@ -337,10 +345,10 @@ export class NativeScreens implements vscode.Disposable {
   async follow(s: {owner: string; project: string; generation: string; session: string; inspection: string}): Promise<string> {
     const cursor = this.cursors()[`${s.owner}/${s.session}`] ?? 0;
     const said = await this.send(COLLAB + 'session-stream', streamOpen(s.owner, s.project, Number(s.generation), s.inspection, s.session, cursor), cursor ? `Following again from sequence ${cursor}.` : 'Following. Its status appears in the status bar.');
-    await this.readStreams(); return said;
+    return this.thenRead(said, () => this.readStreams());
   }
   async unfollow(s: {owner: string; session: string}): Promise<string> {
-    const said = await this.send(COLLAB + 'session-stream', streamClose(s.owner, s.session), 'Stopped following.'); await this.readStreams(); return said;
+    return this.thenRead(await this.send(COLLAB + 'session-stream', streamClose(s.owner, s.session), 'Stopped following.'), () => this.readStreams());
   }
   /** The streams as this ship last reported them. */
   get followed(): readonly SessionStream[] {return this.streams;}
@@ -370,8 +378,11 @@ export class NativeScreens implements vscode.Disposable {
   /** Send one work request and read the owner's answer once. It is never sent again, whatever the answer. */
   async ask(s: {owner: string; project: string; session: string}, request: string): Promise<{said: string; refused: boolean; nonce: string}> {
     const command = workAsk(s.owner, s.project, s.session, request), nonce = command.nonce as string;
+    // Which ship asks is fixed before anything is sent. If the window disconnects or moves to another ship while the
+    // request is in flight, it is still kept, and kept under the ship that sent it.
+    const me = this.me(), key = this.kept(ASKED);
     const keep = (answer: 'queued' | 'refused' | 'unanswered' | 'unknown', reason?: string): Thenable<void> =>
-      this.host.state.update(this.kept(ASKED), workJournalAdd(workJournal(this.host.state.get(this.kept(ASKED))), {nonce, owner: s.owner, project: s.project, session: s.session, text: command.text as string, at: Date.now(), answer, ...(reason ? {reason} : {})}));
+      this.host.state.update(key, workJournalAdd(workJournal(this.host.state.get(key)), {nonce, owner: s.owner, project: s.project, session: s.session, text: command.text as string, at: Date.now(), answer, ...(reason ? {reason} : {})}));
     let why: string | undefined;
     try {why = nativeRefusal(await this.page(COLLAB + 'work-request', {method: 'POST', body: command}));}
     catch (error) {
@@ -385,10 +396,14 @@ export class NativeScreens implements vscode.Disposable {
     await keep('unanswered');
     // The owner's answer is an acknowledgement that arrives a moment later; read it once rather than assume.
     await sleep(this.answerWaitMs);
-    const asked = workQueue(this.answered(await this.get(COLLAB + 'work-queue')).value, this.me()).asked.find(a => a.nonce === nonce);
+    const sent = `Request ${shortHex(nonce)} was sent`;
+    let asked: ReturnType<typeof workQueue>['asked'][number] | undefined;
+    // The request has left this computer. A failure to read its answer is said as that, never as a failed request.
+    try {asked = workQueue(this.answered(await this.get(COLLAB + 'work-queue')).value, me).asked.find(a => a.nonce === nonce);}
+    catch {return {said: `${sent}, but ${s.owner}'s answer could not be read just now. It is kept under Work Requests and will not be sent again.`, refused: false, nonce};}
     if (asked?.status === 'refused') {await keep('refused', asked.reason); return {said: `${s.owner} refused the request: ${refusalSentence(asked.reason)} Nothing was queued.`, refused: true, nonce};}
     if (asked?.status === 'accepted') {await keep('queued'); return {said: `${s.owner} queued your request ${shortHex(nonce)}. Progress arrives as notices.`, refused: false, nonce};}
-    return {said: `Request ${shortHex(nonce)} was sent; ${s.owner} has not answered yet. Open Work Requests to see its answer. It will not be sent again.`, refused: false, nonce};
+    return {said: `${sent}; ${s.owner} has not answered yet. Open Work Requests to see its answer. It will not be sent again.`, refused: false, nonce};
   }
   // ---- ending a request before it starts
   private async endWork(id: string): Promise<string | void> {
@@ -408,14 +423,16 @@ export class NativeScreens implements vscode.Disposable {
   }
   /** Take back one request this computer asked. The owner's ship decides; its answer is read once. */
   async withdraw(nonce: string): Promise<string> {
-    const asked = workJournal(this.host.state.get(this.kept(ASKED))).find(a => a.nonce === nonce);
+    const me = this.me(), asked = workJournal(this.host.state.get(this.kept(ASKED))).find(a => a.nonce === nonce);
     if (!asked) return 'This computer has no record of that request, so it cannot withdraw it.';
     const said = await this.send(COLLAB + 'work-withdraw', workWithdraw(asked), '');
     if (said) return said;
     await sleep(this.answerWaitMs);
-    const refused = workQueue(this.answered(await this.get(COLLAB + 'work-queue')).value, this.me()).withdrawRefused.find(w => w.nonce === nonce);
+    const unread = `Asked ${asked.owner} to withdraw it, but the answer could not be read just now. It was not sent again; read the page again to see.`;
+    let refused: ReturnType<typeof workQueue>['withdrawRefused'][number] | undefined;
+    try {refused = workQueue(this.answered(await this.get(COLLAB + 'work-queue')).value, me).withdrawRefused.find(w => w.nonce === nonce);} catch {return unread;}
     if (refused) return `${asked.owner} did not withdraw it: ${refusalSentence(refused.reason)}`;
-    const told = await this.get(COLLAB + 'notices').then(reply => nativeRefusal(reply) ? [] : collabNotices(reply.value, this.me())?.inbox ?? [], () => []);
+    const told = await this.get(COLLAB + 'notices').then(reply => nativeRefusal(reply) ? [] : collabNotices(reply.value, me)?.inbox ?? [], () => []);
     return told.some(n => n.from === asked.owner && n.subject === nonce && n.kind === 'work-finished' && n.detail.startsWith('Withdrawn'))
       ? `${asked.owner} withdrew your request. Nothing ran.` : `Asked ${asked.owner} to withdraw it; its ship has not answered yet. Read the page again to see.`;
   }
