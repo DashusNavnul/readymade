@@ -55,6 +55,9 @@ export class NativeScreens implements vscode.Disposable {
   private streamTimer?: NodeJS.Timeout;
   /** Counts stream reads, so an answer that was overtaken by a newer read is dropped. */
   private streamTurn = 0;
+  /** The newest stream read whose answer was applied, and how many reads are out. */
+  private streamApplied = 0;
+  private streamReads = 0;
   private presenceTimer?: NodeJS.Timeout;
   private told?: PresenceTold & {authority: string; project: string};
   private presenceBusy = false;
@@ -66,7 +69,7 @@ export class NativeScreens implements vscode.Disposable {
   readonly overview: ReportPanel; readonly tasks: ReportPanel; readonly notices: ReportPanel; readonly history: ReportPanel;
   readonly work: ReportPanel; readonly roles: ReportPanel; readonly policy: ReportPanel; readonly board: ReportPanel;
   /** `answerWaitMs`: how long to give an owner's ship to acknowledge a work request before reading its answer once. */
-  constructor(private readonly host: NativeHost, private readonly answerWaitMs = 4000, private readonly boardFreshMs = 20_000) {
+  constructor(private readonly host: NativeHost, private readonly answerWaitMs = 4000, private readonly boardFreshMs = 20_000, private readonly streamPollMs = 5000) {
     const panel = (type: string, title: string, load: () => Promise<Report>, act?: (id: string) => Promise<string | void>): ReportPanel => {
       const made = new ReportPanel('readymade.' + type, title, load, act); this.panels.push(made); return made;
     };
@@ -191,8 +194,9 @@ export class NativeScreens implements vscode.Disposable {
     this.overviewSeen = undefined; this.overviewFault = undefined; this.told = undefined; this.renderBadge();
     // A ship without the page (a guest, or an older backend) shows no badge and no owner rows. Any other failure,
     // a slow read or one line this app cannot take, is not that: the owner's rows stay and the row says why.
+    const asked = this.host.client();
     try {await this.readOverview();}
-    catch (error) {if (!(error instanceof PageMissing) && this.host.client()) {this.overviewFault = error instanceof Error && error.message ? error.message.slice(0, 300) : 'The overview could not be read.'; this.host.changed();}}
+    catch (error) {if (!(error instanceof PageMissing) && asked && this.host.client() === asked) {this.overviewFault = error instanceof Error && error.message ? error.message.slice(0, 300) : 'The overview could not be read.'; this.host.changed();}}
     try {await this.readStreams();} catch { /* No streams page on an older ship. */ }
     // What owners told this ship while the app was closed is said once, without being asked for.
     try {await this.readInbox(true);} catch { /* No notice store on this ship. */ }
@@ -385,10 +389,14 @@ export class NativeScreens implements vscode.Disposable {
   get followed(): readonly SessionStream[] {return this.streams;}
   private async readStreams(): Promise<void> {
     const client = this.host.client(), turn = ++this.streamTurn;
-    const reply = await this.get(COLLAB + 'session-stream');
-    // Dropped: an answer from another ship, one overtaken by a newer read (two polls can overlap, and the older
-    // must not move a cursor back), and one that arrives after these screens were closed (it would restart the poll).
-    if (nativeRefusal(reply) || this.closed || this.host.client() !== client || turn !== this.streamTurn) return;
+    let reply: NativeReply;
+    this.streamReads++;
+    try {reply = await this.get(COLLAB + 'session-stream');} finally {this.streamReads--;}
+    // Dropped: an answer from another ship, one that arrives after these screens were closed (it would restart the
+    // poll), and one older than an answer already applied (it must not move anything back). An answer that is
+    // merely late is still applied: on a slow ship every answer is late, and dropping those left the status stale.
+    if (nativeRefusal(reply) || this.closed || this.host.client() !== client || turn < this.streamApplied) return;
+    this.streamApplied = turn;
     this.streams = sessionStreams(reply.value, this.me());
     // Kept only when a sequence moved: this runs every few seconds while a session is followed.
     const cursors = this.cursors(), before = JSON.stringify(cursors);
@@ -398,7 +406,8 @@ export class NativeScreens implements vscode.Disposable {
     if (shown) {this.watching.text = `$(broadcast) ${shortHex(shown.session)}: ${streamText(shown)}`; this.watching.tooltip = this.streams.map(s => `${s.owner} ${shortHex(s.session)} in ${s.project}: ${streamText(s)}`).join('\n'); this.watching.show();}
     else this.watching.hide();
     // Poll this ship's own page only while a stream is open; the owner's ship pushes the changes to it.
-    if (live.length && !this.streamTimer) this.streamTimer = setInterval(() => {void this.readStreams().catch(() => undefined);}, 5000);
+    // The poll never asks while a read is still out, so a slow ship is not asked faster than it answers.
+    if (live.length && !this.streamTimer) this.streamTimer = setInterval(() => {if (!this.streamReads) void this.readStreams().catch(() => undefined);}, this.streamPollMs);
     if (!live.length && this.streamTimer) {clearInterval(this.streamTimer); this.streamTimer = undefined;}
   }
   async askWork(): Promise<void> {
@@ -466,7 +475,9 @@ export class NativeScreens implements vscode.Disposable {
     let refused: ReturnType<typeof workQueue>['withdrawRefused'][number] | undefined;
     try {refused = workQueue(this.answered(await this.get(COLLAB + 'work-queue')).value, me).withdrawRefused.find(w => w.nonce === nonce);} catch {return unread;}
     if (refused) return `${asked.owner} did not withdraw it: ${refusalSentence(refused.reason)}`;
-    const told = await this.get(COLLAB + 'notices').then(reply => nativeRefusal(reply) ? [] : collabNotices(reply.value, me)?.inbox ?? [], () => []);
+    // The withdrawal was sent and answered. A notice this app cannot take, or a failed read, only means "not seen yet".
+    let told: readonly Notice[] = [];
+    try {const reply = await this.get(COLLAB + 'notices'); if (!nativeRefusal(reply)) told = collabNotices(reply.value, me)?.inbox ?? [];} catch { /* not seen yet */ }
     return told.some(n => n.from === asked.owner && n.subject === nonce && n.kind === 'work-finished' && n.detail.startsWith('Withdrawn'))
       ? `${asked.owner} withdrew your request. Nothing ran.` : `Asked ${asked.owner} to withdraw it; its ship has not answered yet. Read the page again to see.`;
   }
@@ -510,7 +521,9 @@ export class NativeScreens implements vscode.Disposable {
       const key = `${want.authority}/${want.project}/${want.path}`;
       if (!plan.length && this.boardRead?.key === key && Date.now() - this.boardRead.at < this.boardFreshMs) return;
       const reply = await this.get(COLLAB + 'presence', {[PROJECT]: want.project, [OWNER]: want.authority}); if (nativeRefusal(reply)) {this.presence.hide(); return;}
-      this.boardRead = {key, at: Date.now()};
+      // Right after a report the owner may not have answered it yet (a refusal arrives a moment later), so that
+      // read does not count as fresh: the next edit reads once more, and that one stands.
+      this.boardRead = plan.length ? undefined : {key, at: Date.now()};
       const board = presenceBoard(reply.value, want.authority, want.project), others = presenceText(board, want.path, this.me());
       const refused = board.refused.find(r => r.path === want.path);
       this.presence.text = refused ? '$(eye-closed) Presence refused' : others ? `$(eye) ${others}` : '$(eye) Only you';

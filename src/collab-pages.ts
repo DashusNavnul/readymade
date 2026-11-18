@@ -84,10 +84,11 @@ const STATUS_WORDS: Record<SentNotice['status'], string> = {pending: 'Sent; wait
  * full, so progress that stops arriving is not mistaken for nothing having happened.
  */
 export function noticesRoom(list: CollabNotices): string {
-  const held = list.outbox.length + list.inbox.length;
-  if (!list.capacity || held < list.capacity * 0.9) return '';
-  return held >= list.capacity ? ` This ship's notice store is full (${held} of ${list.capacity}): it records no new notice, so newer outcomes are missing here.`
-    : ` This ship's notice store is nearly full (${held} of ${list.capacity}); when it is full no new notice is recorded.`;
+  // The limit is per direction: this many sent, and this many received.
+  if (!list.capacity) return '';
+  const side = (held: number, what: string): string => held >= list.capacity ? ` This ship holds as many ${what} notices as it keeps (${held} of ${list.capacity}): it records no new one, so newer outcomes are missing here.`
+    : held >= list.capacity * 0.9 ? ` This ship's store of ${what} notices is nearly full (${held} of ${list.capacity}); when it is full no new one is recorded.` : '';
+  return side(list.outbox.length, 'sent') + side(list.inbox.length, 'received');
 }
 export function noticesReport(list: CollabNotices, fileOf?: (n: Notice) => string | undefined): Report {
   const unknown = list.outbox.filter(n => n.status === 'unknown').length;

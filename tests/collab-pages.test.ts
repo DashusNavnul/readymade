@@ -125,9 +125,11 @@ test('the journal of asked work keeps the request text, survives a bad stored va
   // The ship keeps a fixed number of notices: nearly full and full are said, in the notices screen and here.
   const few = collabNotices(page('peer-notices'), peer)!;
   assert.equal(noticesRoom(few), ''); assert.equal(noticesRoom({...few, capacity: 0}), '');
-  assert.match(noticesRoom({...few, capacity: few.inbox.length + few.outbox.length}), /notice store is full \(\d+ of \d+\): it records no new notice/);
-  assert.match(noticesRoom({...few, capacity: few.inbox.length + few.outbox.length + 1}), /nearly full/);
-  assert.match(noticesReport({...few, capacity: few.inbox.length + few.outbox.length}).note!, /never sent again by itself\. This ship's notice store is full/);
+  // The limit is for each direction, not for both together: 9 received of 9 is full, 9 received of 18 is not.
+  assert.match(noticesRoom({...few, capacity: few.inbox.length}), /holds as many received notices as it keeps \(9 of 9\): it records no new one/);
+  assert.equal(noticesRoom({...few, capacity: few.inbox.length + few.outbox.length + 9}), '');
+  assert.match(noticesRoom({...few, capacity: few.inbox.length + 1}), /store of received notices is nearly full \(9 of 10\)/);
+  assert.match(noticesReport({...few, capacity: few.inbox.length}).note!, /never sent again by itself\. This ship holds as many received notices/);
   assert.match(workReport(workQueue(page('peer-work'), peer), undefined, [mine], null).note!, /notices could not be read just now/);
   assert.deepEqual(actions, [undefined, 'withdraw:0x1003']);
   const ownerRows = workReport(workQueue(page('owner-work'), owner)).sections[0]!.lines, raw = page('owner-work').requests as Record<string, unknown>[];

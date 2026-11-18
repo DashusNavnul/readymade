@@ -45,8 +45,8 @@ function setup(t, me, pages = {}, host = {}) {
     return 'status' in value && 'value' in value ? value : {status: 200, value};
   }};
   let changes = 0;
-  const screens = new NativeScreens({client: () => host.disconnected ? undefined : client, ship: () => host.shipNow ? host.shipNow() : me, project: () => host.project, shared: uri => host.shared?.(uri), sessions: () => host.sessions ?? [], state, recover: host.recover,
-    changed: () => {changes++;}}, 1, host.boardFreshMs);
+  const screens = new NativeScreens({client: () => host.disconnected ? undefined : host.swap ?? client, ship: () => host.shipNow ? host.shipNow() : me, project: () => host.project, shared: uri => host.shared?.(uri), sessions: () => host.sessions ?? [], state, recover: host.recover,
+    changed: () => {changes++;}}, 1, host.boardFreshMs, host.streamPollMs);
   t.after(() => screens.dispose());
   return {screens, requests, state: held, writes, changes: () => changes, posts: where => requests.filter(r => r.method === 'POST' && r.path === where).map(r => r.body)};
 }
@@ -98,6 +98,39 @@ test('presence is off until turned on; then it reports, renews nothing early, an
   assert.equal(x.posts(COLLAB + 'presence').length, count);
 });
 
+test('on a slow ship a followed session still ends on screen, and the poll never asks faster than the ship answers', async t => {
+  const s = {owner: OWNER, project: DEMO, generation: '5', session: '0xe1b1.e811', inspection: '0xdf49.1c93'};
+  let phase = 'live';
+  const stream = () => ({schema: 'readymade-session-streams-v1', peer: PEER, observedAt: '~2026.11.17..10.21.00', streams: [{owner: OWNER, session: s.session, project: DEMO, phase, reason: phase === 'live' ? 'opening' : 'inspection-grant-revoked',
+    sequence: 19, reconnects: 0, opened: '~2026.11.17..10.19.27', updated: '~2026.11.17..10.20.30', status: {phase: 'paused', at: '~2026.11.17..10.20.30', source: 'pataphor-demo-mp-work/8'}}]});
+  let out = 0, most = 0;
+  // Every answer takes four poll intervals: each one arrives after the next poll was due.
+  const x = setup(t, PEER, {[`POST ${COLLAB}session-stream`]: {status: 202, value: {}},
+    [`GET ${COLLAB}session-stream`]: async () => {out++; most = Math.max(most, out); const said = stream(); await new Promise(r => setTimeout(r, 40)); out--; return said;}}, {sessions: [s], streamPollMs: 10});
+  await x.screens.follow(s); assert.equal(x.screens.followed[0].phase, 'live');
+  phase = 'ended'; await new Promise(r => setTimeout(r, 200));
+  assert.equal(x.screens.followed[0].phase, 'ended', 'the late answer is applied, not dropped'); assert.equal(most, 1, 'never two reads out at once');
+  const reads = x.requests.length; await new Promise(r => setTimeout(r, 80)); assert.equal(x.requests.length, reads, 'and the poll stopped once nothing was live');
+});
+test('a withdrawal the ship answered is never rejected by what is read after it', async t => {
+  const queue = {schema: 'readymade-work-queue-v1', ship: PEER, observedAt: '~2026.11.17..10.47.00', store: false, requests: [], asked: [], withdrawRefused: []};
+  const x = setup(t, PEER, {[`POST ${COLLAB}work-withdraw`]: {status: 202, value: {status: 'sent'}}, [`GET ${COLLAB}work-queue`]: queue, [`GET ${COLLAB}notices`]: {...page('peer-notices'), inbox: [{kind: 7}]}});
+  x.state.set('readymade.workAsked:~nec', [{nonce: '0x1002', owner: OWNER, project: DEMO, session: '0xe1b1.e811', text: 'x', at: 1, answer: 'queued'}]);
+  assert.equal(await x.screens.withdraw('0x1002'), 'Asked ~zod to withdraw it; its ship has not answered yet. Read the page again to see.');
+  assert.equal(x.posts(COLLAB + 'work-withdraw').length, 1);
+});
+test('an overview read that fails after the window moved to another ship says nothing about that ship', async t => {
+  let fail;
+  const pages = {...ownerPages(), [`GET ${CODING}overview`]: () => new Promise((_, reject) => {fail = () => reject(new ShipClientError('transport'));})};
+  const host = {project: DEMO};
+  const x = setup(t, OWNER, pages, host);
+  x.screens.rows(); await new Promise(r => setTimeout(r, 5));          // ship A: its overview read is out
+  host.swap = {nativePage: async () => {throw new ShipClientError('unavailable', 404);}};   // the window is now on a guest ship
+  x.screens.rows(); await new Promise(r => setTimeout(r, 5));
+  fail(); await new Promise(r => setTimeout(r, 5));
+  const rows = x.screens.rows();
+  assert.deepEqual(rows.map(r => r.id), ['native-pages'], 'no Overview row for the guest'); assert.ok(!rows[0].children.some(r => r.label === 'Tasks and Questions'));
+});
 test('typing in a shared file does not ask the ship who else is here on every keystroke', async t => {
   const board = {schema: 'readymade-file-presence-v1', authority: OWNER, project: DEMO, observedAt: '~2026.11.17..10.00.00', entries: [], refused: []};
   const shared = uri => uri.includes('/lib/a/hoon') ? {owner: OWNER, project: DEMO, path: '/lib/a/hoon'} : undefined;
@@ -106,8 +139,9 @@ test('typing in a shared file does not ask the ship who else is here on every ke
   const reads = () => x.requests.filter(r => r.method === 'GET' && r.path === COLLAB + 'presence').length;
   await x.screens.tellPresence(); assert.equal(reads(), 1); assert.equal(x.posts(COLLAB + 'presence').length, 1);
   for (let i = 0; i < 40; i++) await x.screens.tellPresence();
-  assert.equal(reads(), 1, 'forty edits: the board just read still stands'); assert.equal(x.posts(COLLAB + 'presence').length, 1);
-  await new Promise(r => setTimeout(r, 80)); await x.screens.tellPresence(); assert.equal(reads(), 2, 'and it is read again once it is no longer fresh');
+  // The read right after the report may be too early for the owner's answer, so the next edit reads once more; that one stands.
+  assert.equal(reads(), 2, 'forty edits: one more read, then the board stands'); assert.equal(x.posts(COLLAB + 'presence').length, 1);
+  await new Promise(r => setTimeout(r, 80)); await x.screens.tellPresence(); assert.equal(reads(), 3, 'and it is read again once it is no longer fresh');
 });
 test('Who Has What Open keeps its project when it is read again from the screen itself', async t => {
   const board = project => ({schema: 'readymade-file-presence-v1', authority: OWNER, project, observedAt: '~2026.11.17..10.00.00', entries: [], refused: []});
