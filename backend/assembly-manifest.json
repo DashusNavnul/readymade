@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "b0cd18e254011cccae0a76215bd8521b137f842c58df927771b6a6996cd1a581",
-      "bytes": 108729
+      "sha256": "eb21810686f8f5631d3f02691c35dd781804bff467009bfc9920b8837685e5f9",
+      "bytes": 108387
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -1991,8 +1991,8 @@
     "lib/cantrip-project-session-stream.hoon": {
       "component": "application",
       "source": "lib/cantrip-project-session-stream.hoon",
-      "sha256": "56e136c17c6f74ba129e3067935f06e27ff303312f30a45a8ad065a7186ae1a8",
-      "bytes": 4794
+      "sha256": "5c698ada667d863fd8b733c46f4d37a5fd59a413ba674794e9304cb4ae2907a5",
+      "bytes": 6895
     },
     "lib/cantrip-project-session.hoon": {
       "component": "application",
@@ -3893,14 +3893,14 @@
     "lib/owner-overview.hoon": {
       "component": "application",
       "source": "lib/owner-overview.hoon",
-      "sha256": "4ff957337423df1886827872cf4d1f933ca2bd7eb57ee1b1e83ff0386b06098b",
-      "bytes": 5510
+      "sha256": "124200949fe8c322e465dd33f3ea5f14b438143fbc0453e704169b3525bbcaf1",
+      "bytes": 5737
     },
     "lib/owner-tasks.hoon": {
       "component": "application",
       "source": "lib/owner-tasks.hoon",
-      "sha256": "052b04e8a0322a6252fb5f415abb25e6c39f24c6014c004e5f0b4ca2d98c7a5d",
-      "bytes": 14366
+      "sha256": "b6bd9f644a828d2ec529505eec3a2aa53e6901c3187e8953650b4307a7c919de",
+      "bytes": 17570
     },
     "lib/pataphor-chat-http.hoon": {
       "component": "application",
@@ -4763,8 +4763,8 @@
     "lib/readymade-collab-landed.hoon": {
       "component": "application",
       "source": "lib/readymade-collab-landed.hoon",
-      "sha256": "665116a38b484b97be2481e94f44a5189c6bbee21084203bf01158bb3bddc0c6",
-      "bytes": 10702
+      "sha256": "2541c74c7b3c89f88c5e201a67c5c299259574f4e306ac50af8e619e190cbf9e",
+      "bytes": 11963
     },
     "lib/readymade-collab-notices.hoon": {
       "component": "application",
@@ -5189,8 +5189,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "e93f4d3843103b2f112debf1f9177541f7cc3046267e2d0c953aab2c7c5c6c32",
-      "bytes": 23790
+      "sha256": "395f77cd97fd837fd6098030c48473366d599932cd1a9394170fde7499c65bed",
+      "bytes": 31457
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
