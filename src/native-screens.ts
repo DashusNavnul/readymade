@@ -4,7 +4,7 @@ import {OutcomeUnknownError, ShipClientError} from './ship-client';
 import {nativeRefusal, refusalSentence, shortHex, type NativeReply, type NativeRequest} from './native-pages';
 import {ReportPanel} from './report-panel';
 import {unreadable, type Report} from './report';
-import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, overviewWaiting, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
+import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, dateAtomText, overviewProblems, overviewReport, overviewWaiting, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
   POLICY_TOOLS, type OwnerOverview, type PolicyBody} from './owner-pages';
 import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesRoom, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, rolesReport, sessionRoles, sessionStreams,
   streamClose, streamOpen, streamText, suggestionHistory, workAsk, workDismiss, workJournal, workJournalAdd, workQueue, workReport, workWithdraw, type Notice, type PresenceTarget, type PresenceTold, type SessionStream} from './collab-pages';
@@ -53,16 +53,20 @@ export class NativeScreens implements vscode.Disposable {
   private overviewFault?: string;
   private streams: SessionStream[] = [];
   private streamTimer?: NodeJS.Timeout;
+  /** Counts stream reads, so an answer that was overtaken by a newer read is dropped. */
+  private streamTurn = 0;
   private presenceTimer?: NodeJS.Timeout;
   private told?: PresenceTold & {authority: string; project: string};
   private presenceBusy = false;
+  /** Which file's board was last read, and when: typing must not ask the ship who else is here on every keystroke. */
+  private boardRead?: {key: string; at: number};
   private refusalShown = '';
   private closed = false;
   private lastClient?: Pick<ShipClient, 'nativePage'>;
   readonly overview: ReportPanel; readonly tasks: ReportPanel; readonly notices: ReportPanel; readonly history: ReportPanel;
   readonly work: ReportPanel; readonly roles: ReportPanel; readonly policy: ReportPanel; readonly board: ReportPanel;
   /** `answerWaitMs`: how long to give an owner's ship to acknowledge a work request before reading its answer once. */
-  constructor(private readonly host: NativeHost, private readonly answerWaitMs = 4000) {
+  constructor(private readonly host: NativeHost, private readonly answerWaitMs = 4000, private readonly boardFreshMs = 20_000) {
     const panel = (type: string, title: string, load: () => Promise<Report>, act?: (id: string) => Promise<string | void>): ReportPanel => {
       const made = new ReportPanel('readymade.' + type, title, load, act); this.panels.push(made); return made;
     };
@@ -321,7 +325,9 @@ export class NativeScreens implements vscode.Disposable {
   }
   /** The handoff document for one returning agent (or the last day) and a topic, within 12,000 bytes of memory. */
   async handoffText(who: string, topic: string): Promise<string> {
-    const query = ['view=handoff', 'bytes=12000', ...(who ? [`who=${who}`] : []), ...(topic.trim() ? [`topic=${topic.trim().split(/\s+/).join('+')}`] : [])].join('&');
+    // With no returning agent the choice reads "the last day": the account starts a day ago. Without a start the
+    // ship sends no account of changes at all.
+    const query = ['view=handoff', 'bytes=12000', ...(who ? [`who=${who}`] : [`since=${dateAtomText(Date.now() - 86_400_000)}`]), ...(topic.trim() ? [`topic=${topic.trim().split(/\s+/).join('+')}`] : [])].join('&');
     return handoffDocument(memoryView(this.answered(await this.get(`${CODING}memory?${query}`)).value), this.me());
   }
   /** Label one exact version of a memory. The ship refuses a version that is no longer current. */
@@ -378,12 +384,15 @@ export class NativeScreens implements vscode.Disposable {
   /** The streams as this ship last reported them. */
   get followed(): readonly SessionStream[] {return this.streams;}
   private async readStreams(): Promise<void> {
-    const client = this.host.client();
-    const reply = await this.get(COLLAB + 'session-stream'); if (nativeRefusal(reply) || this.host.client() !== client) return;
+    const client = this.host.client(), turn = ++this.streamTurn;
+    const reply = await this.get(COLLAB + 'session-stream');
+    // Dropped: an answer from another ship, one overtaken by a newer read (two polls can overlap, and the older
+    // must not move a cursor back), and one that arrives after these screens were closed (it would restart the poll).
+    if (nativeRefusal(reply) || this.closed || this.host.client() !== client || turn !== this.streamTurn) return;
     this.streams = sessionStreams(reply.value, this.me());
     // Kept only when a sequence moved: this runs every few seconds while a session is followed.
     const cursors = this.cursors(), before = JSON.stringify(cursors);
-    for (const s of this.streams) if (s.sequence) cursors[`${s.owner}/${s.session}`] = s.sequence;
+    for (const s of this.streams) if (s.sequence) cursors[`${s.owner}/${s.session}`] = Math.max(s.sequence, cursors[`${s.owner}/${s.session}`] ?? 0);
     if (JSON.stringify(cursors) !== before) await this.host.state.update(this.kept(CURSORS), cursors);
     const live = this.streams.filter(s => s.phase !== 'ended'), shown = live[0] ?? this.streams[0];
     if (shown) {this.watching.text = `$(broadcast) ${shortHex(shown.session)}: ${streamText(shown)}`; this.watching.tooltip = this.streams.map(s => `${s.owner} ${shortHex(s.session)} in ${s.project}: ${streamText(s)}`).join('\n'); this.watching.show();}
@@ -495,8 +504,13 @@ export class NativeScreens implements vscode.Disposable {
       }
       if (plan.some(step => step.mode !== 'closed') && want) this.told = {...want, at: Date.now()};
       else if (!want) this.told = undefined;
-      if (!want) {this.presence.hide(); return;}
+      if (!want) {this.presence.hide(); this.boardRead = undefined; return;}
+      // This runs on every edit. With nothing new reported, the board that was just read still stands for a while:
+      // 40 keystrokes used to be 40 requests to the ship.
+      const key = `${want.authority}/${want.project}/${want.path}`;
+      if (!plan.length && this.boardRead?.key === key && Date.now() - this.boardRead.at < this.boardFreshMs) return;
       const reply = await this.get(COLLAB + 'presence', {[PROJECT]: want.project, [OWNER]: want.authority}); if (nativeRefusal(reply)) {this.presence.hide(); return;}
+      this.boardRead = {key, at: Date.now()};
       const board = presenceBoard(reply.value, want.authority, want.project), others = presenceText(board, want.path, this.me());
       const refused = board.refused.find(r => r.path === want.path);
       this.presence.text = refused ? '$(eye-closed) Presence refused' : others ? `$(eye) ${others}` : '$(eye) Only you';

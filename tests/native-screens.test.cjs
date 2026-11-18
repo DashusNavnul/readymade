@@ -46,7 +46,7 @@ function setup(t, me, pages = {}, host = {}) {
   }};
   let changes = 0;
   const screens = new NativeScreens({client: () => host.disconnected ? undefined : client, ship: () => host.shipNow ? host.shipNow() : me, project: () => host.project, shared: uri => host.shared?.(uri), sessions: () => host.sessions ?? [], state, recover: host.recover,
-    changed: () => {changes++;}}, 1);
+    changed: () => {changes++;}}, 1, host.boardFreshMs);
   t.after(() => screens.dispose());
   return {screens, requests, state: held, writes, changes: () => changes, posts: where => requests.filter(r => r.method === 'POST' && r.path === where).map(r => r.body)};
 }
@@ -98,6 +98,17 @@ test('presence is off until turned on; then it reports, renews nothing early, an
   assert.equal(x.posts(COLLAB + 'presence').length, count);
 });
 
+test('typing in a shared file does not ask the ship who else is here on every keystroke', async t => {
+  const board = {schema: 'readymade-file-presence-v1', authority: OWNER, project: DEMO, observedAt: '~2026.11.17..10.00.00', entries: [], refused: []};
+  const shared = uri => uri.includes('/lib/a/hoon') ? {owner: OWNER, project: DEMO, path: '/lib/a/hoon'} : undefined;
+  const x = setup(t, PEER, {[`POST ${COLLAB}presence`]: {status: 202, value: {status: 'sent'}}, [`GET ${COLLAB}presence`]: board}, {shared, boardFreshMs: 60});
+  ED.settings.sharePresence = true; ED.vscode.window.activeTextEditor = doc('readymade-remote-source', '/key/lib/a/hoon');
+  const reads = () => x.requests.filter(r => r.method === 'GET' && r.path === COLLAB + 'presence').length;
+  await x.screens.tellPresence(); assert.equal(reads(), 1); assert.equal(x.posts(COLLAB + 'presence').length, 1);
+  for (let i = 0; i < 40; i++) await x.screens.tellPresence();
+  assert.equal(reads(), 1, 'forty edits: the board just read still stands'); assert.equal(x.posts(COLLAB + 'presence').length, 1);
+  await new Promise(r => setTimeout(r, 80)); await x.screens.tellPresence(); assert.equal(reads(), 2, 'and it is read again once it is no longer fresh');
+});
 test('Who Has What Open keeps its project when it is read again from the screen itself', async t => {
   const board = project => ({schema: 'readymade-file-presence-v1', authority: OWNER, project, observedAt: '~2026.11.17..10.00.00', entries: [], refused: []});
   const shared = uri => uri.includes('/lib/a/hoon') ? {owner: OWNER, project: DEMO, path: '/lib/a/hoon'} : undefined;
@@ -371,7 +382,29 @@ test('the handoff is one document that names the returning agent’s account', a
   const x = setup(t, OWNER, {[`GET ${CODING}memory`]: page('memory-handoff')});
   const text = await x.screens.handoffText('claude', 'readymade notices');
   assert.match(text, /^# Handoff from ~zod/); assert.equal(x.requests[0].path, CODING + 'memory?view=handoff&bytes=12000&who=claude&topic=readymade+notices');
-  await x.screens.handoffText('', ''); assert.equal(x.requests[1].path, CODING + 'memory?view=handoff&bytes=12000');
+  // "Everything recent, the last day": the account starts a day ago, in the ship's own form for a moment.
+  const before = Date.now(); await x.screens.handoffText('', '');
+  const asked = /^\/apps\/pataphor-native\/coding\/memory\?view=handoff&bytes=12000&since=~(\d{4})\.(\d{1,2})\.(\d{1,2})\.\.(\d\d)\.(\d\d)\.(\d\d)$/.exec(x.requests[1].path);
+  assert.ok(asked, x.requests[1].path);
+  const [y, mo, d, h, mi, sec] = asked.slice(1).map(Number), since = Date.UTC(y, mo - 1, d, h, mi, sec);
+  assert.ok(Math.abs(before - 86_400_000 - since) < 5000, 'one day before now');
+});
+test('an older stream answer that arrives late does not move a cursor back, and nothing polls after the screens close', async t => {
+  const s = {owner: OWNER, project: DEMO, generation: '5', session: '0xe1b1.e811', inspection: '0xdf49.1c93'};
+  const stream = sequence => ({schema: 'readymade-session-streams-v1', peer: PEER, observedAt: '~2026.11.17..10.21.00', streams: [{owner: OWNER, session: s.session, project: DEMO, phase: 'live', reason: 'opening',
+    sequence, reconnects: 0, opened: '~2026.11.17..10.19.27', updated: '~2026.11.17..10.20.30', status: {phase: 'paused', at: '~2026.11.17..10.20.30', source: 'pataphor-demo-mp-work/8'}}]});
+  const waiting = [];
+  const x = setup(t, PEER, {[`POST ${COLLAB}session-stream`]: {status: 202, value: {}}, [`GET ${COLLAB}session-stream`]: () => new Promise(r => {waiting.push(r);})}, {sessions: [s]});
+  // Two reads overlap; the newer one is answered first with sequence 21, then the older one with 19.
+  const first = x.screens.follow(s); await new Promise(r => setTimeout(r, 5));
+  const second = x.screens.unfollow(s); await new Promise(r => setTimeout(r, 5));
+  assert.equal(waiting.length, 2);
+  waiting[1](stream(21)); await second; waiting[0](stream(19)); await first;
+  assert.equal(x.screens.followed[0].sequence, 21); assert.equal(x.state.get('readymade.sessionStreamCursors:~nec')[`${OWNER}/${s.session}`], 21);
+  // A read still out when the screens are closed is dropped: no poll starts afterwards.
+  const closing = x.screens.unfollow(s); await new Promise(r => setTimeout(r, 5)); const reads = x.requests.length;
+  x.screens.dispose(); waiting.at(-1)(stream(22)); await closing; await new Promise(r => setTimeout(r, 30));
+  assert.equal(x.screens.followed[0].sequence, 21); assert.equal(x.requests.length, reads);
 });
 
 test('a report panel reads again on request, routes one action at a time, and drops a read that was overtaken', async () => {

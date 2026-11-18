@@ -184,6 +184,12 @@ export function policySet(body: PolicyBody): JsonObject {
 }
 
 // ---- memory: standing, supersession, packets, handoff
+/** A moment the way the ship writes one in an address: "~2026.11.7..03.05.09" (UTC, whole seconds). */
+export function dateAtomText(ms: number): string {
+  const d = new Date(ms), two = (n: number): string => String(n).padStart(2, '0');
+  if (Number.isNaN(d.getTime())) fail('time');
+  return `~${d.getUTCFullYear()}.${d.getUTCMonth() + 1}.${d.getUTCDate()}..${two(d.getUTCHours())}.${two(d.getUTCMinutes())}.${two(d.getUTCSeconds())}`;
+}
 export const MEMORY_STANDINGS = ['ruling', 'fact', 'hypothesis', 'question', 'unlabelled'] as const;
 export interface MemoryItem {
   readonly name: string; readonly hash: string; readonly standing: typeof MEMORY_STANDINGS[number]; readonly description: string; readonly at: string;
