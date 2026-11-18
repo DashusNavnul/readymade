@@ -75,7 +75,8 @@ export function ownerTasks(value: unknown): OwnerTasks | undefined {
   if (!r.available) return undefined;
   const tasks = rows(r.tasks, 'tasks', 1024, v => {
     const t = record(v, 'task');
-    return Object.freeze({task: taskName(t.task), claims: count(t.claims, 'claims', 4096),   // the ship caps claims at 256 but counts each release too: 257 was unreadable at a limit of 256 holder: optional(t.holder, h => text(h, 'holder', 64)),
+    // The ship caps claims at 256 but counts each release too: 257 was unreadable at a limit of 256.
+    return Object.freeze({task: taskName(t.task), claims: count(t.claims, 'claims', 4096), holder: optional(t.holder, h => text(h, 'holder', 64)),
       until: optional(t.until, u => when(u, 'lease')), blockedBy: Object.freeze(rows(t.blockedBy, 'task', 64, b => hex(b, 'question id')))});
   });
   const questions = rows(r.questions, 'tasks', 1024, v => {

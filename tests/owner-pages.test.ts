@@ -51,6 +51,10 @@ test('tasks: open questions lead, each with an answer action; a mismatched count
   assert.throws(() => ownerTasks({...page('tasks'), openQuestions: 99}));
   assert.throws(() => ownerTasks({...page('tasks'), tasks: [{task: 'Bad Task', claims: 1, holder: null, until: null, blockedBy: []}]}));
   assert.equal(ownerTasks({...page('tasks'), tasks: [{task: 'busy', claims: 257, holder: null, until: null, blockedBy: []}]})!.tasks[0]!.claims, 257, 'a task released after its 256th claim still reads');
+  // A held task says who holds it. (A comment once cut the holder off this row; the fixture holds no task.)
+  const held = ownerTasks({...page('tasks'), tasks: [{task: 'busy', claims: 3, holder: 'claude', until: '~2026.11.18..02.00.00', blockedBy: []}]})!;
+  assert.equal(held.tasks[0]!.holder, 'claude'); assert.equal(held.tasks[0]!.until, '~2026.11.18..02.00.00');
+  assert.match(JSON.stringify(tasksReport(held)), /Held by claude until ~2026\.11\.18\.\.02\.00\.00 · 3 claim records/);
   assert.deepEqual(answerCommand(open[0]!.id, '  Keep it.  '), {action: 'answer', id: open[0]!.id, text: 'Keep it.'});
   assert.throws(() => answerCommand(open[0]!.id, '   ')); assert.throws(() => answerCommand('12', 'x'));
 });
