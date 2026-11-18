@@ -184,11 +184,11 @@ export function policySet(body: PolicyBody): JsonObject {
 }
 
 // ---- memory: standing, supersession, packets, handoff
-/** A moment the way the ship writes one in an address: "~2026.11.7..03.05.09" (UTC, whole seconds). */
+/** A moment exactly as the ship writes one: "~2026.11.07..03.05.09" (UTC, whole seconds, two digits for every part after the year). */
 export function dateAtomText(ms: number): string {
   const d = new Date(ms), two = (n: number): string => String(n).padStart(2, '0');
   if (Number.isNaN(d.getTime())) fail('time');
-  return `~${d.getUTCFullYear()}.${d.getUTCMonth() + 1}.${d.getUTCDate()}..${two(d.getUTCHours())}.${two(d.getUTCMinutes())}.${two(d.getUTCSeconds())}`;
+  return `~${d.getUTCFullYear()}.${two(d.getUTCMonth() + 1)}.${two(d.getUTCDate())}..${two(d.getUTCHours())}.${two(d.getUTCMinutes())}.${two(d.getUTCSeconds())}`;
 }
 export const MEMORY_STANDINGS = ['ruling', 'fact', 'hypothesis', 'question', 'unlabelled'] as const;
 export interface MemoryItem {

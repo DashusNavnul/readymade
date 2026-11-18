@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport} from '../src/owner-pages';
+import {admissionsLeft, answerCommand, dateAtomText, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport} from '../src/owner-pages';
 
 const page = (name: string): Record<string, unknown> => JSON.parse(readFileSync(join(__dirname, '../../tests/fixtures/native', name + '.json'), 'utf8')) as Record<string, unknown>;
 
@@ -22,6 +22,8 @@ test('the overview reads the real page and says what waits on the owner', () => 
   const long = {kind: 'question', what: 'Question on task x: ' + 'q'.repeat(2048) + ' If unanswered: ' + 'c'.repeat(1024)};
   assert.equal(ownerOverview({...page('overview'), decisions: [long]}).decisions[0]!.what.length, long.what.length);
   assert.throws(() => ownerOverview({...page('overview'), decisions: [{kind: 'question', what: 'q'.repeat(8193)}]}));
+  // A moment this app sends is written as the ship writes one, and the app's own reader takes it back.
+  assert.equal(dateAtomText(Date.UTC(2026, 11, 1, 3, 5, 9)), '~2026.12.01..03.05.09'); assert.equal(dateAtomText(Date.UTC(2027, 0, 5, 0, 45, 26)), '~2027.01.05..00.45.26');
   assert.throws(() => ownerOverview({...page('overview'), schema: 'owner-overview-v2'}));
   assert.throws(() => ownerOverview({...page('overview'), running: [{kind: 'x'}]}));
   assert.throws(() => ownerOverview({...page('overview'), policyAdmissionsLeft: -1}));
