@@ -335,3 +335,18 @@ test('a report panel reads again on request, routes one action at a time, and dr
   await failing.show(); assert.equal(failing.shown.status, 'The ship did not answer this page: owner-pages-unavailable'); assert.deepEqual(failing.shown.sections, []);
   panel.dispose(); failing.dispose();
 });
+test('showing a screen again while its action is in flight does not switch the buttons back on', async () => {
+  ED.panels.length = 0;
+  let finish; const started = [];
+  const panel = new ReportPanel('readymade.test3', 'Slow', async () => ({title: 'Slow', status: 'read', sections: [{title: 'One', lines: [{text: 'a request', action: {id: 'withdraw:0x1', label: 'Withdraw'}}]}]}),
+    id => {started.push(id); return new Promise(r => {finish = r;});});
+  const settle = () => new Promise(r => setTimeout(r, 15));
+  await panel.show(); const view = ED.panels[0];
+  assert.doesNotMatch(view.webview.html, /<button[^>]*disabled/, 'ready: the buttons are on');
+  view.receive({action: 'withdraw:0x1'}); await settle(); assert.deepEqual(started, ['withdraw:0x1']); assert.match(view.webview.html, /<button[^>]*disabled/);
+  // The person clicks the screen's row in the sidebar: it is read again while the withdrawal is still out.
+  await panel.show(); assert.match(view.webview.html, /<button[^>]*disabled/, 'still off: the action has not come back');
+  view.receive({action: 'withdraw:0x1'}); await settle(); assert.deepEqual(started, ['withdraw:0x1'], 'and a second press sends nothing');
+  finish('Withdrawn.'); await settle(); assert.equal(panel.shown.note, 'Withdrawn.'); assert.doesNotMatch(view.webview.html, /<button[^>]*disabled/);
+  panel.dispose();
+});

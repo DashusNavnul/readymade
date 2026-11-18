@@ -11,7 +11,13 @@ export class ReportPanel implements vscode.Disposable {
   private panel?: vscode.WebviewPanel;
   private events: vscode.Disposable[] = [];
   private epoch = 0;
+  /** A read is under way. */
   private busy = false;
+  /**
+   * An action is under way. Kept apart from `busy`: a read can start and finish while an action is still in flight
+   * (the person clicks the screen's row in the sidebar), and finishing that read must not switch the buttons back on.
+   */
+  private acting = false;
   private closed = false;
   private last?: Report;
   constructor(private readonly viewType: string, private readonly title: string, private readonly load: () => Promise<Report>,
@@ -22,7 +28,7 @@ export class ReportPanel implements vscode.Disposable {
     if (!this.panel) {
       const panel = vscode.window.createWebviewPanel(this.viewType, this.title, vscode.ViewColumn.Active, {enableScripts: true, enableCommandUris: false, localResourceRoots: [], retainContextWhenHidden: true});
       this.panel = panel;
-      this.events = [panel.onDidDispose(() => {if (this.panel === panel) {this.epoch++; this.panel = undefined; this.busy = false; this.events.splice(0).forEach(e => e.dispose());}}),
+      this.events = [panel.onDidDispose(() => {if (this.panel === panel) {this.epoch++; this.panel = undefined; this.busy = false; this.acting = false; this.events.splice(0).forEach(e => e.dispose());}}),
         panel.webview.onDidReceiveMessage((message: unknown) => {void this.receive(panel, message);})];
     } else this.panel.reveal();
     await this.refresh();
@@ -36,19 +42,20 @@ export class ReportPanel implements vscode.Disposable {
     this.last = note ? {...report, note: report.note ? `${note}\n${report.note}` : note} : report; this.busy = false; this.render();
   }
   private async receive(panel: vscode.WebviewPanel, message: unknown): Promise<void> {
-    if (this.closed || panel !== this.panel || this.busy || !message || typeof message !== 'object' || Array.isArray(message)) return;
+    if (this.closed || panel !== this.panel || this.busy || this.acting || !message || typeof message !== 'object' || Array.isArray(message)) return;
     const row = message as Record<string, unknown>;
     if (Object.keys(row).length !== 1 || typeof row.action !== 'string' || !REPORT_ACTION.test(row.action)) return;
     if (row.action === 'again' || !this.act) {await this.refresh(); return;}
-    this.busy = true; this.render();
+    this.acting = true; this.render();
     let said: string | void;
     try {said = await this.act(row.action);} catch (error) {said = error instanceof Error ? error.message.slice(0, 300) : 'That did not finish; nothing was sent again.';}
+    finally {if (this.panel === panel) this.acting = false;}
     if (this.closed || this.panel !== panel) return;
-    this.busy = false; await this.refresh(said || undefined);
+    await this.refresh(said || undefined);
   }
   private render(): void {
     if (!this.panel) return;
-    this.panel.webview.html = reportHtml(this.last ?? {title: this.title, status: 'Reading the ship…', sections: []}, randomBytes(24).toString('base64'), this.busy);
+    this.panel.webview.html = reportHtml(this.last ?? {title: this.title, status: 'Reading the ship…', sections: []}, randomBytes(24).toString('base64'), this.busy || this.acting);
   }
   dispose(): void {this.closed = true; this.epoch++; this.panel?.dispose(); this.events.splice(0).forEach(e => e.dispose()); this.panel = undefined;}
 }
