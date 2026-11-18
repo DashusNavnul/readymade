@@ -136,7 +136,7 @@ test('a command says what the ship did, why it refused, or that the outcome is u
   await assert.rejects(x.screens.answer('0x3', '   '), /Invalid answer/); assert.equal(sent, 3, 'an empty answer never leaves this computer');
   await assert.rejects(setup(t, OWNER, {}).screens.retry('0x9'), /does not have this page/);
   const policy = setup(t, OWNER, {[`POST ${CODING}policy`]: request => request.body.action === 'revoke' ? {status: 202, value: {status: 'submitted'}} : {status: 409, value: {error: 'standing-policy-unchanged'}}});
-  assert.equal(await policy.screens.revokePolicy(), 'Revoked. No policy is in force.'); assert.deepEqual(policy.posts(CODING + 'policy'), [{action: 'revoke'}]);
+  assert.equal(await policy.screens.revokePolicy(), 'Sent. No policy is in force once the revocation appears below.'); assert.deepEqual(policy.posts(CODING + 'policy'), [{action: 'revoke'}]);
 });
 
 test('a ship that signed the window out: a read is asked once more after signing in, a command is never resent', async t => {

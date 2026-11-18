@@ -158,7 +158,7 @@ async function nativeActions(c: LiveContext): Promise<void> {
   // Revoking the policy in force, only when asked (READYMADE_REVOKE_POLICY=1): used to put a test project back as it was.
   if (process.env.READYMADE_REVOKE_POLICY === '1') {
     said.revoked = await c.timed('revoke-policy', () => native.revokePolicy(), 30000);
-    assert.equal(said.revoked, 'Revoked. No policy is in force.');
+    assert.equal(said.revoked, 'Sent. No policy is in force once the revocation appears below.');
     await sleep(3000);
     const after = standingPolicy((await c.client.nativePage('/apps/pataphor-native/coding/policy.json')).value);
     said.afterRevoke = {inForce: !!after?.inForce, versions: after?.versions.length, chain: after?.chain}; assert.equal(after?.inForce, undefined);

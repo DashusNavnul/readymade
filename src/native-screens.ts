@@ -285,7 +285,8 @@ export class NativeScreens implements vscode.Disposable {
   }
   /** Revoke the policy in force. Every version stays in the ship's record. */
   async revokePolicy(): Promise<string> {
-    return this.send(CODING + 'policy', {action: 'revoke'}, 'Revoked. No policy is in force.');
+    // The ship answers that it took the command, not that it is done: the revocation is the next version in the list.
+    return this.send(CODING + 'policy', {action: 'revoke'}, 'Sent. No policy is in force once the revocation appears below.');
   }
   /** Send one policy version. The body is checked here first; Cantrip decides, and its refusal is returned in words. */
   async setPolicy(body: PolicyBody): Promise<string> {

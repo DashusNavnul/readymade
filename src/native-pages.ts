@@ -66,7 +66,7 @@ const REFUSAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   'watch-refused': 'Your link to this shared project may be out of date. Open the newest link the owner sent, then refresh its shared sessions.',
   'inspection-grant-revoked': 'The owner stopped sharing this session with you.',
   'inspection-grant-missing': 'This session is no longer shared with you. Refresh the shared sessions.',
-  'stream-capacity': 'The owner\'s ship is already streaming as many sessions as it allows. Try again later.',
+  'stream-capacity': 'This ship is already following as many sessions as it keeps open at once. Stop following one first.',
   'stream-already-open': 'You are already following this session.',
   'work-policy-not-in-force': 'The owner has no standing policy in force for this project, so their agents take no requests.',
   'work-role-not-contributing': 'Your role in this project allows watching, not asking for work. The owner can change your role.',
