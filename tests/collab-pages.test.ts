@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, refusalName, rolesReport, sessionRoles,
+import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesRoom, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, refusalName, rolesReport, sessionRoles,
   sessionStreams, streamClose, streamOpen, streamText, suggestionHistory, suggestionSteps, workAsk, workDismiss, workJournal, workJournalAdd, workNonce, workCurrent, workProgress, workQueue, workReport, workWithdraw, workWithdrawable, WORK_JOURNAL_MAX} from '../src/collab-pages';
 
 const page = (name: string): Record<string, unknown> => JSON.parse(readFileSync(join(__dirname, '../../tests/fixtures/native', name + '.json'), 'utf8')) as Record<string, unknown>;
@@ -122,6 +122,13 @@ test('the journal of asked work keeps the request text, survives a bad stored va
   assert.equal(workProgress(waiting, got.inbox), 'Unknown whether it was sent: the ship gave no readable answer. It was not sent again.');
   assert.deepEqual(workJournal([asked('0x5', {answer: 'unknown'})]).map(a => a.answer), ['unknown']);
   const actions = workReport(workQueue(page('peer-work'), peer), undefined, [mine, asked('0x1003')], got.inbox).sections[1]!.lines.map(l => l.action?.id);
+  // The ship keeps a fixed number of notices: nearly full and full are said, in the notices screen and here.
+  const few = collabNotices(page('peer-notices'), peer)!;
+  assert.equal(noticesRoom(few), ''); assert.equal(noticesRoom({...few, capacity: 0}), '');
+  assert.match(noticesRoom({...few, capacity: few.inbox.length + few.outbox.length}), /notice store is full \(\d+ of \d+\): it records no new notice/);
+  assert.match(noticesRoom({...few, capacity: few.inbox.length + few.outbox.length + 1}), /nearly full/);
+  assert.match(noticesReport({...few, capacity: few.inbox.length + few.outbox.length}).note!, /never sent again by itself\. This ship's notice store is full/);
+  assert.match(workReport(workQueue(page('peer-work'), peer), undefined, [mine], null).note!, /notices could not be read just now/);
   assert.deepEqual(actions, [undefined, 'withdraw:0x1003']);
   const ownerRows = workReport(workQueue(page('owner-work'), owner)).sections[0]!.lines, raw = page('owner-work').requests as Record<string, unknown>[];
   assert.deepEqual(ownerRows.map(l => l.action?.id), raw.map(w => w.status === 'queued' ? `dismiss:${w.id as string}` : undefined));

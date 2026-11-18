@@ -79,13 +79,23 @@ export function noticeLines(list: CollabNotices, fileOf?: (n: Notice) => string 
     .map(n => ({day: new Date(dateAtomMillis(n.at)).toISOString().slice(0, 10), text: noticeText(n, fileOf)}));
 }
 const STATUS_WORDS: Record<SentNotice['status'], string> = {pending: 'Sent; waiting for their ship to acknowledge', delivered: 'Their ship acknowledged it', refused: 'Their ship refused it', unknown: 'Unknown: this ship restarted before an acknowledgement arrived. It is not sent again unless you retry it.'};
+/**
+ * The ship keeps a fixed number of notices and records no new one once that many are held. Said from nine tenths
+ * full, so progress that stops arriving is not mistaken for nothing having happened.
+ */
+export function noticesRoom(list: CollabNotices): string {
+  const held = list.outbox.length + list.inbox.length;
+  if (!list.capacity || held < list.capacity * 0.9) return '';
+  return held >= list.capacity ? ` This ship's notice store is full (${held} of ${list.capacity}): it records no new notice, so newer outcomes are missing here.`
+    : ` This ship's notice store is nearly full (${held} of ${list.capacity}); when it is full no new notice is recorded.`;
+}
 export function noticesReport(list: CollabNotices, fileOf?: (n: Notice) => string | undefined): Report {
   const unknown = list.outbox.filter(n => n.status === 'unknown').length;
   const sent = (n: SentNotice): ReportLine => ({text: `To ${n.to}: ${n.kind.replace('-', ' ')} ${shortHex(n.subject)} in ${n.project}`,
     detail: `${STATUS_WORDS[n.status]}${n.answeredAt ? ` at ${n.answeredAt}` : ''}\nSent ${n.at}${n.detail ? `\n${n.detail}` : ''}`,
     mark: n.status === 'delivered' ? 'ok' : n.status === 'pending' ? 'note' : 'warning', action: n.retryable ? {id: `retry:${n.id}`, label: 'Send it again'} : undefined});
   return {title: 'Notices', status: `${list.outbox.length} sent, ${list.inbox.length} received${unknown ? `, ${unknown} with an unknown outcome` : ''}. Read from the ship at ${list.observedAt}.`,
-    note: 'Each outcome is told once. A notice is never sent again by itself.',
+    note: `Each outcome is told once. A notice is never sent again by itself.${noticesRoom(list)}`,
     sections: [{title: 'Sent to collaborators', empty: 'Nothing has been sent.', lines: list.outbox.map(sent)},
       {title: 'Received from owners', empty: 'Nothing has been received.', lines: list.inbox.map(n => ({text: noticeText(n, fileOf), detail: n.at}))}]};
 }
@@ -289,13 +299,20 @@ const workLine = (w: WorkRow): ReportLine => ({text: `${shortHex(w.nonce)} from 
     : w.outcome?.phase === 'dismissed' ? 'Dismissed by you before it started. Nothing ran.' : w.outcome?.phase === 'withdrawn' ? 'Withdrawn by its requester before it started. Nothing ran.' : `Finished: ${w.outcome?.phase ?? 'unknown'} at revision ${w.outcome?.revision ?? '?'}`}` +
     `${w.policyVersion ? ` · policy version ${w.policyVersion}` : ''}\nSession ${shortHex(w.session)} · asked ${w.at}`, mark: w.outcome?.phase === 'not-started' ? 'warning' : w.status === 'finished' ? 'ok' : 'note',
   action: w.status === 'queued' ? {id: `dismiss:${w.id}`, label: 'Dismiss…'} : undefined});
-export function workReport(q: WorkQueue, admissionsLeft?: number, journal: readonly WorkAsked[] = [], inbox: readonly Notice[] = []): Report {
+/**
+ * `inbox` is what owners told this ship. `null` means the notices could not be read: progress is then said to
+ * be unknown and no Withdraw is offered, instead of showing every request as queued with nothing reported.
+ */
+export function workReport(q: WorkQueue, admissionsLeft?: number, journal: readonly WorkAsked[] = [], inbox: readonly Notice[] | null = [], room = ''): Report {
   const open = q.requests.filter(w => w.status !== 'finished'), kept = new Set(journal.map(a => a.nonce));
-  const mine: ReportLine[] = journal.map(a => workCurrent(a, q.asked)).map(a => ({text: a.text, action: workWithdrawable(a, inbox) ? {id: `withdraw:${a.nonce}`, label: 'Withdraw…'} : undefined, detail: `${workProgress(a, inbox)}\n${shortHex(a.nonce)} to ${a.owner} in ${a.project}, session ${shortHex(a.session)}, asked ${new Date(a.at).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
-    mark: a.answer === 'refused' || a.answer === 'unknown' ? 'warning' as const : inbox.some(n => n.from === a.owner && n.subject === a.nonce && n.kind === 'work-finished') ? 'ok' as const : 'note' as const}));
+  const unread = inbox === null, told = inbox ?? [];
+  const progress = (a: WorkAsked): string => unread && a.answer !== 'refused' && a.answer !== 'unknown' ? 'Progress unknown: the notices could not be read just now.' : workProgress(a, told);
+  const mine: ReportLine[] = journal.map(a => workCurrent(a, q.asked)).map(a => ({text: a.text, action: !unread && workWithdrawable(a, told) ? {id: `withdraw:${a.nonce}`, label: 'Withdraw…'} : undefined, detail: `${progress(a)}\n${shortHex(a.nonce)} to ${a.owner} in ${a.project}, session ${shortHex(a.session)}, asked ${new Date(a.at).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+    mark: a.answer === 'refused' || a.answer === 'unknown' ? 'warning' as const : told.some(n => n.from === a.owner && n.subject === a.nonce && n.kind === 'work-finished') ? 'ok' as const : 'note' as const}));
   return {title: 'Work Requests', status: `${open.length} open on this ship, ${new Set([...kept, ...q.asked.map(a => a.nonce)]).size} asked of other owners. Read from the ship at ${q.observedAt}.`,
     note: `${q.store ? '' : 'This ship has no work store, so it cannot take requests. '}A request is admitted only under your standing policy, from a contributor, for a session you shared with them.` +
-      `${admissionsLeft === undefined ? '' : ` Your policy has ${admissionsLeft} admission${admissionsLeft === 1 ? '' : 's'} left.`}`,
+      `${admissionsLeft === undefined ? '' : ` Your policy has ${admissionsLeft} admission${admissionsLeft === 1 ? '' : 's'} left.`}` +
+      `${unread && journal.length ? ' The notices could not be read just now, so the progress of what this ship asked is not shown and nothing can be withdrawn from here. Read again.' : ''}${room}`,
     sections: [{title: 'Asked of this ship', empty: 'Nobody has asked this ship for work.', lines: q.requests.map(workLine)},
       {title: 'This ship asked', empty: 'This ship has asked nobody for work.', lines: [...mine, ...q.asked.filter(a => !kept.has(a.nonce)).map(a => ({text: `${shortHex(a.nonce)} to ${a.owner} in ${a.project}`,
         detail: `${a.status === 'sent' ? 'Sent; waiting for their answer' : a.status === 'accepted' ? 'Accepted; progress arrives as notices' : `Refused: ${refusalSentence(a.reason)}`}\n${a.at}`,

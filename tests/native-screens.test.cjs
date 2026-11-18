@@ -310,6 +310,22 @@ test('the work screen counts admissions from the policy and its own queue, witho
   const guest = setup(t, PEER, {[`GET ${COLLAB}work-queue`]: page('peer-work')}); await guest.screens.work.show();
   assert.ok(!/admissions? left/.test(guest.screens.work.shown.note), 'a ship without a policy store says nothing about admissions');
 });
+test('notices that could not be read are unknown progress with nothing to withdraw, never “no progress”', async t => {
+  const queued = [{nonce: '0x1003', owner: OWNER, project: DEMO, session: '0xe1b1.e811', text: 'Add a test.', at: 1, answer: 'queued'}];
+  let down = false;
+  const x = setup(t, PEER, {[`GET ${COLLAB}work-queue`]: page('peer-work'), [`GET ${COLLAB}notices`]: () => {if (down) throw new ShipClientError('transport'); return {...page('peer-notices'), inbox: []};}});
+  x.state.set('readymade.workAsked:~nec', queued);
+  await x.screens.work.show();
+  let line = x.screens.work.shown.sections[1].lines[0];
+  assert.match(line.detail, /^Queued; no progress has been reported yet\./); assert.equal(line.action?.id, 'withdraw:0x1003', 'readable and nothing told: queued, and it can be withdrawn');
+  down = true; await x.screens.work.show(); line = x.screens.work.shown.sections[1].lines[0];
+  assert.match(line.detail, /^Progress unknown: the notices could not be read just now\./); assert.equal(line.action, undefined);
+  assert.match(x.screens.work.shown.note, /notices could not be read just now.*Read again\./);
+  // One row this app cannot take in the second read does not make the whole screen unreadable either.
+  const odd = setup(t, PEER, {[`GET ${COLLAB}work-queue`]: page('peer-work'), [`GET ${COLLAB}notices`]: {...page('peer-notices'), inbox: [{kind: 7}]}, [`GET ${CODING}policy.json`]: {schema: 'standing-policy-v1', versions: 'x'}});
+  odd.state.set('readymade.workAsked:~nec', queued);
+  await odd.screens.work.show(); assert.equal(odd.screens.work.shown.title, 'Work Requests'); assert.match(odd.screens.work.shown.sections[1].lines[0].detail, /^Progress unknown/);
+});
 
 test('dismissing and withdrawing: sent once, and the answer is what the ship said', async t => {
   const owner = setup(t, OWNER, {[`POST ${COLLAB}work-dismiss`]: request => request.body.id === '0x1' ? {status: 409, value: {status: 'refused', message: 'work-request-started'}} : {status: 202, value: {status: 'dismissed'}}});

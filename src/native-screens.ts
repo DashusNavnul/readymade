@@ -6,7 +6,7 @@ import {ReportPanel} from './report-panel';
 import {unreadable, type Report} from './report';
 import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, overviewWaiting, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
   POLICY_TOOLS, type OwnerOverview, type PolicyBody} from './owner-pages';
-import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, rolesReport, sessionRoles, sessionStreams,
+import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesRoom, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, rolesReport, sessionRoles, sessionStreams,
   streamClose, streamOpen, streamText, suggestionHistory, workAsk, workDismiss, workJournal, workJournalAdd, workQueue, workReport, workWithdraw, type Notice, type PresenceTarget, type PresenceTold, type SessionStream} from './collab-pages';
 import type {MediaTreeRow} from './media-workbench';
 
@@ -80,11 +80,15 @@ export class NativeScreens implements vscode.Disposable {
     this.work = panel('workRequests', 'Work Requests', async () => {
       const queue = workQueue(this.answered(await this.get(COLLAB + 'work-queue')).value, this.me());
       // Counted here from the policy and this queue: two light reads, and always current.
-      const policy = await this.get(CODING + 'policy.json').then(reply => nativeRefusal(reply) ? undefined : standingPolicy(reply.value), () => undefined);
+      // A second read that fails, or one row of it this app cannot take, leaves that part out. It never makes the
+      // whole screen unreadable, and it is never taken for "nothing there".
+      const soft = async <T>(read: () => Promise<T>): Promise<T | undefined> => {try {return await read();} catch {return undefined;}};
+      const policy = await soft(async () => {const reply = await this.get(CODING + 'policy.json'); return nativeRefusal(reply) ? undefined : standingPolicy(reply.value);});
       const left = admissionsLeft(policy, queue.requests);
-      // What this computer asked is kept here; its progress comes from the owners' notices.
-      const inbox = await this.get(COLLAB + 'notices').then(reply => nativeRefusal(reply) ? [] : collabNotices(reply.value, this.me())?.inbox ?? [], () => []);
-      return workReport(queue, left, workJournal(this.host.state.get(this.kept(ASKED))), inbox);
+      // What this computer asked is kept here; its progress comes from the owners' notices. A ship with no notice
+      // store has told nothing (an empty list); notices that could not be read are unknown (null).
+      const notices = await soft(async () => {const reply = await this.get(COLLAB + 'notices'); if (nativeRefusal(reply)) throw new Error('refused'); return collabNotices(reply.value, this.me()) ?? null;});
+      return workReport(queue, left, workJournal(this.host.state.get(this.kept(ASKED))), notices === undefined ? null : notices?.inbox ?? [], notices ? noticesRoom(notices) : '');
     }, id => this.endWork(id));
     this.roles = panel('sessionRoles', 'Session Roles', async () => {
       const project = this.chosenProject();
