@@ -75,7 +75,7 @@ export function ownerTasks(value: unknown): OwnerTasks | undefined {
   if (!r.available) return undefined;
   const tasks = rows(r.tasks, 'tasks', 1024, v => {
     const t = record(v, 'task');
-    return Object.freeze({task: taskName(t.task), claims: count(t.claims, 'claims', 256), holder: optional(t.holder, h => text(h, 'holder', 64)),
+    return Object.freeze({task: taskName(t.task), claims: count(t.claims, 'claims', 4096),   // the ship caps claims at 256 but counts each release too: 257 was unreadable at a limit of 256 holder: optional(t.holder, h => text(h, 'holder', 64)),
       until: optional(t.until, u => when(u, 'lease')), blockedBy: Object.freeze(rows(t.blockedBy, 'task', 64, b => hex(b, 'question id')))});
   });
   const questions = rows(r.questions, 'tasks', 1024, v => {
@@ -127,12 +127,18 @@ export interface PolicyVersion {readonly version: number; readonly at?: string; 
 export interface StandingPolicy {readonly chain: string; readonly storeRevision: number; readonly inForce?: PolicyBody; readonly versions: readonly PolicyVersion[]}
 export const POLICY_TOOLS = ['list', 'read', 'search', 'create', 'replace', 'patch', 'patches', 'writes', 'move', 'delete', 'diff', 'undo', 'batch', 'compile', 'check', 'eval', 'inspect', 'jobs', 'observe', 'cancel'] as const;
 const shipPath = (v: unknown): string => {const p = text(v, 'path', 512); if (!/^(?:\/[a-z0-9~._-]+){1,16}$/.test(p)) fail('path'); return p;};
-function policyBody(value: unknown): PolicyBody {
+/**
+ * A path as a stored policy version may hold it. The ship accepts any path of one to sixteen parts, including an
+ * empty part ("/lib/a/"), and every version is kept for good: one such version in the history made the whole
+ * Standing Policy screen unreadable. Read as it is; a policy this app sends still needs proper parts (`shipPath`).
+ */
+const heldPath = (v: unknown): string => {const p = text(v, 'path', 2048); if (!/^(?:\/[a-z0-9~._-]*){1,16}$/.test(p)) fail('path'); return p;};
+function policyBody(value: unknown, sending = false): PolicyBody {
   const b = record(value, 'policy'), res = record(b.resources, 'policy resources');
   if (!projectName(b.project)) fail('policy');
   const tools = rows(b.tools, 'policy', 32, t => {if (!(POLICY_TOOLS as readonly unknown[]).includes(t)) fail('policy tool'); return t as string;});
   return Object.freeze({project: b.project as string, objectives: Object.freeze(rows(b.objectives, 'policy', 16, o => text(o, 'objective', 1024))),
-    paths: Object.freeze(rows(b.paths, 'policy', 256, shipPath)), tools: Object.freeze(tools),
+    paths: Object.freeze(rows(b.paths, 'policy', 256, sending ? shipPath : heldPath)), tools: Object.freeze(tools),
     resources: Object.freeze({maxTurns: count(res.maxTurns, 'policy', 2 ** 40), maxSeconds: count(res.maxSeconds, 'policy', 2 ** 40),
       maxEvalWork: count(res.maxEvalWork, 'policy', 2 ** 50), maxAdmissions: count(res.maxAdmissions, 'policy', 2 ** 40)}),
     escalation: text(b.escalation, 'escalation', 2048)});
@@ -172,7 +178,7 @@ export function admissionsLeft(policy: StandingPolicy | undefined, requests: rea
 }
 /** The exact command the ship's policy page takes. Throws before sending if a field could not be valid. */
 export function policySet(body: PolicyBody): JsonObject {
-  const checked = policyBody({...body, resources: {...body.resources}});
+  const checked = policyBody({...body, resources: {...body.resources}}, true);
   if (!checked.objectives.length || !checked.tools.length || Object.values(checked.resources).some(n => n < 1)) fail('policy');
   return {action: 'set', project: checked.project, objectives: [...checked.objectives], paths: [...checked.paths], tools: [...checked.tools], resources: {...checked.resources}, escalation: checked.escalation};
 }

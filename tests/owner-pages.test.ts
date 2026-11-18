@@ -48,6 +48,7 @@ test('tasks: open questions lead, each with an answer action; a mismatched count
   assert.equal(ownerTasks({schema: 'owner-tasks-v1', available: false}), undefined);
   assert.throws(() => ownerTasks({...page('tasks'), openQuestions: 99}));
   assert.throws(() => ownerTasks({...page('tasks'), tasks: [{task: 'Bad Task', claims: 1, holder: null, until: null, blockedBy: []}]}));
+  assert.equal(ownerTasks({...page('tasks'), tasks: [{task: 'busy', claims: 257, holder: null, until: null, blockedBy: []}]})!.tasks[0]!.claims, 257, 'a task released after its 256th claim still reads');
   assert.deepEqual(answerCommand(open[0]!.id, '  Keep it.  '), {action: 'answer', id: open[0]!.id, text: 'Keep it.'});
   assert.throws(() => answerCommand(open[0]!.id, '   ')); assert.throws(() => answerCommand('12', 'x'));
 });
@@ -58,6 +59,11 @@ test('the standing policy reads the real page; a set command is checked before i
   assert.deepEqual(r.actions!.map(a => a.id), ['set', 'revoke']);
   const cmd = policySet(p.inForce!); assert.equal(cmd.action, 'set'); assert.deepEqual(cmd.tools, [...p.inForce!.tools]);
   assert.throws(() => policySet({...p.inForce!, tools: []})); assert.throws(() => policySet({...p.inForce!, tools: ['rm']}));
+  // A stored version may hold a path with an empty part; the history must still read, and such a path is never sent.
+  const raw = page('policy') as {versions: {body: {paths: string[]} | null}[]}, odd = raw.versions.findIndex(v => v.body);
+  const history = {...raw, versions: raw.versions.map((v, i) => i === odd ? {...v, body: {...v.body!, paths: ['/lib/a/']}} : v)};
+  assert.ok(standingPolicy(history)!.versions.some(v => v.body?.paths.includes('/lib/a/')));
+  assert.throws(() => policySet({...p.inForce!, paths: ['/lib/a/']})); assert.throws(() => standingPolicy({...raw, versions: raw.versions.map((v, i) => i === odd ? {...v, body: {...v.body!, paths: ['lib/a']}} : v)}));
   assert.throws(() => policySet({...p.inForce!, paths: ['lib/a/hoon']})); assert.throws(() => policySet({...p.inForce!, resources: {...p.inForce!.resources, maxAdmissions: 0}}));
   // Admissions left: the limit less what was dispatched under the version in force, never below zero.
   const newest = Math.max(...p.versions.map(v => v.version)), limit = p.inForce!.resources.maxAdmissions;
