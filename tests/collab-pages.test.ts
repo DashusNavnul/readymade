@@ -45,6 +45,12 @@ test('suggestion history: four steps per suggestion, as they stand', () => {
   const r = historyReport(h); assert.match(r.status, /^53 suggestions, \d+ landed; the newest \d+ are shown\./); assert.equal(r.sections[0]!.lines.length, h.rows.length);
   assert.throws(() => suggestionHistory(page('history'), peer, demo)); assert.throws(() => suggestionHistory(page('history'), owner, 'other'));
   assert.throws(() => suggestionHistory({...page('history'), shown: 1}, owner, demo));
+  // a ship from before the field read its whole archive: complete, and nothing is said
+  assert.equal(h.archiveComplete, true); assert.doesNotMatch(r.status, /archive/);
+  assert.equal(suggestionHistory({...page('history'), archiveComplete: true}, owner, demo).archiveComplete, true);
+  const partial = suggestionHistory({...page('history'), archiveComplete: false}, owner, demo);
+  assert.equal(partial.archiveComplete, false); assert.match(historyReport(partial).status, /some suggestions may be missing here\.$/);
+  assert.throws(() => suggestionHistory({...page('history'), archiveComplete: 'no'}, owner, demo));
 });
 
 test('presence: who else has the file, why a report was refused, and what to tell next', () => {
@@ -138,9 +144,14 @@ test('the journal of asked work keeps the request text, survives a bad stored va
   assert.deepEqual(workWithdraw(asked('0x1003')), {schema: 'readymade-work-withdraw-v1', owner, nonce: '0x1003', project: demo, session: '0xe1b1.e811'});
   const refusedBack = workQueue({...page('peer-work'), withdrawRefused: [{nonce: '0x1003', reason: 'poke-ack\n | %work-request-started\n', at: '~2026.11.17..14.00.00'}]}, peer);
   assert.deepEqual(refusedBack.withdrawRefused, [{nonce: '0x1003', reason: 'work-request-started'}]); assert.deepEqual(workQueue(page('peer-work'), peer).withdrawRefused, []);
-  for (const [phase, words] of [['dismissed', /^Dismissed by you before it started/], ['withdrawn', /^Withdrawn by its requester before it started/], ['revoked', /^Not started: its requester lost access to the session while it waited\. Nothing ran\./]] as const) {
+  for (const [phase, words] of [['dismissed', /^Dismissed by you before it started/], ['withdrawn', /^Withdrawn by its requester before it started/], ['revoked', /^Not started: its requester lost access to the session while it waited\. Nothing ran\./],
+    ['not-started', /^Not started: the session did not take it, so no run began\./], ['session-gone', /^Not finished: its session no longer exists on this ship\./],
+    ['not-run', /^Taken, not run: the session holds this instruction and has not started a run of it\. Run the session to do it\./],
+    ['stopped', /^Stopped: the session began it and then sat ready without running for ten minutes \(revision 8\)\. Run the session to continue\./]] as const) {
     const ended = workReport(workQueue({...page('owner-work'), requests: [{...raw.find(w => w.status === 'finished')!, outcome: {phase, sequence: 19, revision: 8, at: '~2026.11.17..14.00.00'}}]}, owner)).sections[0]!.lines[0]!;
     assert.match(ended.detail!, words); assert.equal(ended.action, undefined);
+    // work the session never began is marked for the owner's attention, never as done
+    assert.equal(ended.mark, ['dismissed', 'withdrawn', 'revoked'].includes(phase) ? 'ok' : 'warning');
   }
 });
 

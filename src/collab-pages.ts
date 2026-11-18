@@ -110,7 +110,8 @@ export interface SuggestionRow {
   readonly landed?: {readonly candidate: string; readonly revision: number; readonly desk: string};
   readonly answer?: NoticeOutcome; readonly landedNotice?: NoticeOutcome;
 }
-export interface SuggestionHistory {readonly owner: string; readonly project: string; readonly observedAt: string; readonly suggestions: number; readonly rows: readonly SuggestionRow[]}
+/** `archiveComplete` false: the ship's archive is longer than it reads at once, so some suggestions (not necessarily the oldest) are missing. */
+export interface SuggestionHistory {readonly owner: string; readonly project: string; readonly observedAt: string; readonly suggestions: number; readonly archiveComplete: boolean; readonly rows: readonly SuggestionRow[]}
 const outcome = (value: unknown): NoticeOutcome => {
   const o = record(value, 'notice outcome');
   if (!(NOTICE_STATUSES as readonly unknown[]).includes(o.status)) fail('notice outcome');
@@ -129,7 +130,9 @@ export function suggestionHistory(value: unknown, owner: string, wanted: string)
       answer: optional(s.answer, outcome), landedNotice: optional(s.landedNotice, outcome)});
   });
   if (count(r.shown, 'history', 64) !== list.length) fail('suggestion history');
-  return Object.freeze({owner, project: wanted, observedAt: when(r.observedAt, 'history time'), suggestions: count(r.suggestions, 'history'), rows: Object.freeze(list)});
+  // A ship from before this field read its whole archive or did not answer at all, so a missing field means complete.
+  if (r.archiveComplete !== undefined && typeof r.archiveComplete !== 'boolean') fail('suggestion history');
+  return Object.freeze({owner, project: wanted, observedAt: when(r.observedAt, 'history time'), suggestions: count(r.suggestions, 'history'), archiveComplete: r.archiveComplete !== false, rows: Object.freeze(list)});
 }
 /** The four steps of one suggestion, each as it stands: authored, reviewed, landed, acknowledged. */
 export function suggestionSteps(s: SuggestionRow): string[] {
@@ -142,7 +145,7 @@ export function suggestionSteps(s: SuggestionRow): string[] {
 }
 export function historyReport(h: SuggestionHistory): Report {
   const landed = h.rows.filter(s => s.landed).length;
-  return {title: `Suggestions in ${h.project}`, status: `${h.suggestions} suggestion${h.suggestions === 1 ? '' : 's'}, ${landed} landed${h.suggestions > h.rows.length ? `; the newest ${h.rows.length} are shown` : ''}. Read from the ship at ${h.observedAt}.`,
+  return {title: `Suggestions in ${h.project}`, status: `${h.suggestions} suggestion${h.suggestions === 1 ? '' : 's'}, ${landed} landed${h.suggestions > h.rows.length ? `; the newest ${h.rows.length} are shown` : ''}. Read from the ship at ${h.observedAt}.${h.archiveComplete ? '' : ' The ship\'s archive is longer than it reads at once, so some suggestions may be missing here.'}`,
     note: 'Landed means an applied candidate holds every suggested file exactly. Each author is told once.',
     sections: [{title: 'Newest first', empty: 'Nobody has suggested anything.', lines: h.rows.map(s => ({text: `${shortHex(s.request)} from ${s.peer}`, detail: suggestionSteps(s).join('\n'), mark: s.landed ? 'ok' as const : 'note' as const}))}]};
 }
@@ -296,9 +299,12 @@ export function workQueue(value: unknown, me: string): WorkQueue {
 }
 const workLine = (w: WorkRow): ReportLine => ({text: `${shortHex(w.nonce)} from ${w.peer} in ${w.project}`,
   detail: `${w.status === 'queued' ? 'Queued' : w.status === 'dispatched' ? `Running since ${w.dispatchedAt ?? 'an unknown time'}`
-    : w.outcome?.phase === 'not-started' ? 'Not started: this ship could not start it in the session. Nothing ran.'
+    : w.outcome?.phase === 'not-started' ? 'Not started: the session did not take it, so no run began. Its requester was told.'
+    : w.outcome?.phase === 'not-run' ? 'Taken, not run: the session holds this instruction and has not started a run of it. Run the session to do it. Its requester was told.'
+    : w.outcome?.phase === 'stopped' ? `Stopped: the session began it and then sat ready without running for ten minutes (revision ${w.outcome.revision}). Run the session to continue. Its requester was told.`
+    : w.outcome?.phase === 'session-gone' ? 'Not finished: its session no longer exists on this ship. Its requester was told.'
     : w.outcome?.phase === 'dismissed' ? 'Dismissed by you before it started. Nothing ran.' : w.outcome?.phase === 'withdrawn' ? 'Withdrawn by its requester before it started. Nothing ran.' : w.outcome?.phase === 'revoked' ? 'Not started: its requester lost access to the session while it waited. Nothing ran.' : `Finished: ${w.outcome?.phase ?? 'unknown'} at revision ${w.outcome?.revision ?? '?'}`}` +
-    `${w.policyVersion ? ` · policy version ${w.policyVersion}` : ''}\nSession ${shortHex(w.session)} · asked ${w.at}`, mark: w.outcome?.phase === 'not-started' ? 'warning' : w.status === 'finished' ? 'ok' : 'note',
+    `${w.policyVersion ? ` · policy version ${w.policyVersion}` : ''}\nSession ${shortHex(w.session)} · asked ${w.at}`, mark: ['not-started', 'not-run', 'stopped', 'session-gone'].includes(w.outcome?.phase ?? '') ? 'warning' : w.status === 'finished' ? 'ok' : 'note',
   action: w.status === 'queued' ? {id: `dismiss:${w.id}`, label: 'Dismiss…'} : undefined});
 /**
  * `inbox` is what owners told this ship. `null` means the notices could not be read: progress is then said to

@@ -94,6 +94,7 @@ const REFUSAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   'standing-policy-unchanged': 'That is already the policy in force.',
   'standing-policy-invalid': 'A field is missing or out of range: a policy needs a project, at least one objective and one tool, and four numbers above zero.',
   'standing-policy-not-in-force': 'No policy is in force, so there is nothing to revoke.',
+  'standing-policy-history-full': 'This ship has recorded 4,096 versions of its policy, the most it keeps. The policy in force stays as it is.',
   'claim-held': 'Another agent holds this task until its lease runs out or it releases it.',
   'claim-blocked-by-question': 'An agent left a question on this task. Nobody can claim it until the owner answers.',
   'question-answered': 'This question already has its answer; an answer cannot be changed.',
@@ -109,6 +110,7 @@ const REFUSAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   'proposal-not-yours': 'Only the agent that made a proposal can withdraw it.',
   'proposal-missing': 'Your ship holds no such proposal. Read the page again.',
   'proposal-policy-not-in-force': 'No standing policy is in force, so no task can be proposed.',
+  'proposal-history-full': 'Your ship already holds as many open proposals as it keeps. Dismiss some to make room.',
   'proposal-path-outside-policy': 'The proposal touches a file the standing policy does not name.',
   'owner-pages-unavailable': 'This ship does not host projects with the full backend, so it has no such page.'
 });
