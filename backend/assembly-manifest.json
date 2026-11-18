@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "21c74b8389d85705fd39d8ab3e957621e7973c067f204db692cfa72b56e0add8",
-      "bytes": 108721
+      "sha256": "b0cd18e254011cccae0a76215bd8521b137f842c58df927771b6a6996cd1a581",
+      "bytes": 108729
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -4763,14 +4763,14 @@
     "lib/readymade-collab-landed.hoon": {
       "component": "application",
       "source": "lib/readymade-collab-landed.hoon",
-      "sha256": "5e35ae67e247dd4ad846bbf64c0118d4460d87ca3c6ff82277266c4879b65d9f",
-      "bytes": 10310
+      "sha256": "665116a38b484b97be2481e94f44a5189c6bbee21084203bf01158bb3bddc0c6",
+      "bytes": 10702
     },
     "lib/readymade-collab-notices.hoon": {
       "component": "application",
       "source": "lib/readymade-collab-notices.hoon",
-      "sha256": "72bb06970c130b3b34096ab8c5c31b23f89a85f8eaf2653c68bbe35841c460f7",
-      "bytes": 8942
+      "sha256": "17a0fd3eb20ad63aed37703dd06cf92222a7617c83a02835eb8bc094dc57e1c6",
+      "bytes": 15842
     },
     "lib/readymade-collab-operations.hoon": {
       "component": "application",
@@ -5189,8 +5189,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "258c84e3f3b5a90646b477b9c5c588bc81ed5a2671303d494f3eac226bf420cd",
-      "bytes": 20872
+      "sha256": "e93f4d3843103b2f112debf1f9177541f7cc3046267e2d0c953aab2c7c5c6c32",
+      "bytes": 23790
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
