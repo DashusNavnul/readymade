@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "fb98671b2dac6454d7feeb5ddbabe0762353ed84fb518ef84f11508c30e1e9c9",
-      "bytes": 108203
+      "sha256": "1a0c1820c007eb05b14803a436cba71dba4de6cd8f40998d59fcc3cca37fb7e4",
+      "bytes": 108672
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -2081,8 +2081,8 @@
     "lib/cantrip-standing-policy.hoon": {
       "component": "application",
       "source": "lib/cantrip-standing-policy.hoon",
-      "sha256": "11826353e3aa652b6edce563f8cc4498a20e4b9320afcc2d731fb82b2f27a5f2",
-      "bytes": 6136
+      "sha256": "d6d4550e23ae02d3c9818e95f8c7022d2b17ba0db045d0e6571e80ea0919aedd",
+      "bytes": 6371
     },
     "lib/cantrip-star-govern-law.hoon": {
       "component": "application",
@@ -3893,8 +3893,8 @@
     "lib/owner-overview.hoon": {
       "component": "application",
       "source": "lib/owner-overview.hoon",
-      "sha256": "a071381428242f6dd1712b9aa72a20c42842bf869ba096966a8d59064eb94e5f",
-      "bytes": 5313
+      "sha256": "4ff957337423df1886827872cf4d1f933ca2bd7eb57ee1b1e83ff0386b06098b",
+      "bytes": 5510
     },
     "lib/owner-tasks.hoon": {
       "component": "application",
@@ -5189,8 +5189,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "55b8cc8ed063c9aae7b2eb4a55c2cf8a886a1a2b736a58345a1dd3eafc26c7c9",
-      "bytes": 20666
+      "sha256": "258c84e3f3b5a90646b477b9c5c588bc81ed5a2671303d494f3eac226bf420cd",
+      "bytes": 20872
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
