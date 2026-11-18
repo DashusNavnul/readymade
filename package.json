@@ -361,7 +361,7 @@
     "check": "tsc -p . --noEmit",
     "lint": "eslint src tests platform packaging/*.cjs backend/install/*.cjs",
     "bundle:backend": "python3 backend/application/rebuild.py",
-    "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.cjs"
+    "test": "npm run build && node tests/run-unit.cjs"
   },
   "devDependencies": {
     "@types/node": "22.19.0",

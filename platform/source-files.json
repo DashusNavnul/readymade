@@ -400,6 +400,7 @@
   "tests/review-policy-host.ts",
   "tests/review-policy-journal.test.ts",
   "tests/review-policy.test.ts",
+  "tests/run-unit.cjs",
   "tests/runtime-prepare.test.cjs",
   "tests/screen-permission-guidance.test.cjs",
   "tests/session-selection.test.ts",
