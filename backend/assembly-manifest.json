@@ -5189,8 +5189,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "395f77cd97fd837fd6098030c48473366d599932cd1a9394170fde7499c65bed",
-      "bytes": 31457
+      "sha256": "489e92f6a1869573f39e1826b8e845e21c593ac2419a410b4968de9d05639ed7",
+      "bytes": 31922
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
