@@ -65,6 +65,17 @@ test('a command whose connection is cut has an unknown outcome and is not sent a
   } finally {await s.close();}
 });
 
+test('the owner console says a signed-out window in its own words; that is a sign-out, and a plain 403 refusal is not', async () => {
+  let words = 'Owner authentication required.';
+  const s = await ship((_req, res) => {res.statusCode = 403; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({error: words}));});
+  try {
+    await assert.rejects(s.client.nativePage(NOTICES), code('authenticationRequired', 403));
+    await assert.rejects(s.client.nativePage(RETRY, {method: 'POST', body: {id: '0x1'}}), code('authenticationRequired', 403));
+    words = 'notice-not-unknown';
+    assert.deepEqual(await s.client.nativePage(RETRY, {method: 'POST', body: {id: '0x1'}}), {status: 403, value: {error: 'notice-not-unknown'}}, 'any other 403 is the ship\'s own refusal, kept as it is');
+  } finally {await s.close();}
+});
+
 test('a ship that signed the window out refused before doing anything', async () => {
   let status = 401;
   const s = await ship((_req, res) => {res.statusCode = status; if (status === 307) res.setHeader('Location', '/~/login'); res.end();});

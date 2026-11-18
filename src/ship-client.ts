@@ -1128,6 +1128,10 @@ export class ShipClient {
       if (method === 'POST') throw new OutcomeUnknownError();
       return failure('malformed', reply.status);
     }
+    // The owner console does not redirect a signed-out window to the login page as the collaboration agent does:
+    // it answers 403 with these exact words, before doing anything. Treated as any other sign-out, so the window
+    // signs in again instead of showing "Owner authentication required" on every owner screen for good.
+    if (reply.status === 403 && value.error === 'Owner authentication required.') failure('authenticationRequired', reply.status);
     return Object.freeze({status: reply.status, value});
   }
   private knownRefusal(error: unknown): boolean { return error instanceof ShipClientError && ['refused', 'authenticationRequired', 'cancelledBeforeSend'].includes(error.code); }

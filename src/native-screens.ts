@@ -105,7 +105,9 @@ export class NativeScreens implements vscode.Disposable {
   }
   private readonly fileOf = (n: Notice): string | undefined => this.host.suggestionFile?.(n.from, n.project, n.subject);
   // ---- transport
-  private me(): string {const ship = this.host.ship(); if (!ship) throw new Error('Connect your ship first.'); return ship;}
+  /** The connected ship's name, or nothing. Asking can throw once the window holds no live sign-in; that is "no ship", not an error. */
+  private named(): string | undefined {try {return this.host.ship() || undefined;} catch {return undefined;}}
+  private me(): string {const ship = this.named(); if (!ship) throw new Error('Connect your ship first.'); return ship;}
   /**
    * What this computer remembers is kept per ship. Someone with a planet and a moon uses both from one app: one
    * ship's seen mark must not hide the other's notices, and one ship's asked requests are not the other's to withdraw.
@@ -180,9 +182,9 @@ export class NativeScreens implements vscode.Disposable {
       // An open screen still shows the last ship, with its buttons. Each is read again now, from the ship connected
       // now (or says none is), so no button built from one ship's page is ever pressed against another ship.
       for (const open of this.panels) void open.refresh();
-      if (client && this.host.ship()) void this.connected();
+      if (client && this.named()) void this.connected();
     }
-    if (!client || !this.host.ship()) return [];
+    if (!client || !this.named()) return [];
     const row = (label: string, command: string, tooltip: string, description?: string): MediaTreeRow => ({label, description, tooltip, command: {title: label, command: 'readymade.' + command}});
     const o = this.overviewSeen, project = !!this.host.project(), shared = this.host.sessions().length, sharing = vscode.workspace.getConfiguration('readymade').get<boolean>('sharePresence', false);
     // Collaboration pages exist on any ship with the service; the owner's pages only where the overview answered.
@@ -442,7 +444,7 @@ export class NativeScreens implements vscode.Disposable {
   }
   /** The project file in front of the person, whether or not presence is being reported. */
   private target(): PresenceTarget | undefined {
-    const me = this.host.ship(), editor = vscode.window.activeTextEditor;
+    const me = this.named(), editor = vscode.window.activeTextEditor;
     if (!me || !editor) return undefined;
     const uri = editor.document.uri;
     return presenceTarget(uri, me, this.host.project(), uri.scheme.startsWith('readymade-remote-') ? this.host.shared(uri.toString()) : undefined);

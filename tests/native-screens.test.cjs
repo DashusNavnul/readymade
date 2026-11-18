@@ -206,6 +206,12 @@ test('a work request is sent once and the owner’s answer is read once', async 
   assert.equal(lost.posts(COLLAB + 'work-request').length, 1); assert.equal(lost.requests.length, 1, 'nothing else was asked of the ship');
 });
 
+test('a window whose sign-in is gone shows no rows instead of failing to draw the sidebar', async t => {
+  let alive = true;
+  const x = setup(t, OWNER, ownerPages(), {project: DEMO, shipNow: () => {if (!alive) throw new Error('no session cookie'); return OWNER;}});
+  await x.screens.connected(); assert.ok(x.screens.rows().length > 0);
+  alive = false; assert.deepEqual(x.screens.rows(), []); await assert.rejects(x.screens.withdraw('0x1'), /Connect your ship first/); assert.equal(x.posts(COLLAB + 'work-withdraw').length, 0);
+});
 test('a command the ship answered is never reported as failed when the read after it fails', async t => {
   const s = {owner: OWNER, project: DEMO, session: '0xe1b1.e811', generation: '1', inspection: '0xabc'};
   const down = () => {throw new ShipClientError('transport');};
