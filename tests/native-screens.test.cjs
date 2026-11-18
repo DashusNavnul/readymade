@@ -172,6 +172,12 @@ test('following a session starts at the remembered sequence, and stopping closes
   assert.equal(x.writes.filter(k => k === 'readymade.sessionStreamCursors:~nec').length, 1, 'and not again while it stays where it is');
   assert.equal(await x.screens.follow(s), 'Following again from sequence 19.'); assert.equal(x.posts(COLLAB + 'session-stream').at(-1).cursor, '19');
   await x.screens.unfollow(s);
+  // A long-lived session: the listed generation is passed on as listed, and a sequence past 999 goes in the ship's form.
+  const old = {...s, generation: '1.024'};
+  const far = setup(t, PEER, {[`POST ${COLLAB}session-stream`]: {status: 202, value: {}}, [`GET ${COLLAB}session-stream`]: () => ({...stream(), streams: []})}, {sessions: [old]});
+  far.state.set('readymade.sessionStreamCursors:~nec', {[`${OWNER}/${s.session}`]: 12345});
+  assert.equal(await far.screens.follow(old), 'Following again from sequence 12345.');
+  assert.deepEqual([far.posts(COLLAB + 'session-stream')[0].generation, far.posts(COLLAB + 'session-stream')[0].cursor], ['1.024', '12.345']);
 });
 
 test('a work request is sent once and the owner’s answer is read once', async t => {

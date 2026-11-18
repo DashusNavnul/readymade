@@ -226,10 +226,22 @@ export function sessionStreams(value: unknown, me: string): SessionStream[] {
       status: optional(s.status, x => {const d = record(x, 'stream status'); return Object.freeze({phase: word(d.phase, 'session phase'), at: when(d.at, 'status time'), source: text(d.source, 'source', 200)});})});
   });
 }
-export function streamOpen(owner: string, wanted: string, generation: number, inspection: string, session: string, cursor = 0): JsonObject {
-  if (!Number.isSafeInteger(generation) || generation < 0 || !Number.isSafeInteger(cursor) || cursor < 0) fail('stream');
-  return {schema: 'readymade-session-stream-v1', action: 'open', owner: ship(owner, 'owner'), project: project(wanted), generation: String(generation),
-    inspection: hex(inspection, 'inspection'), session: hex(session, 'session'), ...(cursor ? {cursor: String(cursor)} : {})};
+/**
+ * A whole number the way the ship reads one: digits in groups of three with dots between ("1.024"). The ship parses
+ * both numbers of the open command this way; plain digits ("1024") are refused from 1,000 upward, which made a
+ * session impossible to follow again once its sequence passed 999.
+ */
+export function udText(n: number): string {
+  if (!Number.isSafeInteger(n) || n < 0) fail('number');
+  return String(n).replace(/\B(?=(\d{3})+$)/g, '.');
+}
+const UD = /^(?:0|[1-9][0-9]{0,2}(?:\.[0-9]{3})*)$/;
+/** `generation` is passed on exactly as the owner's ship listed it (already in the ship's own form), or as a number. */
+export function streamOpen(owner: string, wanted: string, generation: string | number, inspection: string, session: string, cursor = 0): JsonObject {
+  const listed = typeof generation === 'number' ? udText(generation) : generation;
+  if (typeof listed !== 'string' || listed.length > 26 || !UD.test(listed) || !Number.isSafeInteger(cursor) || cursor < 0) fail('stream');
+  return {schema: 'readymade-session-stream-v1', action: 'open', owner: ship(owner, 'owner'), project: project(wanted), generation: listed,
+    inspection: hex(inspection, 'inspection'), session: hex(session, 'session'), ...(cursor ? {cursor: udText(cursor)} : {})};
 }
 export function streamClose(owner: string, session: string): JsonObject {return {schema: 'readymade-session-stream-v1', action: 'close', owner: ship(owner, 'owner'), session: hex(session, 'session')};}
 /** One line for a list: "paused · sequence 11 · pataphor-demo-mp-work/8", or why the stream ended. */

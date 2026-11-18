@@ -146,6 +146,12 @@ test('session streams: one line each, and exact open and close commands', () => 
   assert.throws(() => sessionStreams(list([stream({phase: 'open'})]), peer)); assert.throws(() => sessionStreams(list([]), owner));
   assert.deepEqual(streamOpen(owner, demo, 5, '0xdf49.1c93', '0xe1b1.e811', 11), {schema: 'readymade-session-stream-v1', action: 'open', owner, project: demo, generation: '5', inspection: '0xdf49.1c93', session: '0xe1b1.e811', cursor: '11'});
   assert.ok(!('cursor' in streamOpen(owner, demo, 5, '0xdf49.1c93', '0xe1b1.e811'))); assert.throws(() => streamOpen(owner, demo, -1, '0x1', '0x2'));
+  // Both numbers go in the ship's own form: digits in threes with dots. Plain "1000" is refused by the ship's parser.
+  const far = streamOpen(owner, demo, '1.024', '0xdf49.1c93', '0xe1b1.e811', 1000);
+  assert.equal(far.generation, '1.024'); assert.equal(far.cursor, '1.000');
+  assert.equal(streamOpen(owner, demo, 1024, '0x1', '0x2', 1_234_567).generation, '1.024'); assert.equal(streamOpen(owner, demo, 0, '0x1', '0x2', 1_234_567).cursor, '1.234.567');
+  assert.equal(streamOpen(owner, demo, '0', '0x1', '0x2', 999).cursor, '999');
+  for (const bad of ['1024', '01', '1.02', '1,024', '', '-1', ' 1']) assert.throws(() => streamOpen(owner, demo, bad, '0x1', '0x2'), /Invalid stream/, bad);
   assert.deepEqual(streamClose(owner, '0xe1b1.e811'), {schema: 'readymade-session-stream-v1', action: 'close', owner, session: '0xe1b1.e811'});
 });
 

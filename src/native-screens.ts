@@ -344,7 +344,7 @@ export class NativeScreens implements vscode.Disposable {
   /** Open one live stream, from the sequence this computer last saw if it followed this session before. */
   async follow(s: {owner: string; project: string; generation: string; session: string; inspection: string}): Promise<string> {
     const cursor = this.cursors()[`${s.owner}/${s.session}`] ?? 0;
-    const said = await this.send(COLLAB + 'session-stream', streamOpen(s.owner, s.project, Number(s.generation), s.inspection, s.session, cursor), cursor ? `Following again from sequence ${cursor}.` : 'Following. Its status appears in the status bar.');
+    const said = await this.send(COLLAB + 'session-stream', streamOpen(s.owner, s.project, s.generation, s.inspection, s.session, cursor), cursor ? `Following again from sequence ${cursor}.` : 'Following. Its status appears in the status bar.');
     return this.thenRead(said, () => this.readStreams());
   }
   async unfollow(s: {owner: string; session: string}): Promise<string> {
