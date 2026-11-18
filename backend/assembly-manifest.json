@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "1a0c1820c007eb05b14803a436cba71dba4de6cd8f40998d59fcc3cca37fb7e4",
-      "bytes": 108672
+      "sha256": "21c74b8389d85705fd39d8ab3e957621e7973c067f204db692cfa72b56e0add8",
+      "bytes": 108721
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -5165,8 +5165,8 @@
     "lib/readymade-session-stream-client.hoon": {
       "component": "application",
       "source": "lib/readymade-session-stream-client.hoon",
-      "sha256": "24f1ef2f71fe162cb3d7d635845a18f1180b8cd6506f30a78ab3305495b6f194",
-      "bytes": 7210
+      "sha256": "046a3d8e0348b559f0de9c0fbf19d7d6a9018bfdc857594a2a2764980ce55a70",
+      "bytes": 8178
     },
     "lib/readymade-share-terms-saved.hoon": {
       "component": "application",
