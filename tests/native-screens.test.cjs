@@ -98,6 +98,21 @@ test('presence is off until turned on; then it reports, renews nothing early, an
   assert.equal(x.posts(COLLAB + 'presence').length, count);
 });
 
+test('Who Has What Open keeps its project when it is read again from the screen itself', async t => {
+  const board = project => ({schema: 'readymade-file-presence-v1', authority: OWNER, project, observedAt: '~2026.11.17..10.00.00', entries: [], refused: []});
+  const shared = uri => uri.includes('/lib/a/hoon') ? {owner: OWNER, project: DEMO, path: '/lib/a/hoon'} : undefined;
+  const x = setup(t, PEER, {[`GET ${COLLAB}presence`]: request => board(request.headers['x-readymade-project'])}, {shared, project: 'my-own-project'});
+  ED.vscode.window.activeTextEditor = doc('readymade-remote-source', '/key/lib/a/hoon');
+  await x.screens.board.show();
+  const asked = () => x.requests.filter(r => r.path === COLLAB + 'presence').map(r => [r.headers['x-readymade-project'], r.headers['x-readymade-project-owner']]);
+  assert.deepEqual(asked(), [[DEMO, OWNER]]);
+  // The screen now has the focus: no file is in front. Read again must ask about the same shared project.
+  ED.vscode.window.activeTextEditor = undefined; await x.screens.board.refresh();
+  assert.deepEqual(asked().at(-1), [DEMO, OWNER]);
+  // A file of this ship's own project in front changes it, as before.
+  ED.vscode.window.activeTextEditor = doc('file', '/Users/x/notes.txt'); await x.screens.board.refresh();
+  assert.deepEqual(asked().at(-1), ['my-own-project', PEER]);
+});
 test('a refused presence report is said once, with the owner’s reason', async t => {
   const x = setup(t, PEER, {[`POST ${COLLAB}presence`]: {status: 202, value: {status: 'sent'}}, [`GET ${COLLAB}presence`]: page('peer-presence')},
     {shared: () => ({owner: OWNER, project: DEMO, path: '/desk/bill'})});

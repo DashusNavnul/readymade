@@ -47,6 +47,8 @@ export class NativeScreens implements vscode.Disposable {
   private readonly presence = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
   private readonly events: vscode.Disposable[] = [];
   private overviewSeen?: OwnerOverview;
+  /** The project the presence board was last opened for from a file, and as which ship. */
+  private boardOf?: {me: string; authority: string; project: string};
   /** Why the overview could not be read on a ship that has one. The owner's rows stay, with this as the reason. */
   private overviewFault?: string;
   private streams: SessionStream[] = [];
@@ -99,9 +101,14 @@ export class NativeScreens implements vscode.Disposable {
       return read ? policyReport(read) : unreadable('Standing Policy', 'This ship has no policy store, so no standing policy can be set.');
     }, id => this.changePolicy(id));
     this.board = panel('presenceBoard', 'Who Has What Open', async () => {
-      // The file in front of the person decides which project: a shared one, or else this ship's own.
-      const want = this.target(), authority = want?.authority ?? this.me(), project = want?.project ?? this.chosenProject();
-      return boardReport(presenceBoard(this.answered(await this.get(COLLAB + 'presence', {[PROJECT]: project, [OWNER]: authority})).value, authority, project), this.me());
+      // The file in front of the person decides which project: a shared one, or else this ship's own. Once this
+      // screen itself has the focus there is no file in front, so "Read again" keeps the project it was opened for
+      // instead of falling back to this ship's own project (or to "open a project first").
+      const me = this.me(), want = this.target();
+      if (want) this.boardOf = {me, authority: want.authority, project: want.project};
+      const held = !vscode.window.activeTextEditor && this.boardOf?.me === me ? this.boardOf : undefined;
+      const authority = want?.authority ?? held?.authority ?? me, project = want?.project ?? held?.project ?? this.chosenProject();
+      return boardReport(presenceBoard(this.answered(await this.get(COLLAB + 'presence', {[PROJECT]: project, [OWNER]: authority})).value, authority, project), me);
     });
     this.badge.name = 'Readymade Decisions'; this.badge.command = 'readymade.overview';
     this.watching.name = 'Readymade Shared Session'; this.watching.command = 'readymade.followSession';
