@@ -118,7 +118,8 @@ characters.
   Readymade then says.
 - Debug prints (`~&`) and error traces are shown too, where your ship's runtime serves them to a
   signed-in client (`/~_~/slog`); they come by their own path, so they can appear a line early.
-  Gall's notices that a sleeping agent missed terminal output are left out.
+  Gall's notices that terminal output reached an agent no longer listening for it (asleep,
+  removed or restarted) are left out.
 - This needs the ship's web terminal service (`%herm`, part of every ship's base). It was run
   against a live planet on an 80-column terminal and the modified runtime. It was also run against
   a live moon, whose long prompt the terminal draws differently when a line does not fit, on the

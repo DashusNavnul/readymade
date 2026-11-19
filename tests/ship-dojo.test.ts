@@ -370,7 +370,7 @@ test('debug prints are shown beside the dojo\'s own lines, a repeated one counte
   let print: (text: string) => void = () => undefined, closed = 0;
   const prints: DojoPrints = onPrint => {print = onPrint; return {close: () => {closed++;}};};
   const s = ship({onReturn: line => {
-    setTimeout(() => {print('gall: %sleeper dozing, dropping %blit'); print('%probe'); print('gall: noise'); print('gall: noise'); print('gall: %sleeper dozing, dropping %logs'); print('gall: noise'); print('two\nlines\n');}, 4);
+    setTimeout(() => {print('gall: %sleeper dozing, dropping %blit'); print('%probe'); print('gall: noise'); print('gall: noise'); print('gall: %sleeper dozing, dropping %logs'); print('gall: %gone dead, got %blit'); print('gall: got old %logs for %again'); print('gall: noise'); print('two\nlines\n');}, 4);
     return [{mor: [printed('> ' + line), {mor: [{hop: 0}, {wyp: true}, {klr: [{stye: plain, text: Array.from(PROMPT)}, {stye: plain, text: []}]}, {hop: PROMPT.length}]}]}];
   }});
   const early = setInterval(() => {if (s.returns() === 0) print('before the line');}, 1);

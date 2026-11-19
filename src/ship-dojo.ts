@@ -158,11 +158,13 @@ const unknown = (error: unknown): boolean => !!error && typeof error === 'object
 export const dojoReady = (prompt: string): boolean => /^~[a-z_^-]{3,}:dojo\S*> $/u.test(prompt);
 export const dojoWaiting = (prompt: string): boolean => /^~[a-z_^-]{3,}:dojo\S*< $/u.test(prompt);
 /**
- * What Gall prints each time an agent that is asleep misses a piece of terminal output (measured: a ship with one
- * such agent prints several for every line its terminal shows). The terminal's own output causes these, never a
- * command, so they are left out of what a line is shown to have printed.
+ * What Gall prints each time terminal output reaches an agent that no longer listens for it: one that is asleep
+ * ("dozing, dropping"), removed ("dead, got"), or restarted since it began listening ("got old ... for"). The
+ * terminal driver keeps such a listener for good, so a ship with one prints several of these for every line its
+ * terminal shows (measured, all three wordings). The terminal's own output causes them, never a command, so they
+ * are left out of what a line is shown to have printed.
  */
-const TERMINAL_ECHO = /^gall: %[a-z0-9-]+ dozing, dropping %(blit|logs)$/u;
+const TERMINAL_ECHO = /^gall: (%[a-z0-9-]+ (dozing, dropping|dead, got) %(blit|logs)|got old %(blit|logs) for %[a-z0-9-]+)$/u;
 const STANDS = ' The text may still stand on its dojo line: clear it in the ship\'s own terminal before pressing Return there.';
 const short = (text: string): string => text.length > 120 ? text.slice(0, 120) + '…' : text;
 
