@@ -208,9 +208,13 @@ export class ProjectSharingView implements vscode.Disposable {
       if (v.timeLimits && v.inspectable) children.push({label: !row.shared ? 'Share for a limited time…' : row.until ? 'Change the time limit…' : 'Set a time limit…',
         command: {command: 'readymade.shareSessionUntil', title: 'Share for a limited time', arguments: [row.id]}});
       if (row.until && v.inspectable) children.push({label: 'Remove the time limit', command: {command: 'readymade.shareSession', title: 'Remove the time limit', arguments: [row.id]}});
+      // A session opened before the project's setup last changed still lists as paused or ready; the ship refuses every run of it.
+      const dead = row.runnable === false;
       rows.push({label: remoteSessionShortId(row.id),
-        description: `${row.phase} · ${!row.shared ? 'not shared' : row.until ? `shared until ${sessionSharingWhen(row.until)}` : 'shared'}`,
-        tooltip: `${row.desk} @ ${row.revision}\nSession ${row.id}\nObserved ${v.observedAt}`, children});
+        description: `${row.phase}${dead ? ' · cannot run' : ''} · ${!row.shared ? 'not shared' : row.until ? `shared until ${sessionSharingWhen(row.until)}` : 'shared'}`,
+        tooltip: `${row.desk} @ ${row.revision}\nSession ${row.id}\nObserved ${v.observedAt}` +
+          (dead ? '\n\nThis session cannot run: the project’s setup has changed since it was opened, and your ship refuses every run of it while that is so. A collaborator can still watch it, ' +
+            'and a request for work in it is refused. To take work, open a new session and share that one.' : ''), children});
     }
     if (v.truncated) rows.push({label: 'Showing the newest 128 sessions', tooltip: 'A ship with the current collaboration service lists the newest; an older one lists the first 128.'});
     if (v.member || v.viewGrant === 'live' || v.sessions.some(row => row.shared)) rows.push({label: `Remove ${v.peer} from this project…`,

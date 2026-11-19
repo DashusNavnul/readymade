@@ -29,6 +29,12 @@ export interface SessionSharingRow {
   readonly shared: boolean; readonly inspection: string | null;
   /** When this share ends by itself. Null when it has no limit, is not shared, or the ship does not say. */
   readonly until: string | null;
+  /**
+   * False when the session was opened before the project's setup last changed: the owner's ship refuses every run of
+   * it while that is so, though it still lists as paused or ready. True rules out only that one refusal, so it is never
+   * shown as "can run". Null when the ship could not tell or does not say.
+   */
+  readonly runnable: boolean | null;
 }
 export interface SessionSharingSnapshot extends SessionSharingTarget {
   readonly observedAt: string; readonly member: boolean; readonly role: typeof SESSION_SHARING_ROLES[number] | null; readonly inspectable: boolean;
@@ -77,10 +83,14 @@ export function sessionSharingCommand(value: unknown): SessionSharingCommand {
   if (timed) try {dateAtom(r.until);} catch {invalid();}
   return Object.freeze({...target, operation: r.operation as SessionSharingOperation, session: r.session as string, ...(timed ? {until: r.until as string} : {})});
 }
-/** The last header asks for time limits; a ship that does not know it answers in the first shape. */
+/**
+ * The last two headers ask for time limits and for which sessions can still run. A ship that does not know one of
+ * them ignores it and answers in the shape it does know, so each is its own header.
+ */
 export function sessionSharingHeaders(value: unknown): Record<string, string> {
   const t = sessionSharingTarget(value);
-  return {'x-readymade-project': Buffer.from(t.project, 'utf8').toString('latin1'), 'x-readymade-project-peer': t.peer, 'x-readymade-session-sharing-terms': 'v1'};
+  return {'x-readymade-project': Buffer.from(t.project, 'utf8').toString('latin1'), 'x-readymade-project-peer': t.peer, 'x-readymade-session-sharing-terms': 'v1',
+    'x-readymade-session-sharing-runs': 'v1'};
 }
 /** The exact refusals the owner's ship issues. Each one means nothing was changed by this request. */
 export function sessionSharingRefusal(status: number, value: unknown, post: boolean): string | undefined {
@@ -98,7 +108,7 @@ export function sessionSharingRefusal(status: number, value: unknown, post: bool
 export function sessionSharingSnapshot(value: unknown, expected: SessionSharingTarget): SessionSharingSnapshot {
   const wanted = sessionSharingTarget(expected);
   const r = exact(value, ['schema', 'owner', 'project', 'peer', 'observedAt', 'member', 'role', 'inspectable', 'viewGrant', 'truncated', 'sessionSharing', 'sessionSharingBlocked', 'sessions']);
-  const timeLimits = r.schema === 'readymade-session-sharing-v2';
+  const runs = r.schema === 'readymade-session-sharing-v3', timeLimits = runs || r.schema === 'readymade-session-sharing-v2';
   if (!timeLimits && r.schema !== 'readymade-session-sharing-v1' || r.owner !== wanted.owner || r.project !== wanted.project || r.peer !== wanted.peer ||
       typeof r.member !== 'boolean' || typeof r.inspectable !== 'boolean' || typeof r.truncated !== 'boolean' ||
       (r.member ? typeof r.role !== 'string' || !(SESSION_SHARING_ROLES as readonly string[]).includes(r.role) : r.role !== null) ||
@@ -109,16 +119,17 @@ export function sessionSharingSnapshot(value: unknown, expected: SessionSharingT
   dateAtom(r.observedAt);
   let prior = 0n;
   const sessions = r.sessions.map(value => {
-    const s = exact(value, ['id', 'phase', 'desk', 'revision', 'shared', 'inspection', ...(timeLimits ? ['until'] : [])]);
-    const until = timeLimits ? s.until : null;
+    const s = exact(value, ['id', 'phase', 'desk', 'revision', 'shared', 'inspection', ...(timeLimits ? ['until'] : []), ...(runs ? ['runnable'] : [])]);
+    const until = timeLimits ? s.until : null, runnable = runs ? s.runnable : null;
     if (until !== null) {if (!s.shared) invalid(); try {dateAtom(until);} catch {invalid();}}
+    if (runnable !== null && typeof runnable !== 'boolean') invalid();
     if (!ux(s.id) || typeof s.phase !== 'string' || !(SESSION_SHARING_PHASES as readonly string[]).includes(s.phase) ||
         typeof s.desk !== 'string' || !/^[a-z][a-z0-9-]{0,127}$/.test(s.desk) || !ud(s.revision) || typeof s.shared !== 'boolean' ||
         (s.shared ? !ux(s.inspection) : s.inspection !== null)) invalid();
     const id = BigInt(s.id.replaceAll('.', ''));
     if (id <= prior) invalid(); prior = id; // Ascending, so an id can appear only once.
     return Object.freeze({id: s.id, phase: s.phase as SessionSharingRow['phase'], desk: s.desk, revision: s.revision, shared: s.shared, inspection: s.inspection as string | null,
-      until: until as string | null});
+      until: until as string | null, runnable: runnable as boolean | null});
   });
   return Object.freeze({...wanted, observedAt: r.observedAt as string, member: r.member, role: r.role as SessionSharingSnapshot['role'], inspectable: r.inspectable,
     viewGrant: r.viewGrant as SessionSharingSnapshot['viewGrant'], truncated: r.truncated, sessionSharing: r.sessionSharing as SessionSharingSnapshot['sessionSharing'],

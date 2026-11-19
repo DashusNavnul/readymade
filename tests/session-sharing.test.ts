@@ -22,7 +22,7 @@ const many = (count: number) => Array.from({length: count}, (_, i) => row('0x' +
 
 test('a standing decodes to an immutable snapshot for every role, phase and grant state', () => {
   const source = state(SESSION_SHARING_PHASES.map((phase, i) => row('0x' + (i + 1).toString(16), i % 2 === 0, {phase}))), seen = decode(source);
-  assert.deepEqual(seen.sessions.map(s => s.phase), [...SESSION_SHARING_PHASES]); assert.deepEqual(seen.sessions[0], {id: '0x1', phase: 'idle', desk: 'pataphor-native-work', revision: '1', shared: true, inspection: '0x595.9100', until: null});
+  assert.deepEqual(seen.sessions.map(s => s.phase), [...SESSION_SHARING_PHASES]); assert.deepEqual(seen.sessions[0], {id: '0x1', phase: 'idle', desk: 'pataphor-native-work', revision: '1', shared: true, inspection: '0x595.9100', until: null, runnable: null});
   assert.equal(seen.timeLimits, false);
   assert.equal(seen.sessions[1].inspection, null); assert.equal(seen.owner, '~zod'); assert.equal(seen.peer, '~nec'); assert.equal(seen.project, target.project);
   assert.ok(Object.isFrozen(seen) && Object.isFrozen(seen.sessions) && Object.isFrozen(seen.sessions[0]));
@@ -57,7 +57,8 @@ test('commands carry exactly a colon-free target, an operation and the right ses
   for (const session of [id, '0x1', '']) assert.throws(() => sessionSharingCommand({...remove, session}));
   const partial: Record<string, unknown> = {...share}; delete partial.session; assert.throws(() => sessionSharingCommand(partial));
   const headers = sessionSharingHeaders(target);
-  assert.deepEqual(Object.keys(headers), ['x-readymade-project', 'x-readymade-project-peer', 'x-readymade-session-sharing-terms']); assert.equal(headers['x-readymade-session-sharing-terms'], 'v1'); assert.equal(headers['x-readymade-project-peer'], '~nec');
+  assert.deepEqual(Object.keys(headers), ['x-readymade-project', 'x-readymade-project-peer', 'x-readymade-session-sharing-terms', 'x-readymade-session-sharing-runs']); assert.equal(headers['x-readymade-session-sharing-terms'], 'v1');
+  assert.equal(headers['x-readymade-session-sharing-runs'], 'v1', 'its own header: a ship that does not know it still answers with time limits'); assert.equal(headers['x-readymade-project-peer'], '~nec');
   assert.equal(Buffer.from(headers['x-readymade-project'], 'latin1').toString('utf8'), target.project);
 });
 
@@ -287,6 +288,18 @@ test('a ship-printed moment and a clock time convert both ways, exactly as the s
   assert.equal(dateAtomMillis('~2026.11.12..02.00.20..8000'), Date.UTC(2026, 10, 12, 2, 0, 20) + 500);
   for (const ms of [Date.UTC(2026, 10, 12, 2, 0, 20), Date.UTC(2028, 1, 29, 0, 0, 1), Date.UTC(2030, 5, 30, 12, 0, 0)]) assert.equal(dateAtomMillis(dateAtomText(ms)), ms);
   for (const bad of [NaN, -1, Infinity]) assert.throws(() => dateAtomText(bad));
+});
+
+test('a ship that says which sessions can still run is read; one that does not say leaves it unknown', () => {
+  const v3 = (sessions: unknown[]) => state(sessions, {schema: 'readymade-session-sharing-v3'});
+  const seen = decode(v3([row('0x1', false, {until: null, runnable: true}), row('0x2', true, {until: null, runnable: false}), row('0x3', false, {until: null, runnable: null})]));
+  assert.deepEqual(seen.sessions.map(s => s.runnable), [true, false, null]); assert.equal(seen.timeLimits, true, 'the third shape carries time limits too');
+  // The first two shapes never carry the key, and say nothing: unknown, never "can run".
+  assert.equal(decode(state([row('0x1')])).sessions[0]!.runnable, null);
+  assert.equal(decode(state([row('0x1', false, {until: null})], {schema: 'readymade-session-sharing-v2'})).sessions[0]!.runnable, null);
+  // A wrong type, a missing key in the third shape, or the key in an earlier shape are all refused.
+  for (const bad of [v3([row('0x1', false, {until: null, runnable: 'yes'})]), v3([row('0x1', false, {until: null, runnable: 1})]), v3([row('0x1', false, {until: null})]), v3([row('0x1', false, {runnable: true})]),
+    state([row('0x1', false, {until: null, runnable: true})], {schema: 'readymade-session-sharing-v2'}), state([row('0x1', false, {runnable: true})])]) assert.throws(() => decode(bad));
 });
 
 test('a ship that keeps time limits says when each share ends; an older ship says nothing and is still read', () => {
