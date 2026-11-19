@@ -98,10 +98,12 @@ characters.
   what it shows and leaves it alone. A dojo that is busy running a command shows the ready
   prompt too: it then puts the line back itself and says it is busy, and Readymade passes that
   on without pressing Return. Text left unsent on the dojo line is cleared first.
-- Return is pressed once, and only after your ship has shown the line as you typed it. A line
-  longer than the ship's terminal is wide is shown there by its end only (about 58 characters
-  on an 80-column terminal); Readymade checks that end, and afterwards compares the line the
-  dojo prints back with what you typed, and says so if they differ.
+- Return is pressed once, and only after your ship has shown the whole line as you typed it. A
+  line longer than the ship's terminal is wide is shown there only in part (about 58 characters
+  on an 80-column terminal), so Readymade reads it whole first, moving the cursor through it,
+  which takes a second or two for a very long line, and then cuts anything that stands after
+  it. At the line's end that cut only sounds the terminal's bell, so your ship's own terminal
+  may beep once for such a line.
 - A line the dojo cannot read is not run. Readymade shows where reading stopped, when the whole
   line was in view, and takes the line off the prompt again; if it cannot confirm that, it says
   the text may still stand there.
@@ -109,14 +111,19 @@ characters.
   one Backspace so the dojo is not left waiting, and says so if it could not.
 - If no answer comes back after Return, the outcome is unknown and is said to be; the line is
   never sent again.
-- The dojo does not say when a command has finished. Readymade shows what it printed until it
-  has been quiet for about a second, or for 30 seconds at most; what a slow command prints later
-  is in your ship's own terminal. Debug prints (`~&`) appear only there, as with the Landscape
-  Terminal.
+- The dojo does not say when a command has finished. The line is free for your next one once
+  the dojo has printed something and been quiet for about a second (after 30 seconds on a ship
+  that never goes quiet), and what your ship prints after that still appears under the line,
+  until you type the next line, for ten minutes, or until your ship stops sending it, which
+  Readymade then says.
+- Debug prints (`~&`) and error traces are shown too, where your ship's runtime serves them to a
+  signed-in client (`/~_~/slog`); they come by their own path, so they can appear a line early.
+  Gall's notices that a sleeping agent missed terminal output are left out.
 - This needs the ship's web terminal service (`%herm`, part of every ship's base). It was run
-  against one live planet on an 80-column terminal and the modified runtime. A moon's long
-  prompt is drawn differently when a line does not fit, and a comet's name is shortened; both
-  follow the ship's source and were not run. Other runtimes and hosted ships are untested.
+  against a live planet on an 80-column terminal and the modified runtime. It was also run against
+  a live moon, whose long prompt the terminal draws differently when a line does not fit, on the
+  Readymade runtime. Not run: a comet (its shortened name in the prompt follows the ship's
+  source), hosted ships, and the stock runtime.
 
 ## Work with someone else
 

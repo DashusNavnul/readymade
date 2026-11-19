@@ -87,6 +87,8 @@ class WorkspaceTree implements vscode.TreeDataProvider<Row> {
 export class ReadymadeWorkspace implements vscode.Disposable {
   readonly media: MediaWorkbench;
   readonly home: WelcomeView;
+  /** Stops showing what the ship prints after the last dojo line typed on Home. */
+  private dojoFollow?: AbortController;
   readonly planetSetup: PlanetSetupView;
   readonly backendInstall: BackendInstallView;
   readonly doctor: ShipDoctorView;
@@ -266,14 +268,19 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (action === 'join') return this.invitations.join();
       if (await this.connectApps()) return this.media.open(action);
     }, async (text, report) => {
-      // A dojo line goes to the connected ship's dojo as typed and never to the assistant.
+      // A dojo line goes to the connected ship's dojo as typed and never to the assistant. What the ship prints
+      // after the first answer is still shown, until the next line or for ten minutes.
+      this.dojoFollow?.abort(); this.dojoFollow = undefined;
       const typed = dojoLine(text);
       if (typed !== undefined) {
         const ship = connection().ship, client = this.media.connectedClient;
         if (!ship || !client) {report('Connect your Urbit first: a dojo line is typed into your own ship.'); return;}
         report(`Typing into ${ship}'s dojo…`);
-        try {report(await runDojoLine((onEvent, onEnd) => client.terminalChannel(onEvent, onEnd), typed, report) || '(The dojo printed nothing.)');}
-        catch (error) {if (!(error instanceof DojoNotRun)) throw error; report(error.message);}
+        const follow = this.dojoFollow = new AbortController();
+        try {
+          report(await runDojoLine((onEvent, onEnd) => client.terminalChannel(onEvent, onEnd), typed, report,
+            {prints: (onPrint, onEnd) => client.debugPrints(onPrint, onEnd), follow: {ms: 600000, signal: follow.signal}}) || '(The dojo printed nothing.)');
+        } catch (error) {follow.abort(); if (!(error instanceof DojoNotRun)) throw error; report(error.message);}
         return;
       }
       // The assistant only chooses from the listed commands; each runs exactly as it would from its own button.
@@ -1034,6 +1041,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   dispose(): void {
     const closingClient = this.client, activityStopped = this.activity.contextChanged();
     this.disposed = true;
+    this.dojoFollow?.abort();
     this.activity.dispose();
     this.remoteSource.dispose();
     this.checks.dispose();

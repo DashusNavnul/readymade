@@ -464,3 +464,32 @@ test('a terminal channel tells a refusal from an unknown outcome, opens no strea
     assert.throws(() => client.terminalChannel(() => undefined, () => undefined), code('closed'));
   });
 });
+
+test('the stream of debug prints gives each print once, ends at once on a ship that does not serve it, and ends with the client', async () => {
+  await fixture(async (server, client) => {
+    await signedIn(server, client);
+    const got: string[] = []; let ends = 0, stream: http.ServerResponse | undefined;
+    server.steps.push((_request, response) => { stream = response; response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write('data:%marker\n\ndata:first\ndata:second\n\ndata:cu'); });
+    const prints = client.debugPrints(text => got.push(text), () => { ends++; });
+    await untilTrue(() => got.length === 2);
+    const asked = server.captured.at(-1)!;
+    assert.deepEqual([asked.method, asked.url, asked.headers.accept, asked.cookie], ['GET', '/~_~/slog', 'text/event-stream', 'urbauth-~zod=term-session']);
+    stream!.write('t\n\n'); await untilTrue(() => got.length === 3);
+    assert.deepEqual(got, ['%marker', 'first\nsecond', 'cut']);
+    prints.close(); prints.close(); assert.equal(ends, 1);
+    stream!.write('data:late\n\n'); await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(got.length, 3, 'nothing after it was closed');
+    // a ship that does not serve the stream
+    let refusedEnds = 0;
+    server.steps.push((_request, response) => { response.writeHead(403); response.end(); });
+    client.debugPrints(() => assert.fail('no print'), () => { refusedEnds++; });
+    await untilTrue(() => refusedEnds === 1);
+    // closing the client ends an open one
+    let closed = 0;
+    server.steps.push((_request, response) => { response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write(': open\n\n'); });
+    client.debugPrints(() => undefined, () => { closed++; });
+    await untilTrue(() => server.captured.at(-1)!.url === '/~_~/slog' && server.steps.length === 0);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    client.close(); await untilTrue(() => closed === 1);
+    assert.throws(() => client.debugPrints(() => undefined, () => undefined), code('closed'));
+  });
+});

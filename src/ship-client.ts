@@ -1148,6 +1148,34 @@ export class ShipClient {
     }};
   }
   /**
+   * The runtime's stream of debug prints (what `~&` writes), which it serves to a signed-in client at `/~_~/slog`,
+   * for the dojo line on Home. Each call of `onPrint` is one print. A ship that does not serve the stream ends at
+   * once, and `onEnd` is called once however it stops.
+   */
+  debugPrints(onPrint: (text: string) => void, onEnd: () => void): {close(): void} {
+    if (this.closed) failure('closed');
+    let ended = false, buffer = '';
+    const cookie = this.cookies.filter(each => each.expires > Date.now()).map(each => each.value).join('; ');
+    const request = (this.origin.startsWith('https:') ? https : http).request(new URL('/~_~/slog', this.origin), {method: 'GET', agent: false,
+      headers: {Accept: 'text/event-stream', Origin: this.origin, ...(cookie ? {Cookie: cookie} : {})}}, response => {
+      if (response.statusCode !== 200) {response.resume(); end(); return;}
+      response.setEncoding('utf8');
+      response.on('data', (chunk: string) => {
+        if (ended) return;
+        const taken = streamEvents(buffer + chunk); buffer = taken.rest;
+        if (buffer.length > LIMIT) {end(); return;}
+        for (const each of taken.events) onPrint(each.data);
+      });
+      response.on('end', end); response.on('error', end); response.on('aborted', end);
+    });
+    const end = (): void => {
+      if (ended) return; ended = true;
+      this.requests.delete(request); request.destroy(); onEnd();
+    };
+    this.requests.add(request); request.on('error', end); request.end();
+    return {close: end};
+  }
+  /**
    * One read or command on a listed native page (`native-pages.ts`). A refusal is returned, not thrown, so the caller
    * can show the ship's own reason. A command whose answer never arrived is unknown and is never sent again here.
    */

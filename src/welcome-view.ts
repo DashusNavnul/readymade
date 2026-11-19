@@ -6,7 +6,10 @@ export interface WelcomeState {ship?: string; origin?: string; project?: string}
 const actions = new Set<WelcomeAction>(['openProject','connect','getUrbit','join','noltbook','glurff','lattice','groups','landscape']);
 const viewType = 'readymade.welcome';
 const ASK_LIMIT = 500, REPLY_LIMIT = 8200;
-/** Carries one typed instruction out; `report` replaces the text shown under the command line as it goes. */
+/**
+ * Carries one typed line out; `report` replaces the text shown under the command line as it goes, and may go on
+ * doing so after the promise settles, until the next line is typed (a dojo line's later output).
+ */
 export type WelcomeAsk = (text: string, report: (reply: string) => void) => Promise<void>;
 /** Presentation only: every action delegates to an existing explicit workspace flow. */
 export class WelcomeView implements vscode.Disposable {
@@ -18,6 +21,7 @@ export class WelcomeView implements vscode.Disposable {
   private error = '';
   private asking = false;
   private reply = '';
+  private turn = 0;
   private lastState = '';
   constructor(private readonly state: () => WelcomeState, private readonly run: (action: WelcomeAction) => Promise<unknown>, private readonly ask?: WelcomeAsk) {
     this.serializer = vscode.window.registerWebviewPanelSerializer(viewType, {deserializeWebviewPanel: async panel => {
@@ -71,8 +75,9 @@ export class WelcomeView implements vscode.Disposable {
   /** The command line: one line of text in, the assistant's plan carried out by the workspace, its progress shown under the line. */
   private async answer(panel: vscode.WebviewPanel, text: unknown): Promise<void> {
     if (!this.ask || typeof text !== 'string' || !text.trim() || text.length > ASK_LIMIT || /[\u0000-\u001f\u007f]/.test(text)) return;
+    const turn = ++this.turn;
     this.busy = true; this.asking = true; this.error = ''; this.reply = ''; this.refresh();
-    try {await this.ask(text.trim(), reply => {if (this.panel === panel && this.asking) {this.reply = reply.slice(0, REPLY_LIMIT); this.refresh();}});}
+    try {await this.ask(text.trim(), reply => {if (this.panel === panel && turn === this.turn && !this.closed) {this.reply = reply.slice(0, REPLY_LIMIT); this.refresh();}});}
     catch (error) {if (this.panel === panel) this.error = error instanceof Error ? error.message.slice(0,512) : 'That could not be done. Please try again.';}
     finally {this.busy = false; this.asking = false; this.refresh();}
   }
