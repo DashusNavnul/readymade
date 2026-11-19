@@ -4,7 +4,7 @@ import {OutcomeUnknownError, ShipClientError} from './ship-client';
 import {nativeRefusal, refusalSentence, shortHex, type NativeReply, type NativeRequest} from './native-pages';
 import {ReportPanel} from './report-panel';
 import {unreadable, type Report} from './report';
-import {admissionsLeft, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, dateAtomText, overviewProblems, overviewReport, overviewWaiting, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
+import {admissionsLeft, policyInForce, answerCommand, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, dateAtomText, overviewProblems, overviewReport, overviewWaiting, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport,
   POLICY_TOOLS, type OwnerOverview, type PolicyBody} from './owner-pages';
 import {boardReport, collabNotices, historyReport, noticeLines, noticeRetry, noticesReport, noticesRoom, noticesSeen, noticesUnseen, noticeText, presenceBoard, presencePlan, presenceReport, presenceTarget, presenceText, rolesReport, sessionRoles, sessionStreams,
   streamClose, streamOpen, streamText, suggestionHistory, workAsk, workDismiss, workJournal, workJournalAdd, workQueue, workReport, workWithdraw, type Notice, type PresenceTarget, type PresenceTold, type SessionStream} from './collab-pages';
@@ -97,7 +97,8 @@ export class NativeScreens implements vscode.Disposable {
       // What this computer asked is kept here; its progress comes from the owners' notices. A ship with no notice
       // store has told nothing (an empty list); notices that could not be read are unknown (null).
       const notices = await soft(async () => {const reply = await this.get(COLLAB + 'notices'); if (nativeRefusal(reply)) throw new Error('refused'); return collabNotices(reply.value, this.me()) ?? null;});
-      return workReport(queue, left, workJournal(this.host.state.get(this.kept(ASKED))), notices === undefined ? null : notices?.inbox ?? [], notices ? noticesRoom(notices) : '');
+      return workReport(queue, left, workJournal(this.host.state.get(this.kept(ASKED))), notices === undefined ? null : notices?.inbox ?? [], notices ? noticesRoom(notices) : '',
+        policy ? policyInForce(policy) : undefined);
     }, id => this.endWork(id));
     this.roles = panel('sessionRoles', 'Session Roles', async () => {
       const project = this.chosenProject();

@@ -41,6 +41,7 @@ test('a refusal reads as the ship’s reason, then what it means when this app k
   assert.equal(refusalSentence('The ship answered 503.'), 'The ship answered 503.', 'a sentence is left as it is');
   assert.equal(refusalHelp('constructor'), undefined); assert.equal(refusalHelp('toString'), undefined);
   // Reasons a person can meet from these screens each say what to do, as one or more whole sentences.
+  assert.match(refusalSentence('work-session-cannot-run'), /^work session cannot run\. That session cannot run: the project's setup has changed since it was opened\. Ask the owner to share a current session, then ask again there\. Nothing was queued\.$/);
   for (const reason of ['work-capacity', 'work-request-own-ship', 'work-request-invalid', 'stream-own-ship', 'stream-missing', 'stream-ended', 'presence-capacity', 'answer-invalid', 'owner-tasks-store-unavailable', 'memory-reason-required']) {
     assert.match(refusalHelp(reason) ?? '', /^[A-Z].+\.$/, reason); assert.match(refusalSentence(reason), new RegExp(`^${reason.replaceAll('-', ' ')}\\. [A-Z]`), reason);
   }

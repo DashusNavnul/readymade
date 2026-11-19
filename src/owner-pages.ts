@@ -167,14 +167,21 @@ export function policyReport(p: StandingPolicy): Report {
       {title: 'Versions', empty: 'No version has been stored.', lines: p.versions.map(v => ({text: `Version ${v.version}${v.revoked ? ': revoked' : v.error ? ': unreadable' : `: ${v.body!.project}`}`,
         detail: v.error ? v.error : `${v.at}${v.body ? `\n${bodyLines(v.body)}` : ''}`, mark: v.error ? 'problem' as const : 'note' as const}))}]};
 }
+const newestVersion = (policy: StandingPolicy): PolicyVersion | undefined =>
+  policy.versions.reduce<PolicyVersion | undefined>((best, v) => !best || v.version > best.version ? v : best, undefined);
+/** Is a standing policy in force on the ship that was read? The newest version decides: one that was revoked or cannot be read is not. */
+export function policyInForce(policy: StandingPolicy): boolean {
+  const newest = newestVersion(policy);
+  return Boolean(policy.inForce && newest && !newest.revoked && !newest.error);
+}
 /**
  * Admissions the policy in force still allows: its limit less the requests already dispatched under that same
  * version, counted the way the ship counts them. Undefined when the ship has no policy store; 0 when none is in force.
  */
 export function admissionsLeft(policy: StandingPolicy | undefined, requests: readonly {readonly policyVersion?: number}[]): number | undefined {
   if (!policy) return undefined;
-  const newest = policy.versions.reduce<PolicyVersion | undefined>((best, v) => !best || v.version > best.version ? v : best, undefined);
-  if (!policy.inForce || !newest || newest.revoked || newest.error) return 0;
+  const newest = newestVersion(policy);
+  if (!newest || !policy.inForce || !policyInForce(policy)) return 0;
   return Math.max(0, policy.inForce.resources.maxAdmissions - requests.filter(w => w.policyVersion === newest.version).length);
 }
 /** The exact command the ship's policy page takes. Throws before sending if a field could not be valid. */

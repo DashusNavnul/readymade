@@ -71,6 +71,7 @@ const REFUSAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   'work-policy-not-in-force': 'The owner has no standing policy in force for this project, so their agents take no requests.',
   'work-role-not-contributing': 'Your role in this project allows watching, not asking for work. The owner can change your role.',
   'work-session-not-shared': 'That session is not shared with you.',
+  'work-session-cannot-run': 'That session cannot run: the project\'s setup has changed since it was opened. Ask the owner to share a current session, then ask again there. Nothing was queued.',
   'work-peer-limit': 'You already have two open requests in this project. Wait for one to finish.',
   'work-project-limit': 'This project already has eight open requests. Wait for one to finish.',
   'work-request-duplicate': 'This exact request was already taken.',

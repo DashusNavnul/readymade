@@ -64,7 +64,7 @@
   },
   {
    "at": "~2026.11.17..10.46.30..0150",
-   "detail": "Started at sequence 11 under policy version 3.",
+   "detail": "Given to the session at sequence 11 under policy version 3. You are told how it ended once the session has stopped, which can take ten minutes or so after its last step.",
    "from": "~zod",
    "id": "0x50a9.db6d.01af.95b3.8604.be58.9e26.3596.c767.ce5a.8a74.90cd.3121.0be3.e309.7d9f",
    "kind": "work-started",

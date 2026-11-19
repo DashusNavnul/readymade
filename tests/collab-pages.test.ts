@@ -19,7 +19,7 @@ test('notices: the owner sees each outcome, the peer reads plain sentences, newe
   assert.equal(noticeText(work, () => '/lib/x/hoon'), noticeText(work), 'a work notice names no file');
   const lines = noticeLines(got);
   assert.equal(lines.length, got.inbox.filter(n => !['suggestion-taken', 'suggestion-declined'].includes(n.kind)).length); assert.ok(lines.length < got.inbox.length, 'answers are left to the share notices');
-  assert.match(lines[0]!.day, /^2026-11-17$/); assert.match(lines[0]!.text, /^~zod (?:ended|started|queued|landed) your /);
+  assert.match(lines[0]!.day, /^2026-11-17$/); assert.match(lines[0]!.text, /^~zod (?:ended|gave|queued|landed) your /);
   assert.equal(noticesUnseen(got, undefined).length, got.inbox.length); assert.equal(noticesUnseen(got, noticesSeen(got)).length, 0);
   assert.deepEqual(noticesUnseen(got, noticesSeen(got).slice(1)), [got.inbox[0]]);
   // A notice made earlier that arrives later is still new: only what was shown counts, never a time.
@@ -154,6 +154,7 @@ test('the journal of asked work keeps the request text, survives a bad stored va
     ['not-run', /^Taken, not run: the session holds this instruction and has not started a run of it\. It stays in the session and goes with its next run; its requester is not told again\./, 'warning'],
     ['stopped', /^Stopped: the session began it and then sat ready without running for ten minutes \(revision 8\)\. If it continues, its requester is not told again\./, 'warning'],
     ['refused', /^Ended with the session refused at revision 8/, 'warning'], ['paused', /^Ended with the session paused at revision 8/, 'warning'],
+    ['cannot-run', /^Not started: its session cannot run, because the project's setup has changed since the session was opened\. Nothing ran\. Open a new session and share that one\./, 'warning'],
     ['some-future-phase', /^Ended with the session some-future-phase at revision 8/, 'warning']] as const) {
     const ended = one(phase); assert.match(ended.detail!, words); assert.equal(ended.mark, mark, phase); assert.equal(ended.action, undefined);
   }
@@ -201,6 +202,27 @@ test('work requests: the owner’s queue, the peer’s asks with the ship’s re
   const asked = workQueue({...page('peer-work'), asked: [{nonce: '0x1004', owner, project: demo, session: '0xe1b1', status: 'refused', reason: 'poke-ack\n | x\n | %work-peer-limit\n', at: '~2026.11.17..10.47.00'}]}, peer);
   assert.equal(asked.asked[0]!.reason, 'work-peer-limit'); assert.match(workReport(asked).sections[1]!.lines[0]!.detail!, /^Refused: work peer limit/);
   assert.throws(() => workQueue(page('owner-work'), peer));
+  // A request given to its session is called running only while the session is in a model turn or a tool call.
+  const given = (patch: object) => workReport(workQueue({...raw, requests: [{...done, status: 'dispatched', outcome: null, dispatchedAt: '~2026.11.18..22.03.30', ...patch}]}, owner)).sections[0]!.lines[0]!;
+  // The dispatch time is when it was given to the session, never said to be when a run began.
+  assert.match(given({progress: 'running', sessionPhase: 'inference'}).detail!, /^Running now\. Given to the session ~2026\.11\.18\.\.22\.03\.30/); assert.equal(given({progress: 'running'}).mark, 'note');
+  assert.match(given({progress: 'held', sessionPhase: 'ready'}).detail!, /^Held, not running: the session took this instruction and has not started a run of it \(the session is ready\)\. Run the session\. If no run begins, it ends as not run once the session has stopped\./);
+  assert.equal(given({progress: 'held', sessionPhase: 'ready'}).mark, 'warning');
+  assert.match(given({progress: 'ran', sessionPhase: 'judgment'}).detail!, /^Ran, and the session is awaiting judgment\. Its ending is recorded once the session has stopped, which for a quiet session is about ten minutes after its last step\./);
+  assert.match(given({progress: 'not-taken', sessionPhase: 'paused'}).detail!, /^Not taken: the session did not take this instruction\. It ends as not started at a later check\./);
+  // A ship that does not say (an older backend), says it could not tell, or names a state this app does not know: nothing is claimed.
+  for (const patch of [{}, {progress: 'unknown', sessionPhase: 'ready'}, {progress: 'some-future-state'}, {progress: null, sessionPhase: null}]) {
+    const line = given(patch); assert.match(line.detail!, /^Given to the session ~2026\.11\.18\.\.22\.03\.30; no ending is recorded yet/, JSON.stringify(patch)); assert.doesNotMatch(line.detail!, /Running/);
+  }
+  // The requester is told it was given to its session, not that it started.
+  const givenNotice = {...collabNotices(page('peer-notices'), peer)!.inbox.find(n => n.kind === 'work-finished')!, kind: 'work-started' as const, detail: 'Given to the session at sequence 2 under policy version 9.'};
+  assert.match(noticeText(givenNotice), /^~\S+ gave your work request \S+ in \S+ to its session\. Given to the session at sequence 2/); assert.doesNotMatch(noticeText(givenNotice), /started/);
+  // With no policy in force the owner is told that every request is refused, instead of "0 admissions left".
+  assert.match(workReport(q, 0, [], [], '', false).note!, /No standing policy is in force now, so every request is refused\. Set one from Standing Policy\./); assert.doesNotMatch(workReport(q, 0, [], [], '', false).note!, /admissions? left/);
+  assert.match(workReport(q, 0, [], [], '', true).note!, /Your policy has 0 admissions left\. Waiting requests do not start until you issue a new version of the policy\./);
+  assert.doesNotMatch(workReport(q, 2).note!, /No standing policy|do not start/);
+  assert.equal(given({progress: 'held'}).action, undefined, 'a request already given to its session cannot be dismissed');
+  assert.throws(() => workQueue({...raw, requests: [{...done, status: 'dispatched', outcome: null, progress: 7}]}, owner));
   for (let i = 0; i < 50; i++) assert.match(workNonce(), /^0x[1-9a-f][0-9a-f]{0,3}(?:\.[0-9a-f]{4})*$/);
   const cmd = workAsk(owner, demo, '0xe1b1.e811', '  Add a test.  ', '0x1005');
   assert.deepEqual(cmd, {schema: 'readymade-work-request-v1', owner, nonce: '0x1005', project: demo, session: '0xe1b1.e811', text: 'Add a test.'});

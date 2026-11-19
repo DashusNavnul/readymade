@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {admissionsLeft, answerCommand, dateAtomText, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport} from '../src/owner-pages';
+import {admissionsLeft, policyInForce, answerCommand, dateAtomText, proposalDismiss, handoffDocument, memoryLabel, memorySupersede, memoryUnsupersede, memoryView, overviewProblems, overviewReport, ownerOverview, ownerTasks, policyReport, policySet, standingPolicy, tasksReport} from '../src/owner-pages';
 
 const page = (name: string): Record<string, unknown> => JSON.parse(readFileSync(join(__dirname, '../../tests/fixtures/native', name + '.json'), 'utf8')) as Record<string, unknown>;
 
@@ -76,6 +76,9 @@ test('the standing policy reads the real page; a set command is checked before i
   assert.equal(admissionsLeft(p, []), limit); assert.equal(admissionsLeft(p, [{policyVersion: newest}, {policyVersion: newest - 1}, {}]), limit - 1);
   assert.equal(admissionsLeft(p, Array.from({length: limit + 3}, () => ({policyVersion: newest}))), 0);
   assert.equal(admissionsLeft({...p, inForce: undefined}, []), 0); assert.equal(admissionsLeft(undefined, []), undefined);
+  // In force only when the ship shows one and its newest version is neither revoked nor unreadable.
+  assert.equal(policyInForce(p), true); assert.equal(policyInForce({...p, inForce: undefined}), false);
+  assert.equal(policyInForce({...p, versions: p.versions.map(v => v.version === newest ? {...v, revoked: true} : v)}), false);
   assert.equal(standingPolicy({schema: 'standing-policy-view-v1', available: false, error: 'x'}), undefined);
   assert.match(policyReport({...p, inForce: undefined}).status, /No policy is in force/);
   assert.match(policyReport({...p, chain: 'standing-policy-history-gap'}).note!, /does not check out/);
