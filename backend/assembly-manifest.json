@@ -179,8 +179,8 @@
     "app/readymade-collab.hoon": {
       "component": "application",
       "source": "app/readymade-collab.hoon",
-      "sha256": "eb21810686f8f5631d3f02691c35dd781804bff467009bfc9920b8837685e5f9",
-      "bytes": 108387
+      "sha256": "918551ac21fa352a838cbd68ceaa9261b9c6a4cd2cb6b2d45d84df984e217b8c",
+      "bytes": 108749
     },
     "app/readymade-editing.hoon": {
       "component": "application",
@@ -245,8 +245,8 @@
     "data/readymade-guest-manifest.txt": {
       "component": "application",
       "source": "data/readymade-guest-manifest.txt",
-      "sha256": "06f47ee641a3dc88c8a19e5770d3152ffcd79de8ae7f63bd5d90a4165e93e2c8",
-      "bytes": 14241
+      "sha256": "0820edeed70fe88930ca6a67b2bc662ce355464834a5cec64ebf330e2f609628",
+      "bytes": 14283
     },
     "desk.bill": {
       "component": "application",
@@ -5150,11 +5150,17 @@
       "sha256": "11a7fb623ee6237193d16e68b9f76f3da84b1b27e37538a16be4bd19be1a58fc",
       "bytes": 4299
     },
+    "lib/readymade-session-runnable.hoon": {
+      "component": "application",
+      "source": "lib/readymade-session-runnable.hoon",
+      "sha256": "e5c6ab3128c28540827a9d697f3c79b13cf83e4d07bf3e9b67953aeb69de524f",
+      "bytes": 5476
+    },
     "lib/readymade-session-sharing-http.hoon": {
       "component": "application",
       "source": "lib/readymade-session-sharing-http.hoon",
-      "sha256": "caeded92d176e41a46f5ab66f972934661c5109ec4f22342d5adb5f614ed8fc1",
-      "bytes": 9591
+      "sha256": "53398d01cbff254dd8d44775fb486be85f5e45fe7c98708fdbb4139eb10c3795",
+      "bytes": 11628
     },
     "lib/readymade-session-sharing.hoon": {
       "component": "application",
@@ -5189,8 +5195,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "489e92f6a1869573f39e1826b8e845e21c593ac2419a410b4968de9d05639ed7",
-      "bytes": 31922
+      "sha256": "fbb1c4e9cb69116ff648fce7c5f493c953acd172f35ef07d7b048c848ccccd7b",
+      "bytes": 39827
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
