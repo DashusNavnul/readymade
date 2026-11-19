@@ -63,7 +63,8 @@ import { projectActivity, type ActivityEntry } from './project-activity';
 import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
 import { askAssistant, askAssistantSummary } from './home-assistant';
-import { DojoNotRun, dojoLine, runDojoLine } from './ship-dojo';
+import { DOJO_TIMING, DojoNotRun, dojoLine, runDojoLine } from './ship-dojo';
+import { guestLine, runGuestLine } from './guest-dojo';
 import { CATCH_UP_SYSTEM, catchUpDigest, catchUpDocument, type CatchUpInput } from './catch-up';
 import { shareNoticeLines, shareNoticeText, shareNoticesUnseen, type ShareNotice, type ShareNotices } from './share-notices';
 
@@ -271,6 +272,17 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       // A dojo line goes to the connected ship's dojo as typed and never to the assistant. What the ship prints
       // after the first answer is still shown, until the next line or for ten minutes.
       this.dojoFollow?.abort(); this.dojoFollow = undefined;
+      // `~guest> line`: a guest ship hosted by the connected ship is reached through that ship's dojo.
+      const guest = guestLine(text);
+      if (guest) {
+        const ship = connection().ship, client = this.media.connectedClient;
+        if (!ship || !client) {report('Connect to the ship that hosts the guest first.'); return;}
+        report(`Asking ${ship} for ${guest.guest}…`);
+        const host = (line: string) => runDojoLine((onEvent, onEnd) => client.terminalChannel(onEvent, onEnd), line, () => undefined, {timing: {...DOJO_TIMING, quietMs: 500}});
+        try {report(await runGuestLine(host, guest.guest, guest.line, report));}
+        catch (error) {if (!(error instanceof DojoNotRun)) throw error; report(error.message);}
+        return;
+      }
       const typed = dojoLine(text);
       if (typed !== undefined) {
         const ship = connection().ship, client = this.media.connectedClient;

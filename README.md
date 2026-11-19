@@ -93,6 +93,21 @@ yourself reaches your ship. It is your ship's real dojo, the same one its own te
 a line does whatever it would do there, including `|exit`. One line at a time, up to 500
 characters.
 
+**A guest ship.** A ship hosted inside another ship (a guest of that ship's `%bach` agent) has no
+web address of its own. While you are connected to its host, name the guest first:
+
+```text
+› ~sampel-palnet> (add 2 2)
+```
+
+Readymade types three lines into the host's dojo for it: one to see that the host has that guest
+and how much the guest's terminal holds, one that hands your line to the guest's dojo, and one
+that reads what the guest's terminal gained. You get the guest's answer; the host's own terminal
+shows the three lines. A line for a guest is plain keyboard characters, up to about 450 of them.
+A line the guest's dojo cannot read is not run and is said so; the start of a longer expression
+is cancelled on the guest. Each line takes about four seconds. Run against one live host and one
+of its guests.
+
 - Nothing is typed unless your ship's terminal shows the dojo's ready prompt. If it holds the
   start of an expression, is in the middle of a question, or shows another app, Readymade says
   what it shows and leaves it alone. A dojo that is busy running a command shows the ready
