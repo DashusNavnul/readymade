@@ -5153,8 +5153,8 @@
     "lib/readymade-session-runnable.hoon": {
       "component": "application",
       "source": "lib/readymade-session-runnable.hoon",
-      "sha256": "e5c6ab3128c28540827a9d697f3c79b13cf83e4d07bf3e9b67953aeb69de524f",
-      "bytes": 5476
+      "sha256": "fd61a85f9dc0194b8c6600d331c60fe43de2854a6f2c470695c6879ffce29461",
+      "bytes": 6515
     },
     "lib/readymade-session-sharing-http.hoon": {
       "component": "application",
@@ -5195,8 +5195,8 @@
     "lib/readymade-work-queue.hoon": {
       "component": "application",
       "source": "lib/readymade-work-queue.hoon",
-      "sha256": "fbb1c4e9cb69116ff648fce7c5f493c953acd172f35ef07d7b048c848ccccd7b",
-      "bytes": 39827
+      "sha256": "b32e90ff63cbb0af19d395c5c9b1c0ba0bbab75671c543809b059918d6d17a9c",
+      "bytes": 41349
     },
     "lib/readymade-workspace-admission.hoon": {
       "component": "application",
