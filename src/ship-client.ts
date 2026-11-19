@@ -30,6 +30,7 @@ import { activityBody, activityCommand, activityHeaders, activityReply, activity
 import {CodingCatalogError, CodingSessionCatalog, CODING_CATALOG_BYTES} from './coding-session-catalog';
 import { asRecord, codingSnapshot, isInteger, isUv, isUx, validJSON, validUnicode, type CodingSnapshot, type JsonObject } from './protocol';
 import {nativeRequestAllowed, type NativeReply, type NativeRequest} from './native-pages';
+import {streamEvents} from './ship-dojo';
 
 /** Why a request never got an answer, when the network layer said: the ship answered too slowly, nothing listens there, the name does not resolve, or the connection dropped. */
 export type TransportDetail = 'slow' | 'down' | 'unknownHost' | 'dropped';
@@ -1096,6 +1097,55 @@ export class ShipClient {
           options.terminalNonce && url.pathname.endsWith('/action') && options.body!.kind === 6) throw error;
       this.uncertain.add(id); throw new OutcomeUnknownError();
     } finally { this.busy = false; }
+  }
+  /**
+   * One Eyre channel on this ship, for the dojo line on Home (`ship-dojo.ts`): actions go out with `send`, and the
+   * ship's events arrive as it emits them. The stream opens after the first action is accepted, since that is what
+   * creates the channel. `send` throws `closed`, `refused` or `authenticationRequired` when the ship took nothing,
+   * and an unknown outcome otherwise; nothing is sent again here, and actions can still go out after the stream has
+   * stopped. `onEnd` is called once, when the stream stops for any reason.
+   */
+  terminalChannel(onEvent: (event: JsonObject, id?: number) => void, onEnd: () => void): {readonly ship: string; send(actions: unknown[]): Promise<void>; close(): void} {
+    if (this.closed) failure('closed');
+    const ship = this.projectViewPeer(), path = '/~/channel/readymade-dojo-' + randomUUID();
+    let stream: http.ClientRequest | undefined, ended = false, sends = 0;
+    const end = (): void => {
+      if (ended) return; ended = true;
+      if (stream) {this.requests.delete(stream); stream.destroy();}
+      onEnd();
+    };
+    const listen = (): void => {
+      const cookie = this.cookies.filter(each => each.expires > Date.now()).map(each => each.value).join('; ');
+      const request = (this.origin.startsWith('https:') ? https : http).request(new URL(path, this.origin), {method: 'GET', agent: false,
+        headers: {Accept: 'text/event-stream', Origin: this.origin, ...(cookie ? {Cookie: cookie} : {})}}, response => {
+        if (response.statusCode !== 200) {response.resume(); end(); return;}
+        let buffer = ''; response.setEncoding('utf8');
+        response.on('data', (chunk: string) => {
+          if (ended) return;
+          const taken = streamEvents(buffer + chunk); buffer = taken.rest;
+          if (buffer.length > LIMIT) {end(); return;}
+          for (const each of taken.events) {
+            let event: JsonObject;
+            try {event = asRecord(JSON.parse(each.data));} catch {end(); return;}
+            onEvent(event, each.id);
+          }
+        });
+        response.on('end', end); response.on('error', end); response.on('aborted', end);
+      });
+      stream = request; this.requests.add(request); request.on('error', end); request.end();
+    };
+    return {ship, close: end, send: async actions => {
+      if (this.closed) failure('closed');
+      const first = ++sends === 1;
+      let reply: Wire;
+      try {reply = await this.wire(path, 'PUT', Buffer.from(JSON.stringify(actions)), {'Content-Type': 'application/json'}, {timeoutMs: 15000}, 65536);}
+      catch (error) {if (error instanceof ShipClientError && error.code === 'closed') throw error; throw new OutcomeUnknownError();}
+      if ([401, 403].includes(reply.status)) failure('authenticationRequired', reply.status);
+      if (reply.status >= 400 && reply.status < 500) failure('refused', reply.status);
+      if (![200, 204].includes(reply.status)) throw new OutcomeUnknownError();
+      // Only the first action opens the stream: a later one (the channel's deletion among them) must not re-open it.
+      if (first && !stream && !ended) listen();
+    }};
   }
   /**
    * One read or command on a listed native page (`native-pages.ts`). A refusal is returned, not thrown, so the caller

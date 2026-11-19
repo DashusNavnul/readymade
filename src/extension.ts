@@ -63,6 +63,7 @@ import { projectActivity, type ActivityEntry } from './project-activity';
 import { FULL_SOURCE } from './guest-service';
 import { PlanetBootView } from './planet-boot-view';
 import { askAssistant, askAssistantSummary } from './home-assistant';
+import { DojoNotRun, dojoLine, runDojoLine } from './ship-dojo';
 import { CATCH_UP_SYSTEM, catchUpDigest, catchUpDocument, type CatchUpInput } from './catch-up';
 import { shareNoticeLines, shareNoticeText, shareNoticesUnseen, type ShareNotice, type ShareNotices } from './share-notices';
 
@@ -265,6 +266,16 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       if (action === 'join') return this.invitations.join();
       if (await this.connectApps()) return this.media.open(action);
     }, async (text, report) => {
+      // A dojo line goes to the connected ship's dojo as typed and never to the assistant.
+      const typed = dojoLine(text);
+      if (typed !== undefined) {
+        const ship = connection().ship, client = this.media.connectedClient;
+        if (!ship || !client) {report('Connect your Urbit first: a dojo line is typed into your own ship.'); return;}
+        report(`Typing into ${ship}'s dojo…`);
+        try {report(await runDojoLine((onEvent, onEnd) => client.terminalChannel(onEvent, onEnd), typed, report) || '(The dojo printed nothing.)');}
+        catch (error) {if (!(error instanceof DojoNotRun)) throw error; report(error.message);}
+        return;
+      }
       // The assistant only chooses from the listed commands; each runs exactly as it would from its own button.
       const now = connection(), chosen = vscode.workspace.getConfiguration('readymade').get<string>('assistantPath')?.trim() || undefined;
       const plan = await askAssistant(text, {connected: !!now.ship, project: !!now.project}, {chosen});

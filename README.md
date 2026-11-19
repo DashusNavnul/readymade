@@ -73,6 +73,51 @@ type is acted on: an invitation with the ship and role typed is sent straight aw
 revoking and leaving always ask first. To pick the assistant yourself, set
 `readymade.assistantPath` to the full path of a `claude` or `codex` program.
 
+### The same line is a dojo
+
+A line that starts the way dojo input does (with a sign such as `+`, `|`, `:`, `(`, `%`, `~`, `=`,
+`.` or `?`, or with a digit) is not sent to the assistant. It is typed into the dojo of the ship
+you are connected to, as you wrote it, and what the dojo prints appears under the line:
+
+```text
+› +vats
+› |hi ~sampel-palnet
+› (add 2 2)
+› > now
+```
+
+Start a line with `>` to send anything to the dojo, such as an expression that begins with a
+letter; without it, a line that begins with a letter goes to the assistant. A line that goes to
+the dojo never reaches the assistant, and the assistant cannot produce one: only what you type
+yourself reaches your ship. It is your ship's real dojo, the same one its own terminal shows, so
+a line does whatever it would do there, including `|exit`. One line at a time, up to 500
+characters.
+
+- Nothing is typed unless your ship's terminal shows the dojo's ready prompt. If it holds the
+  start of an expression, is in the middle of a question, or shows another app, Readymade says
+  what it shows and leaves it alone. A dojo that is busy running a command shows the ready
+  prompt too: it then puts the line back itself and says it is busy, and Readymade passes that
+  on without pressing Return. Text left unsent on the dojo line is cleared first.
+- Return is pressed once, and only after your ship has shown the line as you typed it. A line
+  longer than the ship's terminal is wide is shown there by its end only (about 58 characters
+  on an 80-column terminal); Readymade checks that end, and afterwards compares the line the
+  dojo prints back with what you typed, and says so if they differ.
+- A line the dojo cannot read is not run. Readymade shows where reading stopped, when the whole
+  line was in view, and takes the line off the prompt again; if it cannot confirm that, it says
+  the text may still stand there.
+- A line that is only the start of a longer expression is not run: Readymade cancels it with
+  one Backspace so the dojo is not left waiting, and says so if it could not.
+- If no answer comes back after Return, the outcome is unknown and is said to be; the line is
+  never sent again.
+- The dojo does not say when a command has finished. Readymade shows what it printed until it
+  has been quiet for about a second, or for 30 seconds at most; what a slow command prints later
+  is in your ship's own terminal. Debug prints (`~&`) appear only there, as with the Landscape
+  Terminal.
+- This needs the ship's web terminal service (`%herm`, part of every ship's base). It was run
+  against one live planet on an 80-column terminal and the modified runtime. A moon's long
+  prompt is drawn differently when a line does not fit, and a comet's name is shortened; both
+  follow the ship's source and were not run. Other runtimes and hosted ships are untested.
+
 ## Work with someone else
 
 **To join someone's project** you need only your own ship and their invitation

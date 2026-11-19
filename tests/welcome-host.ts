@@ -169,6 +169,12 @@ export async function run(): Promise<void> {
     answerWith({say: 'x', steps: [{command: 'readymade.inviteAndCopyLink', args: ['~sampel-palnet']}]});
     await line.receive(line.panel, {ask: 'invite someone'});
     assert.match(line.error, /a ship you did not type\)\. Nothing was run\.$/);
+    // A dojo line never reaches the assistant. Here no ship takes it, so the line says so and nothing is typed.
+    rmSync(seen, {force: true});
+    await line.receive(line.panel, {ask: '+vats'});
+    assert.equal(existsSync(seen), false, 'a dojo line is not shown to the assistant');
+    assert.match(line.reply, /^Connect your Urbit first|Nothing was typed\.$/); assert.equal(line.error, ''); assert.equal(line.busy, false);
+    assert.match(line.panel.webview.html, /or type a dojo line/);
     assert.equal(homes().length, 1);
   } finally {await settings.update('assistantPath', earlier, vscode.ConfigurationTarget.Global); rmSync(askDir, {recursive: true, force: true});}
   // READYMADE_ASK_LIVE=1: the same line, answered by the real assistant installed on this Mac (one real request on

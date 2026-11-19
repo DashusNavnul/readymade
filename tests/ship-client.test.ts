@@ -395,3 +395,72 @@ test('trusted browser cookie export is exact-origin, session-only, immutable and
     client.close(); assert.throws(() => client.browserCookies(server.origin), code('closed'));
   });
 });
+
+const untilTrue = async (done: () => boolean): Promise<void> => {for (let i = 0; i < 400 && !done(); i++) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(done(), 'waited two seconds');};
+const signedIn = async (server: Fixture, client: ShipClient): Promise<void> => {
+  server.steps.push((_request, response) => { response.writeHead(200, { 'Set-Cookie': 'urbauth-~zod=term-session; Path=/' }); response.end(); });
+  await client.signIn();
+};
+const accepted: Step = (_request, response) => { response.writeHead(204); response.end(); };
+
+test('a terminal channel opens its stream only after the first action is accepted, and still sends after the stream has ended', async () => {
+  await fixture(async (server, client) => {
+    await signedIn(server, client);
+    const events: [JsonObject, number | undefined][] = []; let ends = 0, stream: http.ServerResponse | undefined;
+    const channel = client.terminalChannel((event, id) => events.push([event, id]), () => { ends++; });
+    assert.equal(channel.ship, '~zod');
+    assert.equal(server.captured.length, 1, 'nothing is asked of the ship before the first action');
+    server.steps.push(accepted, (_request, response) => {
+      stream = response; response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write('id: 0\ndata: {"ok":"ok","id":1,"response":"subscribe"}\n\nid: 1\ndata: {"json":{"bel":true},"id":1,"respo');
+    });
+    const watch = [{ id: 1, action: 'subscribe', ship: 'zod', app: 'herm', path: '/session//view' }];
+    await channel.send(watch); await untilTrue(() => events.length === 1);
+    const [put, get] = server.captured.slice(-2) as [Captured, Captured];
+    assert.match(put.url, /^\/~\/channel\/readymade-dojo-[0-9a-f-]{36}$/);
+    assert.deepEqual([put.method, get.method, get.url, get.headers.accept, get.cookie, put.cookie], ['PUT', 'GET', put.url, 'text/event-stream', 'urbauth-~zod=term-session', 'urbauth-~zod=term-session']);
+    assert.deepEqual(JSON.parse(put.body), watch);
+    stream!.write('nse":"diff"}\n\n'); await untilTrue(() => events.length === 2);
+    assert.deepEqual(events, [[{ ok: 'ok', id: 1, response: 'subscribe' }, 0], [{ json: { bel: true }, id: 1, mark: undefined, response: 'diff' }, 1]].map(([e, n]) => [JSON.parse(JSON.stringify(e)), n]));
+    // a later action is one more PUT and no second stream; a coding read in between changes nothing for the channel
+    server.steps.push(accepted); await channel.send([{ id: 2, action: 'poke' }]);
+    assert.deepEqual([server.captured.at(-1)!.method, server.captured.filter(row => row.method === 'GET').length], ['PUT', 1]);
+    // the stream ends: said once, and the channel can still be deleted
+    stream!.end(); await untilTrue(() => ends === 1);
+    server.steps.push(accepted); await channel.send([{ id: 3, action: 'delete' }]);
+    assert.deepEqual([server.captured.at(-1)!.method, JSON.parse(server.captured.at(-1)!.body)], ['PUT', [{ id: 3, action: 'delete' }]]);
+    assert.equal(server.captured.filter(row => row.method === 'GET').length, 1, 'deleting does not re-open the stream');
+    channel.close(); assert.equal(ends, 1);
+  });
+});
+
+test('a terminal channel tells a refusal from an unknown outcome, opens no stream after a failed first action, and ends with the client', async () => {
+  await fixture(async (server, client) => {
+    await signedIn(server, client);
+    const refusing = client.terminalChannel(() => undefined, () => undefined);
+    server.steps.push((_request, response) => { response.writeHead(403); response.end(); });
+    await assert.rejects(refusing.send([{ id: 1 }]), code('authenticationRequired'));
+    server.steps.push((_request, response) => { response.writeHead(404); response.end(); });
+    await assert.rejects(refusing.send([{ id: 2 }]), code('refused'));
+    server.steps.push((_request, response) => { response.writeHead(500); response.end(); });
+    await assert.rejects(refusing.send([{ id: 3 }]), (error: unknown) => error instanceof OutcomeUnknownError && error.code === 'outcomeUnknown');
+    // the first action failed, so a later accepted one (the clean-up) must not open a stream on the channel
+    server.steps.push(accepted); await refusing.send([{ id: 4, action: 'delete' }]);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(server.captured.filter(row => row.method === 'GET').length, 0);
+    // an event that is not a JSON object ends the stream instead of being guessed at
+    let ends = 0; const seen: JsonObject[] = [];
+    const odd = client.terminalChannel(event => seen.push(event), () => { ends++; });
+    server.steps.push(accepted, (_request, response) => { response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write('id: 0\ndata: [1,2]\n\n'); });
+    await odd.send([{ id: 1 }]); await untilTrue(() => ends === 1); assert.deepEqual(seen, []);
+    // closing the client ends an open stream once, and nothing more is sent
+    let closed = 0;
+    const open = client.terminalChannel(() => undefined, () => { closed++; });
+    server.steps.push(accepted, (_request, response) => { response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write(': open\n\n'); });
+    await open.send([{ id: 1 }]); await untilTrue(() => server.captured.at(-1)!.method === 'GET');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const before = server.captured.length; client.close(); await untilTrue(() => closed === 1);
+    await assert.rejects(open.send([{ id: 2 }]), code('closed')); assert.equal(server.captured.length, before);
+    assert.throws(() => client.terminalChannel(() => undefined, () => undefined), code('closed'));
+  });
+});
