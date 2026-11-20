@@ -20,7 +20,7 @@ function selectIdentity(catalog, requested = '', allowAdhoc = false) {
   if (candidates.length === 1) return candidates[0];
   if (candidates.length > 1) throw new Error('Several Apple signing identities are available; set READYMADE_SIGNING_IDENTITY to one exact fingerprint.');
   if (allowAdhoc) return {identity: '-', kind: 'ad-hoc test build', team: null};
-  throw new Error('No usable Apple signing identity is installed. Install a Developer ID Application certificate with its private key. Ad-hoc builds cause repeated Keychain approval; READYMADE_ALLOW_ADHOC=1 is only for isolated test builds.');
+  throw new Error('No usable Apple signing identity is installed. Install a Developer ID Application certificate with its private key. macOS Keychain approves an ad-hoc build separately from a certificate-signed one; READYMADE_ALLOW_ADHOC=1 is only for isolated test builds.');
 }
 
 function currentIdentity(env = process.env) {

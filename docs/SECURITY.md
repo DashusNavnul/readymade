@@ -36,8 +36,12 @@ make the Keychain treat successive builds as one app: without an Apple-issued
 certificate macOS approves the editor app by the fingerprint of its exact
 contents, so the built-in extensions are packaged beside the editor app and its
 contents stay the same from build to build (see Troubleshooting). The extensions
-remain inside the signed outer app and are covered by its seal; the launchers
-accept no other extensions folder from a caller. The builder's private certificate,
+remain inside the signed outer app and are covered by its seal, and the editor
+reads built-in extensions only from that folder: it no longer takes another
+folder from whoever starts it. The Keychain approval covers the editor app
+alone. macOS checks the outer seal when it assesses the app, not at every
+start, so a program already running as you could change an extension without
+disturbing that approval, as it could reach the app's secrets in other ways. The builder's private certificate,
 encrypted signing key and dedicated build keychain live in the owned private
 `~/Library/Application Support/Readymade/Signing` directory, outside the source
 tree and shipped application. Signing temporarily adds only that build keychain

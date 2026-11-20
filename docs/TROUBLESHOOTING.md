@@ -195,13 +195,21 @@ contents, whatever certificate signed it. The program that asks is the editor
 app nested inside Readymade. Until November 2026 Readymade's own extension was
 packaged inside that editor app, so every build had a new fingerprint and every
 build asked again. The built-in extensions are now packaged beside the editor
-app, in `Contents/Resources/extensions`, and the editor app is the same in
-every build of one editor version: two builds with different extensions were
-measured to have one fingerprint. macOS asks once for a fingerprint, then again
-only when the editor version, the few files packaging puts inside the editor
-app, or the signing certificate change. `./package.sh` ends by printing the
-fingerprint and whether it changed from the last build, which is when to expect
-the dialog. To see what macOS decided, read its own log:
+app, in `Contents/Resources/extensions`, and the editor is fixed to read them
+only from there. The editor app's fingerprint then changes only with the editor
+version, the few files packaging puts inside the editor app (its start-up
+script, three media files and the patches to the editor's own code), or the
+signing certificate. `./package.sh` ends by printing the fingerprint and whether
+it differs from the last build on that Mac and from the last release, recorded
+per certificate in `packaging/editor-fingerprint.json`; a difference from the
+release is when everyone who installed it should expect the dialog once.
+
+What is measured and what is not: builds with different extensions have been
+measured to give one fingerprint, and macOS's log shows it approving by that
+fingerprint. Not yet observed: a later build opening with no dialog on a Mac
+that approved an earlier one, and any of this on a second Mac. When checking
+it, quit the older Readymade first: a copy still running takes over the launch
+of the new one, and the new one then never asks. To see what macOS decided, read its own log:
 `/usr/bin/log show --last 10m --predicate 'process == "securityd" AND eventMessage CONTAINS "partition"'`.
 
 `./package.sh` reuses a private local signing certificate stored under
@@ -220,8 +228,9 @@ checks for downloaded apps. An Apple-issued certificate would also let the
 Keychain approve the app by its developer team instead of by fingerprint; that
 has not been measured here. An Apple-issued certificate can be selected with
 `READYMADE_SIGNING_IDENTITY=<exact certificate SHA-1 fingerprint> ./package.sh`.
-`READYMADE_ALLOW_ADHOC=1` is an explicit isolated-test option; using that build
-with real saved credentials can bring the repeated prompts back.
+`READYMADE_ALLOW_ADHOC=1` is an explicit isolated-test option. An ad-hoc build
+has a fingerprint of its own, so macOS asks once for it as for any other
+certificate; keep it away from real saved credentials.
 
 Switching between Code and an open app should preserve its page. **Reconnect Media Tab** reloads a tab and can end an active call; it is an explicit action, not the first automatic response to uncertainty. Existing calls in another native application are not automatically transferred into this workspace.
 

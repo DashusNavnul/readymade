@@ -36,9 +36,12 @@ do not disable Gatekeeper globally. The release includes a checksum and build in
 If macOS asks to let **Readymade Workspace** use **Readymade Workspace Safe
 Storage**, enter your Mac login password only in that macOS Keychain dialog
 and choose **Always Allow** for this verified build. macOS approves the editor
-inside the app by its exact contents. Those stay the same from one Readymade
-update to the next, so it asks again only when an update brings a new editor;
-the first update from a release before this layout asks once more. This is
+inside the app by the fingerprint of its exact contents. Readymade keeps that
+fingerprint the same from one update to the next, so macOS should ask again
+only when an update changes the editor itself; the first update from a release
+before this layout asks once more. Quit the older Readymade before opening a
+new one. The fingerprints are measured for each release; an update opening
+with no dialog has not yet been watched end to end, nor on a second Mac. This is
 separate from your Urbit login code; neither belongs in chat.
 
 A ship running on this Mac is found and signed in for you: nothing to type, no
@@ -267,7 +270,7 @@ or payment receipt does not prove that a planet was issued. Connect a running
 ship through Readymade’s private login. **Readymade: Get an Urbit** opens this page
 from the command palette.
 
-Packaging downloads a pinned VSCodium archive, verifies its SHA256, reruns checks and tests, then signs the app with a persistent local certificate; preserve `~/Library/Application Support/Readymade/Signing` on the build Mac. The certificate alone does not keep a Keychain approval: without an Apple-issued certificate macOS approves the editor app by the fingerprint of its exact contents. So the built-in extensions, Readymade's own among them, are packaged beside the editor app in `Contents/Resources/extensions`, the editor app is the same in every build of one editor version, and each build ends by printing that fingerprint and whether it changed. The private signing key is excluded from the app and source export. Packaging does not launch or install the app, and refuses to overwrite an existing output. This build is not notarized. Keep the entire app bundle together; use its outer launcher rather than launching the nested editor directly. See [Keychain approval](docs/TROUBLESHOOTING.md) for the transition from older builds and optional Apple-issued signing.
+Packaging downloads a pinned VSCodium archive, verifies its SHA256, reruns checks and tests, then signs the app with a persistent local certificate; preserve `~/Library/Application Support/Readymade/Signing` on the build Mac. The certificate alone does not keep a Keychain approval: without an Apple-issued certificate macOS approves the editor app by the fingerprint of its exact contents. So the built-in extensions, Readymade's own among them, are packaged beside the editor app in `Contents/Resources/extensions`, the editor app keeps one fingerprint until the editor version, one of the few files packaging puts inside it, or the certificate changes, and each build ends by printing that fingerprint and whether it differs from the last build and from the last release (`packaging/editor-fingerprint.json`). The private signing key is excluded from the app and source export. Packaging does not launch or install the app, and refuses to overwrite an existing output. This build is not notarized. Keep the entire app bundle together; use its outer launcher rather than launching the nested editor directly. See [Keychain approval](docs/TROUBLESHOOTING.md) for the transition from older builds and optional Apple-issued signing.
 
 To prepare a source handoff from a working checkout, run `node platform/export-source.cjs /path/to/new-readymade-source`. This copies only the explicit inventory in `platform/source-files.json` and writes `SOURCE-MANIFEST.json` with file hashes, sizes and executable modes. It refuses existing output directories, missing inputs and linked files. Profiles, dependencies, build output and unlisted files are excluded. Review the included source before publishing: the exporter does not detect secrets inside source files. In the exported directory, use the same dependency, verification and packaging commands above. Exporting does not publish a release or install the ship backend.
 
