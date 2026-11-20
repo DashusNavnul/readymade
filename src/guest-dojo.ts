@@ -5,7 +5,7 @@ import {DojoNotRun} from './ship-dojo';
  *
  * A guest ship lives inside its host's %bach agent and has no web interface of its own, so it is reached through
  * the host's dojo, with three lines of the host's own (measured on a live host, 2026-11-19):
- *   - how much the guest's terminal holds so far, and whether the host has that guest at all;
+ *   - how much the guest's terminal holds so far, how it ends, and whether the host has that guest at all;
  *   - `:bach &bach-action [%dojo ~guest 'line']`, which types the line into the guest's dojo and presses Return;
  *   - what the guest's terminal gained since, read as one number (the text's bytes) so that no pretty-printer
  *     layout stands between the guest's words and what is shown.
@@ -16,6 +16,8 @@ import {DojoNotRun} from './ship-dojo';
 export interface GuestLine {readonly guest: string; readonly line: string}
 /** Bytes of the guest's terminal read by one host line, so that the answer fits what a dojo line may return. */
 export const GUEST_CHUNK = 2800, GUEST_CHUNKS = 4;
+/** Bytes of the end of the guest's terminal read with the count: enough for its prompt and the longest line that can be left standing after it. */
+export const GUEST_TAIL = 640;
 const SHIP = /^~[a-z]{3,}(?:--?[a-z]{3,})*$/u, PRINTABLE = /^[ -~]+$/u;
 
 /** `~guest> line`, or undefined for anything else. The ship name is checked for shape only; the host says whether it has it. */
@@ -29,9 +31,9 @@ const dotted = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/gu
 const terminal = (guest: string): string => `.^(@t %gx /=bach=/dojo/${guest}/noun)`;
 const named = (guest: string): string => {if (!SHIP.test(guest)) throw new DojoNotRun('That is not a ship name.'); return guest;};
 
-/** The host line that says whether the host has this guest and how long the guest's terminal text is. */
+/** The host line that says whether the host has this guest, how long the guest's terminal text is, and how it ends. */
 export function guestCountLine(guest: string): string {
-  return `[(~(has in (silt .^((list @p) %gx /=bach=/ships/noun))) ${named(guest)}) (met 3 ${terminal(guest)})]`;
+  return `=+(t=${terminal(named(guest))} =+(n=(met 3 t) [(~(has in (silt .^((list @p) %gx /=bach=/ships/noun))) ${guest}) n \`@ux\`(cut 3 [(sub n (min n ${GUEST_TAIL})) ${GUEST_TAIL}] t)]))`;
 }
 /** The host line that types `line` into the guest's dojo. The line travels inside a Hoon cord, so it is plain printable text with `'` and `\` escaped; `line` may be empty, which the guest's dojo takes as cancelling an unfinished expression. */
 export function guestSendLine(guest: string, line: string): string {
@@ -56,19 +58,34 @@ const count = (text: string): number | undefined => {
   const value = Number(text.replaceAll('.', ''));
   return Number.isSafeInteger(value) ? value : undefined;
 };
-/** What the count line printed, or undefined when the host did not answer it as a host of guests does. */
-export function guestCount(output: string): {readonly hosted: boolean; readonly length: number} | undefined {
-  const found = /^\[ ?%\.([yn]) ([0-9.]+) ?\]$/u.exec(printed(output)), length = found ? count(found[2]!) : undefined;
-  return found && length !== undefined ? {hosted: found[1] === 'y', length} : undefined;
+const HEX = /^(0|[1-9a-f][0-9a-f]{0,3}(\.[0-9a-f]{4})*)$/u;
+/** The bytes a `@ux` number stands for: the number's lowest byte is the text's first character. */
+const bytesOf = (dotted: string): Buffer => {
+  const hex = dotted.replaceAll('.', '');
+  return hex === '0' ? Buffer.alloc(0) : Buffer.from(hex.length % 2 ? '0' + hex : hex, 'hex').reverse();
+};
+/** What the count line printed (`tail`: the end of the guest's terminal), or undefined when the host did not answer it as a host of guests does. */
+export function guestCount(output: string): {readonly hosted: boolean; readonly length: number; readonly tail: string} | undefined {
+  const found = /^\[ ?%\.([yn]) ([0-9.]+) 0x([0-9a-f.]+) ?\]$/u.exec(printed(output)), length = found ? count(found[2]!) : undefined;
+  if (!found || length === undefined || !HEX.test(found[3]!)) return undefined;
+  return {hosted: found[1] === 'y', length, tail: bytesOf(found[3]!).toString('utf8')};
+}
+/**
+ * Whether the guest's dojo holds the start of an unfinished expression, from the end of its terminal: the last
+ * prompt drawn there is then the `< ` one, and a line typed now would be taken as that expression's next part.
+ * `ready`: the last prompt is the `> ` one. Text may stand after it, left by a line the dojo could not read
+ * (measured on a live host: `…:dojo> (add 2`); the host clears that itself before it types. `unknown`: no prompt
+ * in what was read.
+ */
+export function guestPrompt(tail: string, guest: string): 'ready' | 'waiting' | 'unknown' {
+  const last = [...tail.matchAll(new RegExp(`${named(guest)}:dojo\\S*([<>]) `, 'gu'))].at(-1);
+  return !last ? 'unknown' : last[1] === '>' ? 'ready' : 'waiting';
 }
 /** What a read line printed: the terminal's whole length and the chunk's bytes (a character may straddle two chunks, so text is made of them only once all are in). */
 export function guestRead(output: string): {readonly length: number; readonly bytes: Buffer} | undefined {
   const found = /^\[ ?([0-9.]+) 0x([0-9a-f.]+) ?\]$/u.exec(printed(output)), length = found ? count(found[1]!) : undefined;
-  if (!found || length === undefined || !/^(0|[1-9a-f][0-9a-f]{0,3}(\.[0-9a-f]{4})*)$/u.test(found[2]!)) return undefined;
-  const hex = found[2]!.replaceAll('.', ''), even = hex.length % 2 ? '0' + hex : hex;
-  // The number's lowest byte is the text's first character.
-  const bytes = Buffer.from(even, 'hex').reverse();
-  return {length, bytes: hex === '0' ? Buffer.alloc(0) : bytes};
+  if (!found || length === undefined || !HEX.test(found[2]!)) return undefined;
+  return {length, bytes: bytesOf(found[2]!)};
 }
 /**
  * What the guest's dojo did with the line, from the text its terminal gained. `ran`: the dojo printed the line
@@ -92,9 +109,21 @@ export function guestAnswer(gained: string, guest: string, line: string): {reado
  */
 export async function runGuestLine(host: (line: string) => Promise<string>, guest: string, line: string, report: (text: string) => void, pauseMs = 1000): Promise<string> {
   const send = guestSendLine(guest, line);
-  const before = guestCount(await host(guestCountLine(guest)));
+  let before = guestCount(await host(guestCountLine(guest))), cancelled = false;
   if (!before) throw new DojoNotRun('The ship you are connected to did not answer as a host of guest ships does (its %bach agent). Nothing was sent.');
   if (!before.hosted) throw new DojoNotRun(`The ship you are connected to hosts no guest ship ${guest}. Nothing was sent.`);
+  // At a waiting prompt the line would be taken as the next part of an expression the guest already holds, and run
+  // as part of that: the held expression is cancelled first, as it is after a line of this app's own leaves one,
+  // and the line goes only once the ready prompt is back.
+  if (guestPrompt(before.tail, guest) === 'waiting') {
+    report(`${guest}'s dojo holds the start of an unfinished expression. Cancelling that first…`);
+    const cancel = await host(guestSendLine(guest, ''));
+    const after = cancel.split('\n').some(each => each.trim() === '>=') ? guestCount(await host(guestCountLine(guest))) : undefined;
+    if (!after || !after.hosted || guestPrompt(after.tail, guest) !== 'ready')
+      throw new DojoNotRun(`${guest}'s dojo holds the start of an unfinished expression, and it could not be shown to be cancelled. Your line was not sent. Look at its terminal on its host.`);
+    before = after; cancelled = true;
+  }
+  const start = before.length, note = cancelled ? `\n(${guest}'s dojo was holding an unfinished expression from before; it was cancelled first.)` : '';
   report(`Typing into ${guest}'s dojo through its host…`);
   // The host's dojo prints the line back and then `>=` once it has handed it to %bach. Anything else it says
   // (it could not tell whether the line ran, or %bach refused it) is passed on as it stands.
@@ -104,9 +133,9 @@ export async function runGuestLine(host: (line: string) => Promise<string>, gues
     return `The host did not confirm handing the line to ${guest}, so it is not known whether it ran there. It was not sent again.${said ? ` The host said: ${said}` : ''}`;
   }
   // From here the line has been sent: whatever fails next, that stays true and is said.
-  const unread = `The line was sent to ${guest} once, but its terminal could not be read back through the host. Look at it there.`;
+  const unread = `The line was sent to ${guest} once, but its terminal could not be read back through the host. Look at it there.${note}`;
   const read = async (): Promise<{text: string; more: boolean} | undefined> => {
-    const parts: Buffer[] = []; let at = before.length;
+    const parts: Buffer[] = []; let at = start;
     for (let chunk = 0; chunk < GUEST_CHUNKS; chunk++) {
       let got: ReturnType<typeof guestRead>;
       try {got = guestRead(await host(guestReadLine(guest, at)));} catch (error) {if (error instanceof DojoNotRun) return undefined; throw error;}
@@ -133,8 +162,8 @@ export async function runGuestLine(host: (line: string) => Promise<string>, gues
       dropped = !!after && !after.more && !guestAnswer(after.text, guest, line).waiting;
     } catch (error) {if (!(error instanceof DojoNotRun)) throw error;}
     return `${guest}'s dojo took this line as the start of a longer expression and waited for the rest. One line at a time goes to a guest, so nothing was run`
-      + (dropped ? ', and the unfinished expression was cancelled.' : '. Its dojo may still be waiting for the rest: look at it on its host.');
+      + (dropped ? ', and the unfinished expression was cancelled.' : '. Its dojo may still be waiting for the rest: look at it on its host.') + note;
   }
-  if (!answer.ran) return `${guest}'s dojo has not printed the line back, so as far as its terminal shows it did not take it: it cannot read it, or it is busy and may run it yet.`;
-  return `> ${line}${answer.text ? '\n' + answer.text : ''}${gained.more ? '\n(The guest ship printed more than is shown here; whether its dojo now waits for more input is not known.)' : ''}`;
+  if (!answer.ran) return `${guest}'s dojo has not printed the line back, so as far as its terminal shows it did not take it: it cannot read it, or it is busy and may run it yet.` + note;
+  return `> ${line}${answer.text ? '\n' + answer.text : ''}${gained.more ? '\n(The guest ship printed more than is shown here; whether its dojo now waits for more input is not known.)' : ''}${note}`;
 }
