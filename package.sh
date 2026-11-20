@@ -201,6 +201,7 @@ kernel_app="$inner_app/Contents/Resources/app"
 node "$workspace_dir/platform/browser-reveal.cjs" "$kernel_app"
 node "$workspace_dir/platform/task-terminal.cjs" "$kernel_app"
 node "$workspace_dir/platform/nested-cli.cjs" "$kernel_app/bin/codium"
+node "$workspace_dir/platform/builtin-extension-resources.cjs" "$kernel_app/out/mainImpl.js"
 mkdir "$kernel_app/out/readymade-media"
 cp "$workspace_dir/platform/"*.cjs "$kernel_app/out/readymade-media/"
 cp "$kernel_app/package.json" "$kernel_app/out/readymade-media/upstream-package.json"
@@ -446,6 +447,7 @@ for (const name of ['media-main.cjs', 'media-session.cjs', 'media-policy.cjs']) 
 platform.bootstrap = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'out/readymade-main.mjs'))).digest('hex');
 platform.product = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'product.json'))).digest('hex');
 platform.entry = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'package.json'))).digest('hex');
+platform.mainProcess = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'out/mainImpl.js'))).digest('hex');
 platform.upstreamCLI = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'bin/codium'))).digest('hex');
 fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), upstream: { version: '1.143.17232', codeOSS: '1.143.1', url, sha256 },
   bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', builtinExtensions: 'Contents/Resources/extensions', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, minimumMacOS: '12.0', launcherDeploymentTargetsVerified: true, platform,
@@ -456,7 +458,7 @@ fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), up
     outerRequirement: JSON.parse(fs.readFileSync(path.join(stage, 'outer-requirement.json'), 'utf8')) },
   isolation: 'Native Finder/CLI launchers default to private ~/.cache/readymade/workspace-v02/{user,extensions,shared-data}; CLI overrides require owned private directories; fresh settings disable updates and use ephemeral browser storage; previous preview profiles and encrypted secret databases are never changed.',
   nativeIdentity: { name: 'Readymade Workspace', credentialNamespace: 'Readymade Workspace Safe Storage', keychainFingerprint: editorFingerprint, helpers: 'Readymade Workspace Helper{, (GPU), (Plugin), (Renderer)}', preservedInnerBundleIdentifier: 'com.vscodium' },
-  limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; a bounded media bootstrap runs before the original main entry.',
+  limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; one main-process line lets the editor serve built-in extension files from their folder beside the editor app; a bounded media bootstrap runs before the original main entry.',
     'Not notarized or approved for public distribution; upstream update/default internal product settings remain.',
     'Packaging does not establish Finder launch, extension-host acceptance, feature parity or live ship behavior.'] }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
 NODE
