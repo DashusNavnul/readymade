@@ -95,6 +95,7 @@
   "package-lock.json",
   "package.json",
   "package.sh",
+  "packaging/editor-fingerprint.json",
   "packaging/event-watch.c",
   "packaging/macos-local-signing.cjs",
   "packaging/macos-signing.c",

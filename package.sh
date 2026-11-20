@@ -201,9 +201,14 @@ kernel_app="$inner_app/Contents/Resources/app"
 node "$workspace_dir/platform/browser-reveal.cjs" "$kernel_app"
 node "$workspace_dir/platform/task-terminal.cjs" "$kernel_app"
 node "$workspace_dir/platform/nested-cli.cjs" "$kernel_app/bin/codium"
-node "$workspace_dir/platform/builtin-extension-resources.cjs" "$kernel_app/out/mainImpl.js"
+# Every program of the editor that locates the built-in extensions is fixed to the folder in the outer app.
+node "$workspace_dir/platform/builtin-extension-resources.cjs" "$kernel_app" > "$stage/builtin-programs.txt"
+[[ "$(wc -l < "$stage/builtin-programs.txt" | tr -d ' ')" -ge 2 ]] || fail 'Too few editor programs locate the built-in extensions.'
+if grep -rqF '.fsPath,"..","extensions")' "$kernel_app/out"; then fail 'An editor program still looks for built-in extensions inside the editor app.'; fi
 mkdir "$kernel_app/out/readymade-media"
-cp "$workspace_dir/platform/"*.cjs "$kernel_app/out/readymade-media/"
+# Only what the editor loads at run time goes inside the editor app: every file there is part of the fingerprint
+# macOS Keychain approves, so a packaging tool copied in would cost every user a password prompt when it is edited.
+cp "$workspace_dir/platform/media-main.cjs" "$workspace_dir/platform/media-policy.cjs" "$workspace_dir/platform/media-session.cjs" "$kernel_app/out/readymade-media/"
 cp "$kernel_app/package.json" "$kernel_app/out/readymade-media/upstream-package.json"
 node - "$kernel_app/package.json" "$kernel_app/product.json" <<'ENTRY'
 const fs = require('node:fs'), file = process.argv[2], p = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -217,11 +222,6 @@ cat > "$kernel_app/out/readymade-main.mjs" <<'BOOTSTRAP'
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
-// The built-in extensions are in the outer app (see package.sh). Every way of starting the editor comes through
-// here: the launcher, a link macOS opens, a restart, a test window.
-if (!process.argv.some(arg => arg === '--builtin-extensions-dir' || arg.startsWith('--builtin-extensions-dir='))) {
-  process.argv.splice(1, 0, '--builtin-extensions-dir', require('node:path').resolve(process.resourcesPath, '../../../extensions'));
-}
 require('./readymade-media/media-main.cjs').install(electron);
 // Electron defers ready for ESM top-level await: https://www.electronjs.org/docs/latest/tutorial/esm
 try { await import('./main.js'); } catch { process.stderr.write('Readymade editor startup failed.\n'); electron.app.exit(1); }
@@ -336,16 +336,13 @@ int main(int argc, char **argv) {
   const char *selected_shared = override(argc, argv, "--shared-data-dir", shared);
   char cli[PATH_MAX]; append(candidate, sizeof(candidate), resolved, "../Resources/VSCodium.app/Contents/Resources/app/out/cli.js");
   if (!realpath(candidate, cli)) refuse();
-  // cli.js runs without the editor's bootstrap, so it is told here where the built-in extensions are.
-  char builtin[PATH_MAX]; struct stat builtin_info; append(candidate, sizeof(candidate), resolved, "../Resources/extensions");
-  if (!realpath(candidate, builtin) || lstat(builtin, &builtin_info) < 0 || !S_ISDIR(builtin_info.st_mode)) refuse();
-  char **args = calloc((size_t)argc + 12, sizeof(char *)); if (!args) refuse();
+  char **args = calloc((size_t)argc + 10, sizeof(char *)); if (!args) refuse();
   args[0] = binary; args[1] = cli; args[2] = "--user-data-dir"; args[3] = (char *)selected_data;
   args[4] = "--extensions-dir"; args[5] = (char *)selected_extensions;
   args[6] = "--shared-data-dir"; args[7] = (char *)selected_shared;
   args[8] = "--enable-proposed-api"; args[9] = "pataphor.readymade-ship-workspace";
-  args[10] = "--builtin-extensions-dir"; args[11] = builtin;
-  for (int i = 1, next = 12; i < argc; i++) {
+  // The editor no longer reads --builtin-extensions-dir (platform/builtin-extension-resources.cjs); one given here is dropped.
+  for (int i = 1, next = 10; i < argc; i++) {
     if (!strncmp(argv[i], "--user-data-dir=", 16) || !strncmp(argv[i], "--extensions-dir=", 17) || !strncmp(argv[i], "--shared-data-dir=", 18) || !strncmp(argv[i], "--builtin-extensions-dir=", 25)) continue;
     if (!strcmp(argv[i], "--user-data-dir") || !strcmp(argv[i], "--extensions-dir") || !strcmp(argv[i], "--shared-data-dir") || !strcmp(argv[i], "--builtin-extensions-dir")) { i++; continue; }
     args[next++] = argv[i];
@@ -358,7 +355,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[i], "--")) refuse();
     for (size_t j = 0; j < sizeof(reserved) / sizeof(reserved[0]); j++) {
       size_t n = strlen(reserved[j]);
-      if (!strncmp(argv[i], reserved[j], n) && (argv[i][n] == '\0' || argv[i][n] == '=')) refuse();
+      if (!strncmp(argv[i], reserved[j], n) && (argv[i][n] == '\0' || argv[i][n] == '=' || argv[i][n] == '.')) refuse();
     }
   }
   unsetenv("VSCODE_PORTABLE"); unsetenv("VSCODE_EXTENSIONS"); unsetenv("VSCODE_DEV"); unsetenv("ELECTRON_RUN_AS_NODE");
@@ -423,6 +420,20 @@ previous_fingerprint="$(cat "$fingerprint_record" 2>/dev/null || true)"
 if [[ -z "$previous_fingerprint" ]]; then keychain_note="first build recorded with this signing identity: macOS Keychain asks once for Readymade Workspace Safe Storage"
 elif [[ "$previous_fingerprint" == "$editor_fingerprint" ]]; then keychain_note="same as the last build: a macOS Keychain approval given to that build covers this one"
 else keychain_note="changed from $previous_fingerprint (editor version, files inside the editor app, or certificate): macOS Keychain asks once more"; fi
+# The last build on this Mac says little: a trial build in between hides a change from the build people installed.
+# packaging/editor-fingerprint.json records the fingerprint of the last RELEASE per signing identity; this compares
+# with that, and READYMADE_REQUIRE_RELEASE_FINGERPRINT=1 (set when building a release) refuses a silent change.
+release_note="$(node - "$workspace_dir/packaging/editor-fingerprint.json" "$signing_identity" "$editor_fingerprint" <<'RELEASED'
+const [file, identity, now] = process.argv.slice(2);
+const record = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
+if (record.schema !== 'readymade-editor-fingerprint-v1' || !Array.isArray(record.released)) throw new Error('Unreadable editor fingerprint record');
+const last = record.released.filter(row => row.identity === identity).at(-1);
+process.stdout.write(!last ? 'no release is recorded for this signing identity'
+  : last.cdhash === now ? `same as release ${last.release}: people who approved that release are not asked again`
+  : `DIFFERS from release ${last.release} (${last.cdhash}): macOS Keychain asks everyone who installed it once more; if that is intended, record the new fingerprint in packaging/editor-fingerprint.json`);
+RELEASED
+)"
+if [[ "${READYMADE_REQUIRE_RELEASE_FINGERPRINT:-}" == 1 && "$release_note" != same\ as\ release* ]]; then fail "Editor fingerprint $editor_fingerprint: $release_note"; fi
 node "$workspace_dir/packaging/macos-signing.cjs" verify "$inner_app" "$signing_json" > "$stage/inner-requirement.json"
 node "$workspace_dir/packaging/macos-signing.cjs" verify "$staged_app" "$signing_json" > "$stage/outer-requirement.json"
 node - "$staged_app" "$upstream_url" "$upstream_sha" "$original_name" "$stage/receipt.json" "$source_sha" "$signing_json" "$stage" "$editor_fingerprint" <<'NODE'
@@ -468,3 +479,4 @@ NODE
 printf '%s\n' "$editor_fingerprint" > "$fingerprint_record"
 printf 'Preview app: %s\nReceipt: %s\nHost-test CLI: %s\n' "$app_path" "$receipt_path" "$app_path/Contents/MacOS/ReadymadeCLI"
 printf 'Editor fingerprint: %s (%s)\n' "$editor_fingerprint" "$keychain_note"
+printf 'Against the last release: %s\n' "$release_note"

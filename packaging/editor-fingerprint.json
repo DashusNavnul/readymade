@@ -1,0 +1,5 @@
+{
+  "schema": "readymade-editor-fingerprint-v1",
+  "about": "What macOS Keychain knows the editor inside a released Readymade by (the CDHash of Contents/Resources/VSCodium.app), per signing identity. package.sh compares each build with the last row for its identity. Add a row when a release changes the fingerprint on purpose: a new editor version, a change to a file package.sh puts inside the editor app, or a new certificate.",
+  "released": []
+}
