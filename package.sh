@@ -128,7 +128,15 @@ original_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$inner_
 [[ "$original_name" =~ ^[A-Za-z0-9._\ -]+$ && "$original_name" != . && "$original_name" != .. ]] || fail 'Unexpected upstream executable name.'
 original_binary="$inner_app/Contents/MacOS/$original_name"
 [[ -f "$original_binary" && ! -L "$original_binary" && -x "$original_binary" ]] || fail 'The upstream executable is missing.'
-extension="$inner_app/Contents/Resources/app/extensions/pataphor.readymade-ship-workspace"
+# The built-in extensions live in the outer app, beside the editor app, not inside it. macOS Keychain approves the
+# editor by the fingerprint of its exact contents when the signing certificate is not Apple's (measured 2026-11-19:
+# every build asked again for "Readymade Workspace Safe Storage"). Readymade's own extension is what changes from
+# build to build, so with it outside, the editor app is the same in every build of one editor version and the
+# Keychain asks once. The bootstrap below points the editor at this folder.
+extensions_dir="$staged_app/Contents/Resources/extensions"
+[[ -d "$inner_app/Contents/Resources/app/extensions" && ! -L "$inner_app/Contents/Resources/app/extensions" ]] || fail 'The upstream app has no built-in extensions folder.'
+mv -- "$inner_app/Contents/Resources/app/extensions" "$extensions_dir"
+extension="$extensions_dir/pataphor.readymade-ship-workspace"
 [[ ! -e "$extension" && ! -L "$extension" ]] || fail 'The upstream app already contains this extension.'
 mkdir -p "$extension/dist"
 cp "$workspace_dir/package.json" "$extension/package.json"
@@ -208,6 +216,11 @@ cat > "$kernel_app/out/readymade-main.mjs" <<'BOOTSTRAP'
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
+// The built-in extensions are in the outer app (see package.sh). Every way of starting the editor comes through
+// here: the launcher, a link macOS opens, a restart, a test window.
+if (!process.argv.some(arg => arg === '--builtin-extensions-dir' || arg.startsWith('--builtin-extensions-dir='))) {
+  process.argv.splice(1, 0, '--builtin-extensions-dir', require('node:path').resolve(process.resourcesPath, '../../../extensions'));
+}
 require('./readymade-media/media-main.cjs').install(electron);
 // Electron defers ready for ESM top-level await: https://www.electronjs.org/docs/latest/tutorial/esm
 try { await import('./main.js'); } catch { process.stderr.write('Readymade editor startup failed.\n'); electron.app.exit(1); }
@@ -322,20 +335,24 @@ int main(int argc, char **argv) {
   const char *selected_shared = override(argc, argv, "--shared-data-dir", shared);
   char cli[PATH_MAX]; append(candidate, sizeof(candidate), resolved, "../Resources/VSCodium.app/Contents/Resources/app/out/cli.js");
   if (!realpath(candidate, cli)) refuse();
-  char **args = calloc((size_t)argc + 10, sizeof(char *)); if (!args) refuse();
+  // cli.js runs without the editor's bootstrap, so it is told here where the built-in extensions are.
+  char builtin[PATH_MAX]; struct stat builtin_info; append(candidate, sizeof(candidate), resolved, "../Resources/extensions");
+  if (!realpath(candidate, builtin) || lstat(builtin, &builtin_info) < 0 || !S_ISDIR(builtin_info.st_mode)) refuse();
+  char **args = calloc((size_t)argc + 12, sizeof(char *)); if (!args) refuse();
   args[0] = binary; args[1] = cli; args[2] = "--user-data-dir"; args[3] = (char *)selected_data;
   args[4] = "--extensions-dir"; args[5] = (char *)selected_extensions;
   args[6] = "--shared-data-dir"; args[7] = (char *)selected_shared;
   args[8] = "--enable-proposed-api"; args[9] = "pataphor.readymade-ship-workspace";
-  for (int i = 1, next = 10; i < argc; i++) {
-    if (!strncmp(argv[i], "--user-data-dir=", 16) || !strncmp(argv[i], "--extensions-dir=", 17) || !strncmp(argv[i], "--shared-data-dir=", 18)) continue;
-    if (!strcmp(argv[i], "--user-data-dir") || !strcmp(argv[i], "--extensions-dir") || !strcmp(argv[i], "--shared-data-dir")) { i++; continue; }
+  args[10] = "--builtin-extensions-dir"; args[11] = builtin;
+  for (int i = 1, next = 12; i < argc; i++) {
+    if (!strncmp(argv[i], "--user-data-dir=", 16) || !strncmp(argv[i], "--extensions-dir=", 17) || !strncmp(argv[i], "--shared-data-dir=", 18) || !strncmp(argv[i], "--builtin-extensions-dir=", 25)) continue;
+    if (!strcmp(argv[i], "--user-data-dir") || !strcmp(argv[i], "--extensions-dir") || !strcmp(argv[i], "--shared-data-dir") || !strcmp(argv[i], "--builtin-extensions-dir")) { i++; continue; }
     args[next++] = argv[i];
   }
   unsetenv("VSCODE_PORTABLE"); unsetenv("VSCODE_EXTENSIONS"); unsetenv("VSCODE_DEV");
   unsetenv("NODE_OPTIONS"); unsetenv("NODE_REPL_EXTERNAL_MODULE"); setenv("ELECTRON_RUN_AS_NODE", "1", 1);
 #else
-  const char *reserved[] = { "--user-data-dir", "--extensions-dir", "--shared-data-dir", "--logsPath", "--crash-reporter-directory" };
+  const char *reserved[] = { "--user-data-dir", "--extensions-dir", "--shared-data-dir", "--builtin-extensions-dir", "--logsPath", "--crash-reporter-directory" };
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--")) refuse();
     for (size_t j = 0; j < sizeof(reserved) / sizeof(reserved[0]); j++) {
@@ -388,6 +405,7 @@ cp "$inner_app/Contents/Resources/VSCodium.icns" "$staged_app/Contents/Resources
   printf '{"schema":"readymade-cache-downloads-v1","editor":{"name":"%s","sha256":"%s"},"pill":{"name":"%s.pill","sha256":"%s"}}\n' \
     "$archive_name" "$upstream_sha" "$pill_sha" "$pill_sha" > "$extension/backend/runtime/cache-downloads.json"
   sign_target org.pataphor.codeoss.workspace.eventwatch "$extension/bin/event-watch"
+  [[ ! -e "$inner_app/Contents/Resources/app/extensions" ]] || fail 'The editor app holds an extensions folder again; its Keychain fingerprint would change with every build.'
   sign_target com.vscodium "$inner_app" --entitlements "$stage/electron-entitlements.plist"
   codesign --verify --deep --strict "$inner_app"
   sign_target org.pataphor.codeoss.workspace.cli "$staged_app/Contents/MacOS/ReadymadeCLI"
@@ -395,13 +413,22 @@ cp "$inner_app/Contents/Resources/VSCodium.icns" "$staged_app/Contents/Resources
   codesign --verify --deep --strict "$staged_app"
 } 2>> "$stage/signing.log"
 node "$workspace_dir/packaging/macos-signing.cjs" verify "$staged_app/Contents/MacOS/ReadymadeCLI" "$signing_json" >/dev/null
+# What macOS Keychain knows the editor by. It stays the same until the editor version, the files this script puts
+# inside the editor app, or the signing certificate change; then the Keychain asks once more, and this says so.
+editor_fingerprint="$(codesign --display --verbose=3 "$inner_app" 2>&1 | awk -F= '$1 == "CDHash" {print $2}')"
+[[ "$editor_fingerprint" =~ ^[0-9a-f]{40}$ ]] || fail 'The editor app has no readable code fingerprint.'
+fingerprint_record="$cache_dir/editor-fingerprint-$signing_identity"
+previous_fingerprint="$(cat "$fingerprint_record" 2>/dev/null || true)"
+if [[ -z "$previous_fingerprint" ]]; then keychain_note="first build recorded with this signing identity: macOS Keychain asks once for Readymade Workspace Safe Storage"
+elif [[ "$previous_fingerprint" == "$editor_fingerprint" ]]; then keychain_note="same as the last build: a macOS Keychain approval given to that build covers this one"
+else keychain_note="changed from $previous_fingerprint (editor version, files inside the editor app, or certificate): macOS Keychain asks once more"; fi
 node "$workspace_dir/packaging/macos-signing.cjs" verify "$inner_app" "$signing_json" > "$stage/inner-requirement.json"
 node "$workspace_dir/packaging/macos-signing.cjs" verify "$staged_app" "$signing_json" > "$stage/outer-requirement.json"
-node - "$staged_app" "$upstream_url" "$upstream_sha" "$original_name" "$stage/receipt.json" "$source_sha" "$signing_json" "$stage" <<'NODE'
+node - "$staged_app" "$upstream_url" "$upstream_sha" "$original_name" "$stage/receipt.json" "$source_sha" "$signing_json" "$stage" "$editor_fingerprint" <<'NODE'
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
-const [app, url, sha256, originalExecutable, receipt, sourceFingerprint, signingJSON, stage] = process.argv.slice(2);
+const [app, url, sha256, originalExecutable, receipt, sourceFingerprint, signingJSON, stage, editorFingerprint] = process.argv.slice(2);
 const signer = JSON.parse(signingJSON);
-const extension = path.join(app, 'Contents/Resources/VSCodium.app/Contents/Resources/app/extensions/pataphor.readymade-ship-workspace');
+const extension = path.join(app, 'Contents/Resources/extensions/pataphor.readymade-ship-workspace');
 const hashes = {};
 function scan(directory, prefix = '') {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -421,14 +448,14 @@ platform.product = crypto.createHash('sha256').update(fs.readFileSync(path.join(
 platform.entry = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'package.json'))).digest('hex');
 platform.upstreamCLI = crypto.createHash('sha256').update(fs.readFileSync(path.join(kernel, 'bin/codium'))).digest('hex');
 fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), upstream: { version: '1.143.17232', codeOSS: '1.143.1', url, sha256 },
-  bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, minimumMacOS: '12.0', launcherDeploymentTargetsVerified: true, platform,
+  bundleIdentifier: 'org.pataphor.codeoss.workspace', innerBundle: 'Contents/Resources/VSCodium.app', builtinExtensions: 'Contents/Resources/extensions', nativeCLI: 'Contents/MacOS/ReadymadeCLI', originalExecutable, minimumMacOS: '12.0', launcherDeploymentTargetsVerified: true, platform,
   extension: { id: 'pataphor.readymade-ship-workspace', sourceFingerprint, hashes },
   signing: { identity: signer.identity, kind: signer.kind, team: signer.team,
     verified: signer.identity === '-' ? 'codesign --verify --deep --strict passed; test-only ad-hoc identity' : 'codesign --verify --deep --strict and exact certificate requirement passed',
     innerRequirement: JSON.parse(fs.readFileSync(path.join(stage, 'inner-requirement.json'), 'utf8')),
     outerRequirement: JSON.parse(fs.readFileSync(path.join(stage, 'outer-requirement.json'), 'utf8')) },
   isolation: 'Native Finder/CLI launchers default to private ~/.cache/readymade/workspace-v02/{user,extensions,shared-data}; CLI overrides require owned private directories; fresh settings disable updates and use ephemeral browser storage; previous preview profiles and encrypted secret databases are never changed.',
-  nativeIdentity: { name: 'Readymade Workspace', credentialNamespace: 'Readymade Workspace Safe Storage', helpers: 'Readymade Workspace Helper{, (GPU), (Plugin), (Renderer)}', preservedInnerBundleIdentifier: 'com.vscodium' },
+  nativeIdentity: { name: 'Readymade Workspace', credentialNamespace: 'Readymade Workspace Safe Storage', keychainFingerprint: editorFingerprint, helpers: 'Readymade Workspace Helper{, (GPU), (Plugin), (Renderer)}', preservedInnerBundleIdentifier: 'com.vscodium' },
   limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; a bounded media bootstrap runs before the original main entry.',
     'Not notarized or approved for public distribution; upstream update/default internal product settings remain.',
     'Packaging does not establish Finder launch, extension-host acceptance, feature parity or live ship behavior.'] }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
@@ -436,4 +463,6 @@ NODE
 [[ ! -e "$app_path" && ! -L "$app_path" && ! -e "$receipt_path" && ! -L "$receipt_path" ]] || fail 'Preview output appeared during packaging.'
 "$stage/exclusive-move" "$staged_app" "$app_path"
 "$stage/exclusive-move" "$stage/receipt.json" "$receipt_path"
+printf '%s\n' "$editor_fingerprint" > "$fingerprint_record"
 printf 'Preview app: %s\nReceipt: %s\nHost-test CLI: %s\n' "$app_path" "$receipt_path" "$app_path/Contents/MacOS/ReadymadeCLI"
+printf 'Editor fingerprint: %s (%s)\n' "$editor_fingerprint" "$keychain_note"
