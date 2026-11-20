@@ -206,9 +206,10 @@ release is when everyone who installed it should expect the dialog once.
 
 What is measured and what is not: builds with different extensions have been
 measured to give one fingerprint, and macOS's log shows it approving by that
-fingerprint. Not yet observed: a later build opening with no dialog on a Mac
-that approved an earlier one, and any of this on a second Mac. When checking
-it, quit the older Readymade first: a copy still running takes over the launch
+fingerprint. Observed once, on the build Mac (2026-11-19): a build was approved
+in the dialog, then a later build with other extension contents opened with no
+dialog and nothing about it in macOS's log. Not yet observed: any of this on a
+second Mac. When checking it, quit the older Readymade first: a copy still running takes over the launch
 of the new one, and the new one then never asks. To see what macOS decided, read its own log:
 `/usr/bin/log show --last 10m --predicate 'process == "securityd" AND eventMessage CONTAINS "partition"'`.
 

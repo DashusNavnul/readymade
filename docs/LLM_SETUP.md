@@ -179,7 +179,7 @@ Packaging refuses existing app/receipt output. Preserve earlier builds and use a
 READYMADE_PACKAGE_OUTPUT_DIR="$PWD/dist/second-build" ./package.sh
 ```
 
-The launcher uses a persistent local signing certificate, stored privately on the build Mac under `~/Library/Application Support/Readymade/Signing`. Preserve that directory across rebuilds. macOS Keychain approves the editor inside the app by the fingerprint of its exact contents. Packaging keeps that fingerprint the same from build to build, so macOS should ask once and then only when the editor itself changes; that a later build opens with no dialog has been measured by fingerprint and not yet watched end to end. It is not notarized. Do not disable Gatekeeper globally or remove quarantine recursively as a setup shortcut. Report the exact macOS error if launch is blocked. See [Keychain approval](TROUBLESHOOTING.md) before changing or replacing the signer.
+The launcher uses a persistent local signing certificate, stored privately on the build Mac under `~/Library/Application Support/Readymade/Signing`. Preserve that directory across rebuilds. macOS Keychain approves the editor inside the app by the fingerprint of its exact contents. Packaging keeps that fingerprint the same from build to build, so macOS should ask once and then only when the editor itself changes; that a later build opens with no dialog has been observed once, on the build Mac (2026-11-19), and not yet on a second Mac. It is not notarized. Do not disable Gatekeeper globally or remove quarantine recursively as a setup shortcut. Report the exact macOS error if launch is blocked. See [Keychain approval](TROUBLESHOOTING.md) before changing or replacing the signer.
 
 ## Open and authenticate
 

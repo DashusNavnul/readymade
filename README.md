@@ -41,7 +41,7 @@ fingerprint the same from one update to the next, so macOS should ask again
 only when an update changes the editor itself; the first update from a release
 before this layout asks once more. Quit the older Readymade before opening a
 new one. The fingerprints are measured for each release; an update opening
-with no dialog has not yet been watched end to end, nor on a second Mac. This is
+with no dialog has been observed once, on the build Mac, and not yet on a second Mac. This is
 separate from your Urbit login code; neither belongs in chat.
 
 A ship running on this Mac is found and signed in for you: nothing to type, no
