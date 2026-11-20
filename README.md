@@ -21,7 +21,7 @@ is made for one named ship.
 ## Download and install
 
 On an **Apple Silicon Mac (M1 or newer) running macOS 12 or later**, download the `.dmg` from the
-[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261118).
+[current preview release](https://github.com/DashusNavnul/readymade/releases/tag/v0.2.0-alpha.20261119).
 Quit any older Readymade first. Open the image, drag **Readymade Workspace** to
 **Applications** (choose Replace if asked), then open the app from Applications
 and eject the disk image. Running the download needs no
@@ -106,11 +106,12 @@ web address of its own. While you are connected to its host, name the guest firs
 ```
 
 Readymade types three lines into the host's dojo for it: one to see that the host has that guest
-and how much the guest's terminal holds, one that hands your line to the guest's dojo, and one
+and how its terminal stands, one that hands your line to the guest's dojo, and one
 that reads what the guest's terminal gained. You get the guest's answer; the host's own terminal
 shows the three lines. A line for a guest is plain keyboard characters, up to about 450 of them.
 A line the guest's dojo cannot read is not run and is said so; the start of a longer expression
-is cancelled on the guest. Each line takes about four seconds. Run against one live host and one
+is cancelled on the guest, and one the guest was already holding from before is cancelled first,
+so that your line is never run as part of it. Each line takes about four seconds. Run against one live host and one
 of its guests.
 
 - Nothing is typed unless your ship's terminal shows the dojo's ready prompt. If it holds the
@@ -127,6 +128,9 @@ of its guests.
 - A line the dojo cannot read is not run. Readymade shows where reading stopped, when the whole
   line was in view, and takes the line off the prompt again; if it cannot confirm that, it says
   the text may still stand there.
+- A line that makes the dojo itself fail while it works the line out (it prints `dojo: failed to
+  process input`; a read your ship cannot answer does this) did not run. Readymade says so at once
+  and takes the line off the prompt.
 - A line that is only the start of a longer expression is not run: Readymade cancels it with
   one Backspace so the dojo is not left waiting, and says so if it could not.
 - If no answer comes back after Return, the outcome is unknown and is said to be; the line is
