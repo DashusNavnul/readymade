@@ -4,7 +4,6 @@ import {joinProjectLink, type GuestServiceSteps} from '../src/project-invitation
 import {GUEST_SOURCE} from '../src/guest-service';
 import {sharedProjectLink} from '../src/remote-source-view';
 import type {RemoteSourceObservation} from '../src/remote-project-view';
-import type {RemoteProjectSessionsReply} from '../src/remote-project-sessions';
 import {LiveFailure, errorInfo, invitationAction, liveRun, mergeHandoff, need, needShip, readHandoff, seen, until, type LiveContext} from './live-ship-support';
 import {streamText} from '../src/collab-pages';
 
@@ -40,7 +39,7 @@ async function join(c: LiveContext): Promise<void> {
 // Read-only views of what the shared tree holds in memory, for the receipt. Nothing is changed through them.
 interface SourceInternals {
   state: string; settled: boolean; observation?: RemoteSourceObservation;
-  sessionLists: Map<string, {reply?: RemoteProjectSessionsReply; note?: string; busy: boolean}>;
+  sessionLists: Map<string, {pages: {complete: boolean; note: string; sessions: readonly {id: string; phase: string; inspection: string; working: {desk: string; revision: string}}[]}; busy: boolean}>;
 }
 
 async function sessions(c: LiveContext): Promise<void> {
@@ -72,30 +71,31 @@ async function sessions(c: LiveContext): Promise<void> {
   const refresh = group()?.children?.find(row => row.command?.command === 'readymade.refreshSharedSessions')?.command;
   if (!refresh) throw new LiveFailure('sessions-row-missing');
   assert.deepEqual(refresh.arguments, [owner, project]);
+  // The list is read page by page and held in memory. `ready`: every page was read; `refused`: the owner refused a
+  // page; `uncertain`: a page was not answered or not provided, and one more click reads that same page again.
+  const status = (): 'ready' | 'refused' | 'uncertain' | 'unread' => {
+    const pages = held()?.pages;
+    return !pages ? 'unread' : pages.complete ? 'ready' : pages.note.startsWith('The owner refused') ? 'refused' : 'uncertain';
+  };
   let clicks = 0, failed: unknown;
   do {
-    clicks++;
+    clicks++; failed = undefined;
     try {await c.timed('refresh-shared-sessions-' + clicks, () => Promise.resolve(vscode.commands.executeCommand(refresh.command, ...(refresh.arguments ?? []))), 75000);}
     catch (error) {failed = error;}
-    const reply = held()?.reply;
-    c.observed('sessions', reply?.status ?? 'no-reply', reply && 'reason' in reply ? reply.reason : held()?.note);
-  } while (!failed && held()?.reply?.status === 'pending' && clicks < 2);
+    c.observed('sessions', status(), held()?.pages.note);
+  } while (status() === 'uncertain' && clicks < 2);
 
   // 3. Record what the ship answered and what a user sees in the tree.
-  const list = held(), reply = list?.reply, shown = group();
+  const pages = held()?.pages, shown = group(), settled = status();
   c.record.sessionsClicks = clicks; c.record.sessionsTree = shown ? seen([shown])[0] : undefined;
-  if (list?.note) c.record.sessionsNote = list.note;
+  if (pages) c.record.sessionsNote = pages.note;
   if (failed) c.record.sessionsError = errorInfo(failed, true);
-  if (!reply) throw new LiveFailure(list?.note?.startsWith('Outcome unknown') ? 'sessions-outcome-unknown' : 'sessions-no-reply');
-  const listed = reply.status === 'ready' ? reply.observation : null;
-  c.record.sessions = {status: reply.status, request: reply.request, permissionGranted: reply.permissionGranted,
-    ...('reason' in reply ? {reason: reply.reason, deadline: reply.deadline, retainedUntil: reply.retainedUntil} : {}),
-    ...(listed ? {observedAt: listed.observedAt, truncated: listed.truncated, count: listed.sessions.length,
-      sessions: listed.sessions.map(row => ({id: row.id, phase: row.phase, desk: row.working.desk, revision: row.working.revision}))} : {})};
+  if (!pages) throw new LiveFailure('sessions-no-list');
+  c.record.sessions = {status: settled, count: pages.sessions.length,
+    sessions: pages.sessions.map(row => ({id: row.id, phase: row.phase, desk: row.working.desk, revision: row.working.revision}))};
   if (failed) throw new LiveFailure('sessions-refresh-failed');
-  if (!['ready', 'refused', 'uncertain'].includes(reply.status)) throw new LiveFailure(reply.status === 'pending' ? 'sessions-not-settled' : 'sessions-' + reply.status);
-  if (wantStatus !== undefined && reply.status !== wantStatus) throw new LiveFailure('sessions-status-unexpected');
-  if (wantCount !== undefined && listed?.sessions.length !== Number(wantCount)) throw new LiveFailure('sessions-count-unexpected');
+  if (wantStatus !== undefined && settled !== wantStatus) throw new LiveFailure('sessions-status-unexpected');
+  if (wantCount !== undefined && pages.sessions.length !== Number(wantCount)) throw new LiveFailure('sessions-count-unexpected');
 }
 
 /**
