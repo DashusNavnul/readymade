@@ -105,13 +105,13 @@ web address of its own. While you are connected to its host, name the guest firs
 › ~sampel-palnet> (add 2 2)
 ```
 
-Readymade types three lines into the host's dojo for it: one to see that the host has that guest
+Readymade types three lines into the host's dojo for it (five when it first has to cancel an expression the guest was holding): one to see that the host has that guest
 and how its terminal stands, one that hands your line to the guest's dojo, and one
 that reads what the guest's terminal gained. You get the guest's answer; the host's own terminal
 shows the three lines. A line for a guest is plain keyboard characters, up to about 450 of them.
 A line the guest's dojo cannot read is not run and is said so; the start of a longer expression
-is cancelled on the guest, and one the guest was already holding from before is cancelled first,
-so that your line is never run as part of it. Each line takes about four seconds. Run against one live host and one
+is cancelled on the guest. When the guest's terminal shows it was already holding one from before,
+an empty line is sent first to cancel that, so that your line is not run as part of it. Each line takes about four seconds. Run against one live host and one
 of its guests.
 
 - Nothing is typed unless your ship's terminal shows the dojo's ready prompt. If it holds the

@@ -132,7 +132,7 @@ original_binary="$inner_app/Contents/MacOS/$original_name"
 # editor by the fingerprint of its exact contents when the signing certificate is not Apple's (measured 2026-11-19:
 # every build asked again for "Readymade Workspace Safe Storage"). Readymade's own extension is what changes from
 # build to build, so with it outside, the editor app is the same in every build of one editor version and the
-# Keychain asks once. The bootstrap below points the editor at this folder.
+# Keychain asks once. platform/builtin-extension-resources.cjs fixes the editor's own programs to this folder.
 extensions_dir="$staged_app/Contents/Resources/extensions"
 [[ -d "$inner_app/Contents/Resources/app/extensions" && ! -L "$inner_app/Contents/Resources/app/extensions" ]] || fail 'The upstream app has no built-in extensions folder.'
 mv -- "$inner_app/Contents/Resources/app/extensions" "$extensions_dir"
@@ -469,7 +469,7 @@ fs.writeFileSync(receipt, JSON.stringify({ created: new Date().toISOString(), up
     outerRequirement: JSON.parse(fs.readFileSync(path.join(stage, 'outer-requirement.json'), 'utf8')) },
   isolation: 'Native Finder/CLI launchers default to private ~/.cache/readymade/workspace-v02/{user,extensions,shared-data}; CLI overrides require owned private directories; fresh settings disable updates and use ephemeral browser storage; previous preview profiles and encrypted secret databases are never changed.',
   nativeIdentity: { name: 'Readymade Workspace', credentialNamespace: 'Readymade Workspace Safe Storage', keychainFingerprint: editorFingerprint, helpers: 'Readymade Workspace Helper{, (GPU), (Plugin), (Renderer)}', preservedInnerBundleIdentifier: 'com.vscodium' },
-  limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; one main-process line lets the editor serve built-in extension files from their folder beside the editor app; a bounded media bootstrap runs before the original main entry.',
+  limitations: ['Native/Electron name and helper names are Readymade Workspace; Code OSS product UI, icon, bundle identifiers and upstream notices remain VSCodium.', 'Two browser-reveal JavaScript patches have matching integrity checksums; seven editor programs are fixed to read built-in extensions from the folder beside the editor app (two of them with matching integrity checksums), and one main-process line lets the editor serve files from it; a bounded media bootstrap runs before the original main entry.',
     'Not notarized or approved for public distribution; upstream update/default internal product settings remain.',
     'Packaging does not establish Finder launch, extension-host acceptance, feature parity or live ship behavior.'] }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
 NODE

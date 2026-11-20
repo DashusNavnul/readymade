@@ -229,8 +229,8 @@ Keychain approve the app by its developer team instead of by fingerprint; that
 has not been measured here. An Apple-issued certificate can be selected with
 `READYMADE_SIGNING_IDENTITY=<exact certificate SHA-1 fingerprint> ./package.sh`.
 `READYMADE_ALLOW_ADHOC=1` is an explicit isolated-test option. An ad-hoc build
-has a fingerprint of its own, so macOS asks once for it as for any other
-certificate; keep it away from real saved credentials.
+has a fingerprint of its own, so expect macOS to ask for it separately (not
+measured here); keep it away from real saved credentials.
 
 Switching between Code and an open app should preserve its page. **Reconnect Media Tab** reloads a tab and can end an active call; it is an explicit action, not the first automatic response to uncertainty. Existing calls in another native application are not automatically transferred into this workspace.
 
