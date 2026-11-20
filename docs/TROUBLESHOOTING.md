@@ -117,8 +117,10 @@ to accept the owner's invitation.
 HTTP 404 means the invitation service is missing. A refused, malformed,
 foreign-owner or unavailable response leaves it unverified. Keep the working
 login and app tabs; inspect the specific service failure. Changing the login
-code does not install that service. Any first installation on your ship is a
-separate owner-authorized task using the [native installation guide](../backend/install/README.md).
+code does not install that service. Joining from **Home** with an invitation
+link does: Readymade asks once, then your ship installs the collaboration
+service from the ship the link names
+([what joining does on your own ship](JOIN_A_WORKSPACE.md#what-joining-does-on-your-own-ship)).
 Source checks and earlier test receivers do not establish your ship's readiness.
 
 Use the host's actual project invitation for your exact ship. A Tlon group
@@ -237,7 +239,7 @@ Switching between Code and an open app should preserve its page. **Reconnect Med
 
 ## Shared requests or ship files are unavailable
 
-Shared requests require the compatible Readymade collaboration backend. Coding sessions, canonical file reads, drafts and terminals require their respective backend surfaces. Their complete installation on an arbitrary receiving ship is not bundled or proven by this repository.
+Shared requests require the compatible Readymade collaboration backend. Coding sessions, canonical file reads, drafts and terminals require their respective backend surfaces. A guest's collaboration service is installed when joining from a link. The complete backend is installed from the app with **Readymade: Install Pataphor on This Ship**, on a local planet that meets [what a planet needs](INSTALL_FROM_THE_APP.md#what-a-planet-needs); see [what has and has not been proven](INSTALL_FROM_THE_APP.md#what-has-and-has-not-been-proven). A fresh install of this exact backend on a new real ship has not been run.
 
 Selecting a project does not automatically fetch its complete file tree. **Read Ship File** explicitly requests a bounded native read; only complete retained reads become immutable source documents. Saving a local draft does not write canonical ship state. Preparing a candidate does not apply or deploy it.
 

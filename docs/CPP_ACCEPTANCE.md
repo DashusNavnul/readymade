@@ -23,7 +23,7 @@ proof_root="$(mktemp -d /tmp/readymade-cpp.XXXXXX)"
 mkdir -m 700 "$proof_root/project" "$proof_root/extensions" "$proof_root/user"
 printf 'isolated clangd acceptance\n' > "$proof_root/project/.readymade-clangd-acceptance"
 # Set these to your installed package, downloaded verified VSIX and compiler.
-export READYMADE_CODE_BIN='/path/to/Readymade Workspace.app/Contents/Resources/VSCodium.app/Contents/Resources/app/bin/codium'
+export READYMADE_CODE_BIN='/path/to/Readymade Workspace.app/Contents/MacOS/ReadymadeCLI'
 export READYMADE_BUILTIN_EXTENSION='/path/to/Readymade Workspace.app/Contents/Resources/extensions/pataphor.readymade-ship-workspace'
 "$READYMADE_CODE_BIN" --user-data-dir "$proof_root/user" \
   --extensions-dir "$proof_root/extensions" --install-extension /path/to/clangd.vsix

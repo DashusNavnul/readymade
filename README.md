@@ -209,7 +209,7 @@ slow or will not connect, run **Readymade: Ship Doctor**: it measures the ship
 and the Mac and says what it found, and changes nothing.
 
 To see what is running, what is waiting on you and what your ship told your
-collaborators, run **Readymade: Overview**; see
+collaborators, run **Readymade: Overview: What Is Running, Blocked and Waiting on Me**; see
 [What your ship can tell you](docs/SHIP_PAGES.md).
 
 What is and is not verified: the whole first-timer path was run live with the

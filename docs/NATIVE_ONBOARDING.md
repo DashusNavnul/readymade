@@ -278,7 +278,7 @@ path, receiving identity, project ID and prepared working desk below:
 
 ```sh
 npm run build
-READYMADE_CODE_BIN="/your/Readymade Workspace.app/Contents/Resources/VSCodium.app/Contents/Resources/app/bin/codium" \
+READYMADE_CODE_BIN="/your/Readymade Workspace.app/Contents/MacOS/ReadymadeCLI" \
 READYMADE_BUILTIN_EXTENSION="/your/Readymade Workspace.app/Contents/Resources/extensions/pataphor.readymade-ship-workspace" \
 READYMADE_TEST_MODULE=onboarding-host \
 READYMADE_LIVE_AUTH=/your/private/auth.json \
@@ -324,7 +324,7 @@ authentication file, ship identity, imported desk and saved archive:
 
 ```sh
 npm run build
-READYMADE_CODE_BIN="/your/Readymade Workspace.app/Contents/Resources/VSCodium.app/Contents/Resources/app/bin/codium" \
+READYMADE_CODE_BIN="/your/Readymade Workspace.app/Contents/MacOS/ReadymadeCLI" \
 READYMADE_BUILTIN_EXTENSION="/your/Readymade Workspace.app/Contents/Resources/extensions/pataphor.readymade-ship-workspace" \
 READYMADE_TEST_MODULE=source-import-host \
 READYMADE_LIVE_AUTH=/your/private/auth.json \

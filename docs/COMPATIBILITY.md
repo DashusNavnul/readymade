@@ -113,9 +113,12 @@ recipient and current authenticated connection before submitting.
 | Guest invitation readiness without a local coding backend | Read-only HTTP fixtures, schema and authenticated-owner checks | Run live with the packaged app between a planet, its moon and two unrelated comets on one Mac; two people on separate computers still required |
 
 These additions are included in the current preview. They do not
-qualify a first installation on the receiving operator's ship or a twelve-person
-workspace. Follow the separate [native installation guide](../backend/install/README.md)
-when owner-authorized installation is needed, and retain receiver-specific proof.
+qualify a twelve-person workspace. A guest's collaboration service is installed
+by the app when joining from a link, after one confirmation
+([Join a workspace](JOIN_A_WORKSPACE.md#what-joining-does-on-your-own-ship)). The complete
+backend is a separate, larger install ([Install from the app](INSTALL_FROM_THE_APP.md));
+the engineering controller behind it is the [native installation guide](../backend/install/README.md).
+Retain receiver-specific proof for either.
 
 ## Ship coding features
 
@@ -184,8 +187,8 @@ operations governed by the ship.
 ### Backend distribution gates
 
 The [complete source assembly](../backend/README.md) reconstructs the current
-1,492-file backend from included application source and pinned public inputs:
-943 application files, 543 inherited or derived Urbit files, four browser assets,
+1,543-file backend from included application source and pinned public inputs:
+996 application files, 543 inherited or derived Urbit files, four browser assets,
 and six accompanying notice files. The ten-app installation bill is distinct
 from historical development/staging bills. Use the shipped receiver tools and
 the receiving ship's actual inventory; never copy a development bill.
