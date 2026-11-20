@@ -31,8 +31,13 @@ after editor secret storage. The prompt does not write codes to that file.
 Replacement codes take precedence over remembered values and are stored only
 after successful sign-in with a single validated ship identity.
 
-Local macOS packages reuse one code-signing certificate, so Keychain can
-recognize successive builds as the same app. The builder's private certificate,
+Local macOS packages reuse one code-signing certificate. That alone does not
+make the Keychain treat successive builds as one app: without an Apple-issued
+certificate macOS approves the editor app by the fingerprint of its exact
+contents, so the built-in extensions are packaged beside the editor app and its
+contents stay the same from build to build (see Troubleshooting). The extensions
+remain inside the signed outer app and are covered by its seal; the launchers
+accept no other extensions folder from a caller. The builder's private certificate,
 encrypted signing key and dedicated build keychain live in the owned private
 `~/Library/Application Support/Readymade/Signing` directory, outside the source
 tree and shipped application. Signing temporarily adds only that build keychain

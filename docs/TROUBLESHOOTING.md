@@ -189,22 +189,36 @@ block the main process and cause a browser-connection timeout. The owner must
 handle that prompt locally; never put the login password in logs or chat.
 Dismissing that prompt does not establish microphone or camera acceptance.
 
-Repeated approval after each local rebuild usually means the builds were signed
-ad hoc: macOS sees a new app identity each time. `./package.sh` now reuses a
-private local signing certificate stored under
+Why macOS asks, and when. For an app whose certificate Apple did not issue, the
+Keychain approves the program that asks by the fingerprint of its exact
+contents, whatever certificate signed it. The program that asks is the editor
+app nested inside Readymade. Until November 2026 Readymade's own extension was
+packaged inside that editor app, so every build had a new fingerprint and every
+build asked again. The built-in extensions are now packaged beside the editor
+app, in `Contents/Resources/extensions`, and the editor app is the same in
+every build of one editor version: two builds with different extensions were
+measured to have one fingerprint. macOS asks once for a fingerprint, then again
+only when the editor version, the few files packaging puts inside the editor
+app, or the signing certificate change. `./package.sh` ends by printing the
+fingerprint and whether it changed from the last build, which is when to expect
+the dialog. To see what macOS decided, read its own log:
+`/usr/bin/log show --last 10m --predicate 'process == "securityd" AND eventMessage CONTAINS "partition"'`.
+
+`./package.sh` reuses a private local signing certificate stored under
 `~/Library/Application Support/Readymade/Signing`. Keep that directory when
 clearing caches or moving the build setup. The private signing key stays on the
 builder's Mac; it is never included in the application or source export.
 
-When moving from an older ad-hoc build to this certificate, macOS may ask once
+When moving from a build with the older layout to this one, macOS asks once
 more for “Readymade Workspace Safe Storage”. Enter the Mac login password in
 that macOS dialog and choose **Always Allow** for the verified new Readymade
-build. Later builds from the same signer retain that identity. Existing older
-builds can still have their own pending requests. Do not delete Safe Storage
+build. Existing older builds can still have their own pending requests. Do not delete Safe Storage
 items or turn off encrypted storage to dismiss them.
 
 This local signature does not provide Apple notarization or remove Gatekeeper
-checks for downloaded apps. An Apple-issued certificate can be selected with
+checks for downloaded apps. An Apple-issued certificate would also let the
+Keychain approve the app by its developer team instead of by fingerprint; that
+has not been measured here. An Apple-issued certificate can be selected with
 `READYMADE_SIGNING_IDENTITY=<exact certificate SHA-1 fingerprint> ./package.sh`.
 `READYMADE_ALLOW_ADHOC=1` is an explicit isolated-test option; using that build
 with real saved credentials can bring the repeated prompts back.
