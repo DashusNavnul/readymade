@@ -34,6 +34,10 @@ export function dojoLine(text: string): string | undefined {
 /** The ship's terminal line as its screen updates (blits) leave it, and the lines that scrolled above it. */
 export class DojoScreen {
   line = ''; column = 0; bells = 0; unknown = 0;
+  /** Lines that were longer than is kept and were cut. */
+  cut = 0;
+  /** A line to look out for among those that scroll above, and whether it has been seen: looked for as each line arrives, so that no amount of output after it can hide it. */
+  expect?: string; seen = false;
   /** The lines that scrolled above the line, the newest last; only the last 2,000 are kept, and `dropped` counts those let go. */
   readonly lines: string[] = [];
   dropped = 0;
@@ -48,7 +52,7 @@ export class DojoScreen {
     if (kind === 'mor' && Array.isArray(value)) {for (const each of value) this.apply(each, depth + 1); return;}
     if (kind === 'hop') {
       const to = typeof value === 'number' ? value : value && typeof value === 'object' ? (value as Record<string, unknown>).x : undefined;
-      if (typeof to === 'number' && Number.isSafeInteger(to) && to >= 0 && to <= LINE_LIMIT) this.column = to; else this.unknown++;
+      if (typeof to === 'number' && Number.isSafeInteger(to) && to >= 0 && to <= COLUMN_LIMIT) this.column = to; else this.unknown++;
       return;
     }
     if (kind === 'wyp') {this.line = ''; this.input = undefined; return;}
@@ -71,23 +75,38 @@ export class DojoScreen {
     const before = Array.from(this.line), add = Array.from(text);
     while (before.length < this.column) before.push(' ');
     before.splice(this.column, add.length, ...add);
-    if (before.length > LINE_LIMIT) {before.length = LINE_LIMIT; this.unknown++;}
+    if (before.length > LINE_LIMIT) {before.length = LINE_LIMIT; this.cut++;}
     this.line = before.join(''); this.column = Math.min(LINE_LIMIT, this.column + add.length);
   }
+  private held = 0;
   private push(line: string): void {
-    this.lines.push(line.length > LINE_LIMIT ? line.slice(0, LINE_LIMIT) : line);
-    if (this.lines.length > 2000) {const over = this.lines.length - 2000; this.lines.splice(0, over); this.dropped += over; if (this.logged) this.logged.at -= over;}
+    if (this.expect !== undefined && line === this.expect) this.seen = true;
+    if (line.length > LINE_LIMIT) {line = line.slice(0, LINE_LIMIT); this.cut++;}
+    this.lines.push(line); this.held += line.length;
+    // At most 2,000 lines and KEPT_LIMIT characters are kept; the oldest go first, and `dropped` counts them.
+    let over = Math.max(0, this.lines.length - 2000), held = this.held;
+    for (let n = 0; n < over; n++) held -= this.lines[n]!.length;
+    while (held > KEPT_LIMIT && over < this.lines.length - 1) held -= this.lines[over++]!.length;
+    if (over) {this.lines.splice(0, over); this.held = held; this.dropped += over; if (this.logged) this.logged.at -= over;}
   }
   private logged?: {text: string; count: number; at: number};
   /** A debug print from the runtime's own stream. The same print again straight after is counted, not repeated. */
   log(text: string): void {
+    if (text.length > LINE_LIMIT) {text = text.slice(0, LINE_LIMIT); this.cut++;}
     const again = this.logged;
-    if (again && again.text === text && again.at === this.lines.length - 1) {this.lines[again.at] = `${text} (×${++again.count})`; return;}
+    if (again && again.text === text && again.at === this.lines.length - 1) {
+      const counted = `${text} (×${++again.count})`;
+      this.held += counted.length - this.lines[again.at]!.length; this.lines[again.at] = counted; return;
+    }
     this.push(text); this.logged = {text, count: 1, at: this.lines.length - 1};
   }
 }
-/** The longest line kept, in characters: far wider than any terminal, and eight times the longest line typed here. */
-const LINE_LIMIT = 4096;
+/**
+ * Bounds on what a ship can make the screen model hold. A line: the dojo prints a large number as one line however
+ * wide (a guest ship's terminal is read back as numbers of some 7,000 characters, measured), so a line may be far
+ * wider than any terminal. The cursor's column is the terminal's own and stays small. And all lines kept, together.
+ */
+const LINE_LIMIT = 65536, COLUMN_LIMIT = 4096, KEPT_LIMIT = 2000000;
 function chars(value: unknown): string | undefined {
   return Array.isArray(value) && value.every(each => typeof each === 'string') ? (value as string[]).join('') : undefined;
 }
@@ -343,6 +362,8 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
       if (!read) throw await notRun('Your ship\'s terminal did not show the whole of this line as you typed it, so it was not run.');
     }
     const bells = screen.bells, shown = screen.lines.length, enter: number[] = [];
+    // A dojo that takes a line prints it back first. It is looked for as each line arrives, not when this next looks.
+    screen.expect = '> ' + line; screen.seen = false;
     standing = false; pressed = true;
     try {await send([poke({ret: null})], enter);}
     catch (error) {
@@ -352,10 +373,10 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
     }
     const since = () => screen.lines.slice(Math.max(0, shown - screen.dropped));
     const output = () => since().join('\n');
-    let back = false;
     const notes = (): string => {
-      back ||= since().includes('> ' + line);
+      const back = screen.seen;
       return (screen.unknown ? `\n(${screen.unknown} screen update${screen.unknown === 1 ? '' : 's'} of a kind this version does not know ${screen.unknown === 1 ? 'was' : 'were'} not shown.)` : '')
+        + (screen.cut ? `\n(${screen.cut} line${screen.cut === 1 ? '' : 's'} too long to keep whole ${screen.cut === 1 ? 'was' : 'were'} cut short.)` : '')
         + (view && !back ? '\n(The dojo did not print this line back as you typed it. Check above what it ran.)' : '')
         // A dojo that takes a line prints it back first. Until it has, nothing shows that the line ran.
         + (!view && !back ? '\n(Your ship has not shown this line as taken, so it is not known whether it ran. It was sent once.)' : '')
@@ -382,7 +403,6 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
     for (;;) {
       await sleep(timing.pollMs); await keepUp();
       const quiet = Date.now() - heard, now = output();
-      notes();   // looks each time for the line printed back, before a long answer scrolls it out of what is kept
       if (now !== reported) {reported = now; report(tail(now));}
       if (refused(enter)) {pressed = false; throw await notRun('Your ship did not take the Return key, so the line was not run.');}
       const capped = Date.now() - began >= timing.capMs;
@@ -396,7 +416,7 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
       // Return was taken and the dojo said it could not process the input, with no bell and the text still standing:
       // working the line out crashed (a read the ship cannot answer does this; measured on a live ship, which then
       // waited here for the full time). The ship undoes all of a crashed event, so nothing ran.
-      if (answers.get(enter[0]!) === true && !back && screen.input !== '' && since().includes(FAILED) && (capped || ended || quiet >= timing.quietMs)) {
+      if (answers.get(enter[0]!) === true && !screen.seen && screen.input !== '' && since().includes(FAILED) && (capped || ended || quiet >= timing.quietMs)) {
         const off = await takeOff(true);
         return tail(now + '\n(The dojo could not work this line out, so nothing was run' + (off ? ', and the line was taken off its prompt again.)' : '.)' + STANDS));
       }

@@ -104,7 +104,7 @@ function cord(hostLine: string): string {
   return text;
 }
 /** A host whose dojo answers the three lines as the real one does, for one guest. */
-function host(options: {hosted?: boolean; noBach?: boolean; answer?: (line: string) => string; unreadable?: boolean | 'throws'; slowBy?: number; unconfirmed?: string; held?: string; deaf?: boolean; ends?: string} = {}) {
+function host(options: {hosted?: boolean; noBach?: boolean; answer?: (line: string) => string; unreadable?: boolean | 'throws'; slowBy?: number; unconfirmed?: string; held?: string; deaf?: boolean; ends?: string; flaky?: 'recount' | 'send' | 'cancel'} = {}) {
   const lines: string[] = [], received: string[] = [];
   // `held`: the guest's dojo already holds the start of an expression, typed by someone before; `deaf`: it does not let go of it; `ends`: how its terminal ends instead of at the prompt.
   let terminal = 'x'.repeat(40) + '\n' + (options.held !== undefined ? PROMPT + options.held + '> ' + options.held + '\n' + PROMPT + WAITING : options.ends ?? PROMPT), waiting = options.held !== undefined, readsSinceSend = 0;
@@ -112,11 +112,13 @@ function host(options: {hosted?: boolean; noBach?: boolean; answer?: (line: stri
   const run = async (line: string): Promise<string> => {
     lines.push(line);
     if (line.startsWith('=+(t=') && line.includes('(~(has in')) {
+      if (options.flaky === 'recount' && received.includes('')) throw new DojoNotRun('Your ship did not answer in time. Nothing was typed.');
       const all = Buffer.from(terminal, 'utf8');
       return options.noBach ? `> ${line}\ndojo: hoon expression failed` : `> ${line}\n[%.${options.hosted === false ? 'n' : 'y'} ${dotted(all.length)} ${asNumber(all.subarray(Math.max(0, all.length - GUEST_TAIL)))}]`;
     }
     if (line.startsWith(':bach &bach-action')) {
       const typed = cord(line);
+      if (options.flaky === 'cancel' && typed === '' || options.flaky === 'send' && typed !== '') throw new DojoNotRun('Your ship did not answer in time. Nothing was typed.');
       received.push(typed);
       readsSinceSend = 0;
       if (typed === '') {if (waiting && !options.deaf) {waiting = false; terminal += '> \n' + PROMPT;} return `> ${line}\n>=`;}
@@ -200,14 +202,25 @@ test('the start of a longer expression is cancelled on the guest with an empty l
 test('a held expression on the guest is cancelled before the line is typed; text left on its prompt is no reason to refuse', async () => {
   // someone left `(add 2` unfinished on the guest: typing `2)` now would run `(add 2 2)` and be reported as not taken
   const h = host({held: '(add 2', answer: () => '4'}), said: string[] = [];
-  assert.equal(await runGuestLine(h.run, GUEST, '(add 1 1)', text => said.push(text), 5), `> (add 1 1)\n4\n(${GUEST}'s dojo was holding an unfinished expression from before; it was cancelled first.)`);
+  assert.equal(await runGuestLine(h.run, GUEST, '(add 1 1)', text => said.push(text), 5), `> (add 1 1)\n4\n(${GUEST}'s terminal showed the prompt of an unfinished expression; an empty line was sent first to cancel it.)`);
   assert.deepEqual(h.received, ['', '(add 1 1)'], 'the cancelling empty line, then the line, once each');
-  assert.deepEqual(said, [`${GUEST}'s dojo holds the start of an unfinished expression. Cancelling that first…`, `Typing into ${GUEST}'s dojo through its host…`]);
+  assert.deepEqual(said, [`${GUEST}'s dojo shows the prompt of an unfinished expression. Sending an empty line to cancel that first…`, `Typing into ${GUEST}'s dojo through its host…`]);
   assert.doesNotMatch(h.terminal(), /ran with what was held/);
   // a guest that does not let go of it gets the cancelling line and never the typed one
   const deaf = host({held: '(add 2', deaf: true});
-  await assert.rejects(runGuestLine(deaf.run, GUEST, '2)', () => undefined, 5), notRun(/could not be shown to be cancelled\. Your line was not sent\./));
+  await assert.rejects(runGuestLine(deaf.run, GUEST, '2)', () => undefined, 5), notRun(/An empty line was sent to cancel it, and its terminal does not show the ready prompt since\. Your line was not sent\./));
   assert.deepEqual(deaf.received, ['']);
+  // once the empty line may have gone, every way out says so; when it did not go, that is said instead
+  const blind = host({held: '(add 2', flaky: 'recount'});
+  await assert.rejects(runGuestLine(blind.run, GUEST, '2)', () => undefined, 5), notRun(/An empty line was sent to cancel it, and the guest's terminal could not be read after that\. Your line was not sent\./));
+  assert.deepEqual(blind.received, ['']);
+  const dropped = host({held: '(add 2', flaky: 'send'});
+  await assert.rejects(runGuestLine(dropped.run, GUEST, '2)', () => undefined, 5), notRun(/^Your ship did not answer in time\. Nothing was typed\.\n\(.*an empty line was sent first to cancel it\.\)$/));
+  const stuck = host({held: '(add 2', flaky: 'cancel'});
+  await assert.rejects(runGuestLine(stuck.run, GUEST, '2)', () => undefined, 5), notRun(/The empty line that would cancel it did not go: Your ship did not answer in time\. Nothing was typed\. Your line was not sent\./));
+  assert.deepEqual(stuck.received, []);
+  const lost = host({held: '(add 2', unconfirmed: 'No answer came back from your ship.'});
+  assert.match(await runGuestLine(lost.run, GUEST, '2)', () => undefined, 5), /^The host did not confirm handing the line .* It was not sent again\. The host said: No answer came back from your ship\.\n\(.*an empty line was sent first to cancel it\.\)$/);
   // text left standing on the ready prompt, or a terminal read mid-print: the host clears the line itself, so the line goes as before
   for (const ends of [PROMPT + PROMPT + '(add 2', PROMPT + '+long-job> +long-job\nworking']) {
     const left = host({ends, answer: () => '4'});

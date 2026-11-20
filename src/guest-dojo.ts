@@ -109,28 +109,41 @@ export function guestAnswer(gained: string, guest: string, line: string): {reado
  */
 export async function runGuestLine(host: (line: string) => Promise<string>, guest: string, line: string, report: (text: string) => void, pauseMs = 1000): Promise<string> {
   const send = guestSendLine(guest, line);
-  let before = guestCount(await host(guestCountLine(guest))), cancelled = false;
+  let before = guestCount(await host(guestCountLine(guest)));
   if (!before) throw new DojoNotRun('The ship you are connected to did not answer as a host of guest ships does (its %bach agent). Nothing was sent.');
   if (!before.hosted) throw new DojoNotRun(`The ship you are connected to hosts no guest ship ${guest}. Nothing was sent.`);
   // At a waiting prompt the line would be taken as the next part of an expression the guest already holds, and run
-  // as part of that: the held expression is cancelled first, as it is after a line of this app's own leaves one,
-  // and the line goes only once the ready prompt is back.
+  // as part of that: an empty line cancels the held expression first, as it does after a line of this app's own
+  // leaves one, and the line goes only once the ready prompt is back.
+  let note = '';
   if (guestPrompt(before.tail, guest) === 'waiting') {
-    report(`${guest}'s dojo holds the start of an unfinished expression. Cancelling that first…`);
-    const cancel = await host(guestSendLine(guest, ''));
-    const after = cancel.split('\n').some(each => each.trim() === '>=') ? guestCount(await host(guestCountLine(guest))) : undefined;
+    report(`${guest}'s dojo shows the prompt of an unfinished expression. Sending an empty line to cancel that first…`);
+    const unsent = `${guest}'s dojo shows the prompt of an unfinished expression.`, look = ' Your line was not sent. Look at its terminal on its host.';
+    let cancel: string;
+    try {cancel = await host(guestSendLine(guest, ''));}
+    catch (error) {if (!(error instanceof DojoNotRun)) throw error; throw new DojoNotRun(`${unsent} The empty line that would cancel it did not go: ${error.message}${look}`);}
+    // From here an empty line may have reached the guest: every way out says so.
+    if (!cancel.split('\n').some(each => each.trim() === '>=')) throw new DojoNotRun(`${unsent} An empty line was sent to cancel it, and the host did not confirm handing it over.${look}`);
+    let after: ReturnType<typeof guestCount>;
+    try {after = guestCount(await host(guestCountLine(guest)));}
+    catch (error) {if (!(error instanceof DojoNotRun)) throw error; throw new DojoNotRun(`${unsent} An empty line was sent to cancel it, and the guest's terminal could not be read after that.${look}`);}
     if (!after || !after.hosted || guestPrompt(after.tail, guest) !== 'ready')
-      throw new DojoNotRun(`${guest}'s dojo holds the start of an unfinished expression, and it could not be shown to be cancelled. Your line was not sent. Look at its terminal on its host.`);
-    before = after; cancelled = true;
+      throw new DojoNotRun(`${unsent} An empty line was sent to cancel it, and its terminal does not show the ready prompt since.${look}`);
+    before = after;
+    // What is known is what the terminal showed: text left on a ready prompt can read like the waiting prompt too.
+    note = `\n(${guest}'s terminal showed the prompt of an unfinished expression; an empty line was sent first to cancel it.)`;
   }
-  const start = before.length, note = cancelled ? `\n(${guest}'s dojo was holding an unfinished expression from before; it was cancelled first.)` : '';
+  const start = before.length;
   report(`Typing into ${guest}'s dojo through its host…`);
   // The host's dojo prints the line back and then `>=` once it has handed it to %bach. Anything else it says
   // (it could not tell whether the line ran, or %bach refused it) is passed on as it stands.
-  const sent = await host(send), handed = sent.split('\n').map(each => each.trim());
+  let sent: string;
+  try {sent = await host(send);}
+  catch (error) {if (!(error instanceof DojoNotRun) || !note) throw error; throw new DojoNotRun(error.message + note);}
+  const handed = sent.split('\n').map(each => each.trim());
   if (!handed.includes('>=')) {
     const said = handed.filter(each => each && each !== `> ${send}`).join(' ').slice(0, 300);
-    return `The host did not confirm handing the line to ${guest}, so it is not known whether it ran there. It was not sent again.${said ? ` The host said: ${said}` : ''}`;
+    return `The host did not confirm handing the line to ${guest}, so it is not known whether it ran there. It was not sent again.${said ? ` The host said: ${said}` : ''}${note}`;
   }
   // From here the line has been sent: whatever fails next, that stays true and is said.
   const unread = `The line was sent to ${guest} once, but its terminal could not be read back through the host. Look at it there.${note}`;

@@ -401,16 +401,38 @@ test('a cancelling Backspace that got no answer leaves the waiting prompt unknow
   assert.equal(s.backs(), 0, 'the one Backspace was not sent again');
 });
 
-test('a ship cannot make the screen model grow without bound or overflow the stack', () => {
+test('a ship cannot make the screen model grow without bound or overflow the stack; a wide line is kept whole', () => {
   const screen = new DojoScreen();
   let deep: unknown = {bel: true};
   for (let n = 0; n < 5000; n++) deep = {mor: [deep]};
   screen.apply(deep); assert.deepEqual([screen.bells, screen.unknown], [0, 1], 'nesting past eight levels is not followed');
   screen.apply({mor: [{mor: [{mor: [{bel: true}]}]}]}); assert.equal(screen.bells, 1, 'the nesting a ship really sends is');
-  for (let n = 0; n < 3000; n++) screen.apply({mor: [{hop: 100000}, {put: ['x']}, {nel: true}]});
-  assert.ok(screen.lines.every(line => line.length <= 4096) && screen.lines.length <= 2000);
-  screen.apply({mor: [{hop: 4000}, {put: Array.from('y'.repeat(500))}]});
-  assert.equal(Array.from(screen.line).length, 4096); assert.equal(screen.column, 4096);
+  screen.apply({hop: 100000}); assert.deepEqual([screen.column, screen.unknown], [0, 2], 'no terminal is that wide');
+  // the dojo prints a large number as one line: a guest ship's terminal is read back as numbers of some 7,000 characters
+  const wide = '0x' + '1234.'.repeat(1400) + '5678';
+  screen.apply(printed(wide)); assert.deepEqual([screen.lines.at(-1), screen.cut], [wide, 0]);
+  screen.apply(printed('y'.repeat(70000))); assert.deepEqual([screen.lines.at(-1)!.length, screen.cut], [65536, 1], 'a line past the bound is cut, and counted as cut');
+  const size = () => screen.lines.reduce((sum, line) => sum + line.length, 0);
+  for (let n = 0; n < 100; n++) screen.apply(printed('z'.repeat(60000)));
+  assert.ok(size() <= 2000000 && screen.lines.length < 40 && screen.dropped > 60, 'all lines kept, together, are bounded');
+  // a debug print repeated straight after is counted on its line, and that line stays within the bound too
+  for (let n = 0; n < 3; n++) screen.log('p'.repeat(1000000));
+  assert.ok(screen.lines.at(-1)!.endsWith(' (×3)') && screen.lines.at(-1)!.length < 65550 && size() <= 2000000 + 65550);
+  for (let n = 0; n < 3000; n++) screen.apply({mor: [{put: ['x']}, {nel: true}]});
+  assert.equal(screen.lines.length, 2000);
+});
+
+test('a line is known to have run however much the ship prints straight after printing it back', async () => {
+  // the line printed back and more output than is kept, all in one update: nothing here says the outcome is unknown
+  const rows = Array.from({length: 6000}, (_, n) => printed('row ' + n));
+  const s = ship({onReturn: line => [{mor: [printed('> ' + line), ...rows, {mor: [{hop: 0}, {wyp: true}, {klr: [{stye: plain, text: Array.from(PROMPT)}, {stye: plain, text: []}]}, {hop: PROMPT.length}]}]}]});
+  const out = await runDojoLine(s.open, '+cat /===/sys/zuse/hoon', () => undefined, {timing: quick});
+  assert.match(out, /row 5999$/); assert.doesNotMatch(out, /not known whether it ran/);
+  // and a wide answer, as a guest ship's terminal is read back, arrives whole with no note
+  const number = '0x' + 'abcd.'.repeat(1400) + 'ef01';
+  const w = ship({onReturn: line => [printed('> ' + line), printed('[ 5.094'), printed('  ' + number), printed(']'), {mor: [{hop: 0}, {wyp: true}, {klr: [{stye: plain, text: Array.from(PROMPT)}, {stye: plain, text: []}]}, {hop: PROMPT.length}]}]});
+  const read = await runDojoLine(w.open, '=+(t=1 t)', () => undefined, {timing: quick});
+  assert.equal(read, '> =+(t=1 t)\n[ 5.094\n  ' + number + '\n]');
 });
 
 test('debug prints are shown beside the dojo\'s own lines, a repeated one counted; those from before Return are not this line\'s', async () => {
