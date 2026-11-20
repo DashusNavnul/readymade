@@ -22,10 +22,10 @@ const fail = (how: Fail): Error => Object.assign(new Error(how), how === 'unknow
  * away with it. `edge` is the width the terminal works with (79 on the 80-column ship this was measured on).
  */
 function ship(options: {standing?: string; prompt?: string; mute?: boolean; garble?: boolean | 'more' | number | ((typed: string) => string); foreignBell?: boolean | 'cut'; paced?: number; busy?: boolean; edge?: number; failText?: TextFail; failClear?: boolean; failReturn?: Fail; nackReturn?: boolean;
-  noise?: 'afterEcho' | 'afterBell' | 'constant'; endAfterReturn?: boolean; throwOpen?: boolean;
-  onReturn?: (line: string) => unknown[] | 'refuse' | 'forever' | 'partial'} = {}) {
+  noise?: 'afterEcho' | 'afterBell' | 'constant'; endAfterReturn?: boolean; throwOpen?: boolean; swallow?: 'stall' | 'quiet'; failBack?: boolean;
+  onReturn?: (line: string) => unknown[] | 'refuse' | 'forever' | 'partial' | 'crash'} = {}) {
   const sent: JsonObject[] = [], ranLines: string[] = [], edge = options.edge ?? 79;
-  let input = options.standing ?? '', cursor = input.length, off = 0, prompt = options.prompt ?? PROMPT, closed = 0, ended = false, timer: NodeJS.Timeout | undefined;
+  let input = options.standing ?? '', cursor = input.length, off = 0, prompt = options.prompt ?? PROMPT, closed = 0, ended = false, stalled = false, timer: NodeJS.Timeout | undefined;
   let emitLine: ((text: string) => void) | undefined, emitRaw: ((json: unknown) => void) | undefined, endStream: (() => void) | undefined;
   const open: DojoOpen = (onEvent, onEnd) => {
     if (options.throwOpen) throw new Error('authenticationRequired');
@@ -33,6 +33,7 @@ function ship(options: {standing?: string; prompt?: string; mute?: boolean; garb
     // `paced`: the events reach the app that many milliseconds apart, as over a slow link, so that it sees the screens in between.
     let due = 0;
     const emit = (event: JsonObject) => {
+      if (stalled) return;
       due = options.paced ? Math.max(due, Date.now()) + options.paced : Date.now() + 1;
       setTimeout(() => {if (!closed && !ended) onEvent(event, ++eventId);}, due - Date.now());
     };
@@ -54,6 +55,7 @@ function ship(options: {standing?: string; prompt?: string; mute?: boolean; garb
         if (Array.isArray(belt.txt) && options.failText === 'lands') {input += (belt.txt as string[]).join(''); cursor = input.length; throw fail('unknown');}
         if (Array.isArray(belt.txt) && options.failText) throw fail(options.failText as Fail);
         if (Object.hasOwn(belt, 'mod') && options.failClear) throw fail('unknown');
+        if (Object.hasOwn(belt, 'bac') && options.failBack) {if (!input && prompt === WAITING) prompt = PROMPT; throw fail('unknown');}
         sent.push(action);
         if (action.action === 'subscribe') {if (options.mute) continue; emit({ok: 'ok', id: action.id, response: 'subscribe'}); blit(draw()); continue;}
         if (action.action !== 'poke') continue;
@@ -72,6 +74,8 @@ function ship(options: {standing?: string; prompt?: string; mute?: boolean; garb
         if (Object.hasOwn(belt, 'bac')) {if (!input && prompt === WAITING) {prompt = PROMPT; blit(draw());} else blit({bel: true}); continue;}
         if (Array.isArray(belt.txt)) {
           if (options.busy) {blit({mor: [draw(), {bel: true}, printed('dojo: busy (press backspace to abort)'), draw()]}); continue;}
+          // `swallow`: the ship takes the text and the app never sees it drawn; with 'stall' nothing at all reaches the app from then on.
+          if (options.swallow) {input += (belt.txt as string[]).join(''); cursor = input.length; stalled = options.swallow === 'stall'; continue;}
           const typed = (belt.txt as string[]).join(''), g = options.garble;
           const put = typeof g === 'function' ? g(typed) : typeof g === 'number' ? typed.slice(0, g) + '#' + typed.slice(g + 1)
             : g === 'more' ? typed + typed.slice(-1) : g ? typed.slice(0, -1) + '#' : typed;
@@ -88,6 +92,8 @@ function ship(options: {standing?: string; prompt?: string; mute?: boolean; garb
             if (options.noise === 'afterBell') blit({mor: [printed('ames: noise'), draw()]});
             continue;
           }
+          // The dojo's own handling of the line crashed: it says so, rings no bell, and the line stays on the prompt (as on a live ship).
+          if (answer === 'crash') {blit({mor: [printed('dojo: failed to process input'), draw()]}); continue;}
           const ran = input; ranLines.push(ran); input = ''; cursor = 0; off = 0;
           if (answer === 'forever') {let n = 0; timer = setInterval(() => blit({mor: [printed('line ' + ++n), draw()]}), 10); continue;}
           if (answer === 'partial') {blit({mor: [printed('> ' + ran), draw()]}); prompt = WAITING; blit(draw()); continue;}
@@ -357,13 +363,54 @@ test('listening stops at the limit while the ship keeps printing, when the strea
   const s = ship({onReturn: () => 'forever'});
   const out = await runDojoLine(s.open, '+vats', () => undefined, {timing: {...quick, capMs: 150}});
   assert.match(out, /^line 1\n/); assert.match(out, /\(Stopped listening after 0 seconds\. Your ship may still be working/);
+  assert.match(out, /\(Your ship has not shown this line as taken, so it is not known whether it ran\. It was sent once\.\)/, 'this stand-in never prints the line back');
   const cut = ship({endAfterReturn: true});
   assert.match(await runDojoLine(cut.open, '(add 2 2)', () => undefined, {timing: {...quick, quietMs: 200}}), /\(The connection to your ship ended while listening\. The line was sent once\.\)$/);
   assert.deepEqual([cut.returns(), cut.deleted(), cut.closed()], [1, 1, 1], 'the channel is still deleted after its stream ended');
   const rows = Array.from({length: 400}, (_, n) => printed(`row ${n} ` + 'x'.repeat(40)));
-  const long = ship({onReturn: () => [...rows, {mor: [{hop: 0}, {wyp: true}, {klr: [{stye: plain, text: Array.from(PROMPT)}, {stye: plain, text: []}]}, {hop: PROMPT.length}]}]});
+  const long = ship({onReturn: line => [printed('> ' + line), ...rows, {mor: [{hop: 0}, {wyp: true}, {klr: [{stye: plain, text: Array.from(PROMPT)}, {stye: plain, text: []}]}, {hop: PROMPT.length}]}]});
   const tail = await runDojoLine(long.open, '+vats', () => undefined, {timing: quick});
   assert.ok(tail.length <= DOJO_OUTPUT_MAX); assert.match(tail, /^\(earlier output not shown\)\nrow \d+ /); assert.match(tail, /row 399 x+$/);
+});
+
+test('a line whose working out crashes in the dojo is said not to have run, at once, and is taken off the prompt', async () => {
+  const s = ship({onReturn: () => 'crash'}), began = Date.now();
+  const out = await runDojoLine(s.open, '.^(@ %gx /=nosuch=/x/noun)', () => undefined, {timing: {...quick, capMs: 5000}});
+  assert.equal(out, 'dojo: failed to process input\n(The dojo could not work this line out, so nothing was run, and the line was taken off its prompt again.)');
+  assert.ok(Date.now() - began < 2000, 'not waited out');
+  assert.deepEqual([s.returns(), s.ran(), s.left()], [1, [], {input: '', prompt: PROMPT}]);
+  // a line that ran and printed those same words is not mistaken for one: the dojo printed it back and its prompt is empty
+  const echoed = ship({onReturn: line => [printed('> ' + line), printed('dojo: failed to process input'), {mor: [{hop: 0}, {wyp: true}, {klr: [{stye: plain, text: Array.from(PROMPT)}, {stye: plain, text: []}]}, {hop: PROMPT.length}]}]});
+  assert.equal(await runDojoLine(echoed.open, "'dojo: failed to process input'", () => undefined, {timing: quick}), "> 'dojo: failed to process input'\ndojo: failed to process input");
+  assert.equal(echoed.clears(), 0);
+});
+
+test('text the ship took and never showed is cleared by keys, and counted as cleared only when the ship says so', async () => {
+  const quiet = ship({swallow: 'quiet'});
+  await assert.rejects(runDojoLine(quiet.open, '|hi ~zod', () => undefined, {timing: quick}), notRun(/did not show the line as you typed it, so it was not run\.$/));
+  assert.deepEqual([quiet.returns(), quiet.clears(), quiet.left()], [0, 2, {input: '', prompt: PROMPT}]);
+  const stall = ship({swallow: 'stall'});
+  await assert.rejects(runDojoLine(stall.open, '|hi ~zod', () => undefined, {timing: quick}), notRun(/so it was not run\. The text may still stand on its dojo line/));
+  assert.deepEqual([stall.returns(), stall.clears()], [0, 2], 'the clearing keys were sent although the screen showed a bare prompt');
+});
+
+test('a cancelling Backspace that got no answer leaves the waiting prompt unknown, not asserted', async () => {
+  const s = ship({onReturn: () => 'partial', failBack: true});
+  const out = await runDojoLine(s.open, '(add 2', () => undefined, {timing: quick});
+  assert.match(out, /so nothing was run\. Your ship's dojo may still be waiting for the rest: if it is, press Backspace/);
+  assert.equal(s.backs(), 0, 'the one Backspace was not sent again');
+});
+
+test('a ship cannot make the screen model grow without bound or overflow the stack', () => {
+  const screen = new DojoScreen();
+  let deep: unknown = {bel: true};
+  for (let n = 0; n < 5000; n++) deep = {mor: [deep]};
+  screen.apply(deep); assert.deepEqual([screen.bells, screen.unknown], [0, 1], 'nesting past eight levels is not followed');
+  screen.apply({mor: [{mor: [{mor: [{bel: true}]}]}]}); assert.equal(screen.bells, 1, 'the nesting a ship really sends is');
+  for (let n = 0; n < 3000; n++) screen.apply({mor: [{hop: 100000}, {put: ['x']}, {nel: true}]});
+  assert.ok(screen.lines.every(line => line.length <= 4096) && screen.lines.length <= 2000);
+  screen.apply({mor: [{hop: 4000}, {put: Array.from('y'.repeat(500))}]});
+  assert.equal(Array.from(screen.line).length, 4096); assert.equal(screen.column, 4096);
 });
 
 test('debug prints are shown beside the dojo\'s own lines, a repeated one counted; those from before Return are not this line\'s', async () => {

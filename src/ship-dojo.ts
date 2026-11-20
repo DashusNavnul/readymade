@@ -39,15 +39,16 @@ export class DojoScreen {
   dropped = 0;
   /** What stands after the prompt, when the ship drew the line as prompt and input; undefined when it drew it another way. */
   input?: string;
-  apply(blit: unknown): void {
-    if (!blit || typeof blit !== 'object' || Array.isArray(blit)) {this.unknown++; return;}
+  /** A ship's screen updates are untrusted: nesting, the cursor's column and a line's length are bounded here, the number of lines in `push`. */
+  apply(blit: unknown, depth = 0): void {
+    if (!blit || typeof blit !== 'object' || Array.isArray(blit) || depth > 8) {this.unknown++; return;}
     const entries = Object.entries(blit as Record<string, unknown>);
     if (entries.length !== 1) {this.unknown++; return;}
     const [kind, value] = entries[0]!;
-    if (kind === 'mor' && Array.isArray(value)) {for (const each of value) this.apply(each); return;}
+    if (kind === 'mor' && Array.isArray(value)) {for (const each of value) this.apply(each, depth + 1); return;}
     if (kind === 'hop') {
       const to = typeof value === 'number' ? value : value && typeof value === 'object' ? (value as Record<string, unknown>).x : undefined;
-      if (typeof to === 'number' && Number.isSafeInteger(to) && to >= 0 && to <= 100000) this.column = to; else this.unknown++;
+      if (typeof to === 'number' && Number.isSafeInteger(to) && to >= 0 && to <= LINE_LIMIT) this.column = to; else this.unknown++;
       return;
     }
     if (kind === 'wyp') {this.line = ''; this.input = undefined; return;}
@@ -70,10 +71,11 @@ export class DojoScreen {
     const before = Array.from(this.line), add = Array.from(text);
     while (before.length < this.column) before.push(' ');
     before.splice(this.column, add.length, ...add);
-    this.line = before.join(''); this.column += add.length;
+    if (before.length > LINE_LIMIT) {before.length = LINE_LIMIT; this.unknown++;}
+    this.line = before.join(''); this.column = Math.min(LINE_LIMIT, this.column + add.length);
   }
   private push(line: string): void {
-    this.lines.push(line);
+    this.lines.push(line.length > LINE_LIMIT ? line.slice(0, LINE_LIMIT) : line);
     if (this.lines.length > 2000) {const over = this.lines.length - 2000; this.lines.splice(0, over); this.dropped += over; if (this.logged) this.logged.at -= over;}
   }
   private logged?: {text: string; count: number; at: number};
@@ -84,6 +86,8 @@ export class DojoScreen {
     this.push(text); this.logged = {text, count: 1, at: this.lines.length - 1};
   }
 }
+/** The longest line kept, in characters: far wider than any terminal, and eight times the longest line typed here. */
+const LINE_LIMIT = 4096;
 function chars(value: unknown): string | undefined {
   return Array.isArray(value) && value.every(each => typeof each === 'string') ? (value as string[]).join('') : undefined;
 }
@@ -165,6 +169,8 @@ export const dojoWaiting = (prompt: string): boolean => /^~[a-z_^-]{3,}:dojo\S*<
  * are left out of what a line is shown to have printed.
  */
 const TERMINAL_ECHO = /^gall: (%[a-z0-9-]+ (dozing, dropping|dead, got) %(blit|logs)|got old %(blit|logs) for %[a-z0-9-]+)$/u;
+/** What the dojo prints when its own handling of a line crashes (`+he-self` in app/dojo.hoon). */
+const FAILED = 'dojo: failed to process input';
 const STANDS = ' The text may still stand on its dojo line: clear it in the ship\'s own terminal before pressing Return there.';
 const short = (text: string): string => text.length > 120 ? text.slice(0, 120) + '…' : text;
 
@@ -231,8 +237,10 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
     standing = false;
     const isBare = () => screen.line === prompt && screen.input === '';
     if (!late && isBare()) return true;
-    try {await send(clear.map(poke));} catch {return false;}
-    return until(isBare, timing.answerMs / 2);
+    // The bare prompt counts only once the ship has taken both keys: a screen that stopped updating shows it too.
+    const ids: number[] = [];
+    try {await send(clear.map(poke), ids);} catch {return false;}
+    return until(() => refused(ids) || ids.every(id => answers.get(id) === true) && isBare(), timing.answerMs / 2).then(() => ids.every(id => answers.get(id) === true) && isBare());
   };
   const notRun = async (message: string, late = false): Promise<DojoNotRun> => new DojoNotRun(message + (await takeOff(late) ? '' : STANDS));
   const leave = async (): Promise<void> => {
@@ -296,7 +304,9 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
     const view = whole() ? undefined : scrolled();
     if (!whole() && !view) {
       const told = screen.lines.slice(said).join(' / ');
-      throw await notRun('The dojo on your ship did not show the line as you typed it, so it was not run.' + (told ? ` It said: ${short(told)}` : ''));
+      // A busy dojo that put the text back itself has said so: no key is sent to it. Otherwise the ship took the text
+      // and never showed it: it may be on the line all the same, so the clearing keys go whatever the screen shows.
+      throw await notRun('The dojo on your ship did not show the line as you typed it, so it was not run.' + (told ? ` It said: ${short(told)}` : ''), !putBack());
     }
     if (view) {
       // The line does not fit the ship's terminal. It is read whole by putting the cursor at its start and moving
@@ -347,6 +357,8 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
       back ||= since().includes('> ' + line);
       return (screen.unknown ? `\n(${screen.unknown} screen update${screen.unknown === 1 ? '' : 's'} of a kind this version does not know ${screen.unknown === 1 ? 'was' : 'were'} not shown.)` : '')
         + (view && !back ? '\n(The dojo did not print this line back as you typed it. Check above what it ran.)' : '')
+        // A dojo that takes a line prints it back first. Until it has, nothing shows that the line ran.
+        + (!view && !back ? '\n(Your ship has not shown this line as taken, so it is not known whether it ran. It was sent once.)' : '')
         + (screen.input === '' && !dojoReady(screen.line) && !dojoWaiting(screen.line) ? `\n(The dojo now waits at: ${short(screen.line)} Answer it in your ship's own terminal.)` : '');
     };
     /** An answer after which the ship may print more: while the caller follows, that is still reported, and the channel is left only then. */
@@ -381,12 +393,19 @@ export async function runDojoLine(open: DojoOpen, line: string, report: (text: s
         return (fault === undefined ? 'The dojo did not take this line: it cannot read it. Nothing was run.'
           : `The dojo did not take this line: it cannot read it from character ${fault + 1} on. Nothing was run.\n${line}\n${' '.repeat(fault)}^`) + (off ? '' : '\n' + STANDS.trim());
       }
+      // Return was taken and the dojo said it could not process the input, with no bell and the text still standing:
+      // working the line out crashed (a read the ship cannot answer does this; measured on a live ship, which then
+      // waited here for the full time). The ship undoes all of a crashed event, so nothing ran.
+      if (answers.get(enter[0]!) === true && !back && screen.input !== '' && since().includes(FAILED) && (capped || ended || quiet >= timing.quietMs)) {
+        const off = await takeOff(true);
+        return tail(now + '\n(The dojo could not work this line out, so nothing was run' + (off ? ', and the line was taken off its prompt again.)' : '.)' + STANDS));
+      }
       if (screen.lines.length + screen.dropped > shown && screen.input === '' && dojoWaiting(screen.line) && (capped || ended || quiet >= timing.quietMs)) {
         // The line was the start of a longer expression. One Backspace on the empty line cancels it (measured).
         let back = false;
         if (!ended) try {await send([poke({bac: null})]); back = await until(() => dojoReady(screen.line) && screen.input === '', timing.answerMs / 2);} catch { /* said below */ }
         return 'The dojo took this line as the start of a longer expression and waited for the rest. Readymade types one line at a time, so nothing was run'
-          + (back ? ', and the unfinished expression was cancelled.' : '. Your ship\'s dojo is still waiting for the rest: press Backspace on its empty line in the ship\'s own terminal to cancel it.');
+          + (back ? ', and the unfinished expression was cancelled.' : '. Your ship\'s dojo may still be waiting for the rest: if it is, press Backspace on its empty line in the ship\'s own terminal to cancel it.');
       }
       if (screen.lines.length + screen.dropped > shown && screen.input === '' && quiet >= timing.quietMs) return answer(tail(now + notes()));
       if (ended) return tail(now + notes() + '\n(The connection to your ship ended while listening. The line was sent once.)');

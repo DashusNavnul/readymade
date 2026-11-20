@@ -1127,7 +1127,8 @@ export class ShipClient {
           for (const each of taken.events) {
             let event: JsonObject;
             try {event = asRecord(JSON.parse(each.data));} catch {end(); return;}
-            onEvent(event, each.id);
+            // Whatever a ship sends, a reader that cannot take it ends this stream; it does not escape into the app.
+            try {onEvent(event, each.id);} catch {end(); return;}
           }
         });
         response.on('end', end); response.on('error', end); response.on('aborted', end);
