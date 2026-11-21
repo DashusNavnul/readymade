@@ -247,4 +247,27 @@ async function nativePeer(c: LiveContext): Promise<void> {
   assert.equal(record.newNoticesAgain, 0, 'a notice is shown once');
 }
 
-export function run(): Promise<void> {return liveRun('live-peer-host', {join, sessions, suggest, 'suggest-bundle': suggestBundle, 'native-peer': nativePeer});}
+/**
+ * A profile with no join of its own (a new computer), connected to a ship that joined a project earlier: read
+ * which projects their owners confirm. Reads only: the ship's own request list, and one membership read per
+ * project. Nothing is joined, left or sent, and nothing is written to the profile's invitation journal.
+ */
+async function joined(c: LiveContext): Promise<void> {
+  const owner = needShip('READYMADE_OWNER_SHIP'), project = need('READYMADE_PROJECT');
+  const view = c.api.invitations, journal = (view as unknown as {journal: {entries(): unknown[]}}).journal;
+  c.record.owner = owner; c.record.retainedBefore = journal.entries().length;
+  await c.timed('read-joined-projects', () => view.discover(true), 150000);
+  const rows = seen(view.rows())[0]?.children ?? [];
+  // Every row of the group as a person sees it: its name, the words beside it, and the names of its actions.
+  c.record.rows = rows.map(row => ({label: row.label, description: row.description, actions: row.children?.map(child => child.label) ?? []}));
+  const found = rows.find(row => row.label === project && row.description?.startsWith(owner + ' · '));
+  c.record.joined = found ? {description: found.description, tooltip: found.tooltip, actions: found.children?.map(child => child.label) ?? []} : null;
+  c.record.leaveOffered = found?.children?.some(child => child.label === 'Leave Project…') ?? false;
+  c.record.retainedAfter = journal.entries().length;
+  c.observed('joined-project', found?.description ?? 'not listed');
+  if (process.env.READYMADE_EXPECT_MEMBER === '1') {
+    assert.equal(found?.description, owner + ' · member'); assert.equal(c.record.leaveOffered, true);
+  }
+  assert.equal(c.record.retainedAfter, c.record.retainedBefore);
+}
+export function run(): Promise<void> {return liveRun('live-peer-host', {join, sessions, suggest, 'suggest-bundle': suggestBundle, 'native-peer': nativePeer, joined});}
