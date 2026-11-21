@@ -35,10 +35,11 @@ export class RecordHistory {
   /** The folder, checked; created private when asked. Undefined when history does not exist yet. */
   private folder(kind?: string, create = false): string | undefined {
     const directory = kind ? path.join(this.directory, kind) : this.directory;
+    // A second-name folder is reached through `history/`, so that is checked first: a link in its place is refused, not followed.
+    if (kind && !this.folder(undefined, create)) return undefined;
     try {this.secure(fs.lstatSync(directory), true); return directory;}
     catch (error) {if (!missing(error)) throw error;}
     if (!create) return undefined;
-    if (kind) this.folder(undefined, true);
     fs.mkdirSync(directory, {mode: 0o700}); this.secure(fs.lstatSync(directory), true);
     return directory;
   }

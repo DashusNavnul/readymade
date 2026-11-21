@@ -6,7 +6,7 @@ import {remoteShip} from './remote-project-view';
 import {invitationCommand, leavableJoins, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type EventRow, type MemberRow, type MembersKind} from './project-invitations';
 import type {SessionSharingSnapshot} from './session-sharing';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
-import {MEMBERSHIP_CHECKS, catalogFailureWords, joinedCandidates, joinedProjectWords, ownerAnswer, readRequestCatalog, type CatalogFailure, type JoinedProject} from './project-membership';
+import {ANSWER_FRESH_MS, MEMBERSHIP_CHECKS, catalogFailureWords, joinedCandidates, joinedProjectWords, ownerAnswer, readRequestCatalog, type CatalogFailure, type JoinedProject} from './project-membership';
 import {remoteProjectSessionsObserve, type RemoteProjectSessionsReply} from './remote-project-sessions';
 import type {MediaTreeRow} from './media-workbench';
 
@@ -21,7 +21,7 @@ export function invitationStanding(status: Outcome['status'] | undefined, reason
     case 'submitted': return {words: 'sent — no answer yet', tooltip: 'The owner’s ship has not answered yet. ' + read};
     case 'unknown': return {words: 'sent — outcome not known', tooltip: 'Your ship got no usable answer from the owner. It may or may not have taken effect. ' + read};
     case 'unconfirmed': return {words: reason ? `not recorded by your ship (${reason})` : 'not held by your ship',
-      tooltip: 'Your ship has no record of this request, so nothing was sent to the owner. Put it aside to make the same request again; it is kept, not deleted.'};
+      tooltip: 'Your ship has no record of this request: it never received it, or it settled so long ago that the ship has forgotten it. Nothing is waiting to be sent. Put it aside to make the same request again; it is kept, not deleted.'};
     default: return {words: 'not read yet — check result', tooltip: read};
   }
 }
@@ -75,6 +75,12 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private joined?: JoinedDiscovery;
   private discovering?: Promise<void>;
   private queued?: Promise<void>;
+  /** How long Leave from the palette waits for owners that are still being asked. */
+  private joinedWaitMs = 40000;
+  private everyOwnerDue = false;
+  /** The last answer of each owner on this connection, by ship, owner and project: what a later pass shows for a project it does not ask again. */
+  private readonly answers = new Map<string, {client: ShipClient; standing: JoinedProject['standing']; observedAt?: string; at: number; order: number}>();
+  private asks = 0;
   constructor(private readonly extension: string, private readonly current: () => ShipClient | undefined,
     private readonly project: () => string | undefined, private readonly connect: (wanted?: string) => Promise<ShipClient | undefined>,
     private readonly journal: InvitationJournal, private readonly changed: () => void,
@@ -141,14 +147,17 @@ export class ProjectInvitationsView implements vscode.Disposable {
   /**
    * A background read takes its turn: it waits for a running action, then holds the view for one short request,
    * and an action pressed meanwhile waits in quiet() instead of colliding with it on the ship connection.
-   * The wait is a real timer whatever a test put in place of pause(): a loop without one would starve the action it waits for.
+   * An action always goes before the next turn: after anything it waited for, a turn lets one real pause pass, in
+   * which an action that waited for the same thing wakes and takes the view. The pauses are real timers whatever a
+   * test put in place of pause(): a loop without one would starve the action it waits for.
    */
   private async turn<T>(live: () => boolean, work: () => Promise<T>): Promise<T | undefined> {
     for (;;) {
       await this.quiet();
+      await new Promise(resolve => setTimeout(resolve, 0));
       if (!live()) return undefined;
-      if (!this.busy) break;
-      await new Promise(resolve => setTimeout(resolve, 250));
+      if (!this.busy && !this.retaining) break;
+      if (!this.retaining) await new Promise(resolve => setTimeout(resolve, 250));
     }
     let done!: () => void;
     this.busy = true; this.retaining = new Promise<void>(resolve => {done = resolve;}); this.changed();
@@ -163,7 +172,10 @@ export class ProjectInvitationsView implements vscode.Disposable {
    * needed, so a new computer shows them too. One pass at a time; a call during a pass runs one more pass after it.
    * Reads only. Nothing is written to the invitation journal and no old request becomes something that can be sent.
    */
-  discover(): Promise<void> {
+  discover(fresh = false): Promise<void> {
+    // Asked for by name (Refresh Joined Projects, Check Again): every owner is due again in the next pass, however
+    // recent its answer. The order stays the longest unasked first, so repeated refreshes go round all of them.
+    if (fresh) this.everyOwnerDue = true;
     if (!this.discovering) {
       const pass = this.pass().catch(() => undefined).finally(() => {if (this.discovering === pass) this.discovering = undefined;});
       return this.discovering = pass;
@@ -182,7 +194,17 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const read = await this.turn(live, () => readRequestCatalog(client, actor, live));
       if (!read || !live() || this.joined !== mine) return;
       if (read.status === 'unavailable') {mine.status = 'unavailable'; mine.reason = read.reason; return;}
-      mine.projects = joinedCandidates(read.requests, actor).map((row, n) => ({...row, standing: n < MEMBERSHIP_CHECKS ? 'checking' : 'unchecked'}));
+      const key = (row: {authority: string; project: string}) => actor + '\n' + row.authority + '\n' + row.project, last = (row: {authority: string; project: string}) => this.answers.get(key(row));
+      for (const [name, held] of this.answers) if (held.client !== client) this.answers.delete(name);
+      // Owners are asked a few at a time: those never asked first, then the longest unasked. An answer under a minute
+      // old is used as it is, and a project not asked in this pass keeps showing its last answer with its time.
+      const candidates = joinedCandidates(read.requests, actor), now = Date.now(), all = this.everyOwnerDue;
+      this.everyOwnerDue = false;
+      const due = new Set(candidates.filter(row => all || now - (last(row)?.at ?? -Infinity) > ANSWER_FRESH_MS).sort((a, b) => (last(a)?.order ?? 0) - (last(b)?.order ?? 0)).slice(0, MEMBERSHIP_CHECKS));
+      mine.projects = candidates.map(row => {
+        const held = last(row);
+        return due.has(row) ? {...row, standing: 'checking'} : held ? {...row, standing: held.standing, observedAt: held.observedAt} : {...row, standing: 'unchecked'};
+      });
       mine.status = 'complete'; this.changed();
       // Each owner is asked once whether this ship is a member now. The ask is one short request; its answer is read afterwards.
       for (const [n, row] of mine.projects.entries()) {
@@ -198,7 +220,9 @@ export class ProjectInvitationsView implements vscode.Disposable {
           waiting = reply === undefined && error instanceof ShipClientError && ['commandBusy', 'refused'].includes(error.code);
         }
         if (!live() || this.joined !== mine) return;
-        mine.projects[n] = waiting ? {...row, standing: 'waiting'} : {...row, ...ownerAnswer(reply)}; this.changed();
+        const answer: {standing: JoinedProject['standing']; observedAt?: string} = waiting ? {standing: 'waiting'} : ownerAnswer(reply);
+        this.answers.set(key(row), {client, ...answer, at: Date.now(), order: ++this.asks});
+        mine.projects[n] = {...row, ...answer}; this.changed();
       }
     } finally {
       // A pass that stopped early (the connection changed) leaves nothing that reads as an answer.
@@ -412,6 +436,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
     // Older rows of this ship (earlier joins and leaves) are read too, so the list shows where things stand.
+    for (const name of [...this.answers.keys()]) if (name.endsWith('\n' + link.authority + '\n' + link.project)) this.answers.delete(name);
     void this.observeRetained(); void this.discover();
   }
   /**
@@ -437,9 +462,16 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const who = this.actor(client), can = this.leavable(client, who);
       const open = this.journal.entries().filter(row => row.origin === client.origin && row.actor === who && can.has(row.command.request));
       // A profile that holds no join of its own (a new computer) asks the ships which projects this one is a member of.
-      if (!this.joinedFor(client, who) || this.discovering) await this.guest.progress('Reading joined projects from your ship', () => this.discovering ?? this.discover());
+      // What was read already is used. A pass that is still asking owners is waited for, though never past `joinedWaitMs`:
+      // an owner that does not answer must not hold up leaving a project whose owner did.
+      const read = () => {const held = this.joinedFor(client, who); return !this.same(client, who) || held !== undefined && held.status !== 'reading' && !held.projects.some(row => row.standing === 'checking');};
+      if (!read()) await this.guest.progress('Reading joined projects from your ship', async () => {
+        if (!this.joinedFor(client, who) && !this.discovering) void this.discover();
+        for (const end = Date.now() + this.joinedWaitMs; Date.now() < end && !read();) await new Promise(resolve => setTimeout(resolve, 100));
+      });
       await this.quiet();
-      if (!this.same(client, who) || this.busy) throw new Error('Connection changed; nothing was sent.');
+      if (!this.same(client, who)) throw new Error('Connection changed; nothing was sent.');
+      if (this.busy) throw new Error('Another invitation action is running. Try again in a moment; nothing was sent.');
       const found = this.joinedFor(client, who);
       const members = (found?.projects ?? []).filter(row => row.standing === 'member' && !open.some(held => held.command.authority === row.authority && held.command.project === row.project));
       if (!open.length && !members.length) {
@@ -485,7 +517,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     } finally {
       this.busy = false; this.changed();
       // The owner is asked again, so the row says what the owner holds now, not what this window expects.
-      if (sent) void this.discover();
+      if (sent) {this.answers.delete(actor + '\n' + authority + '\n' + project); void this.discover();}
     }
   }
   /**
@@ -547,7 +579,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
     try {
       await this.journal.retire(client, intent);
       this.observed.delete(this.key(intent));
-      void vscode.window.showInformationMessage('Put aside. Your ship holds no such request, so nothing was sent; you can make the request again.');
+      void vscode.window.showInformationMessage('Put aside. Your ship holds no such request, so nothing is waiting to be sent; you can make the request again.');
     } finally {this.busy = false; this.changed();}
   }
   private async pending(client: ShipClient, actor: string, project: string): Promise<InvitationRow[]> {
@@ -671,7 +703,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
           problem: command.operation === 'join' && !accepted ? {key: this.key(intent), category: 'join',
             status: outcome?.status === 'refused' ? 'blocked' : 'unknown',
             label: `${command.project}: join ${outcome?.status ?? 'outcome unconfirmed'}`} : undefined},
-          ...(outcome?.status === 'unconfirmed' ? [{label: 'Put This Request Aside', tooltip: 'Your ship has no record of this request, so nothing was sent to the owner. Putting it aside lets you make the same request again. It is kept in history, and your ship is read once more first.',
+          ...(outcome?.status === 'unconfirmed' ? [{label: 'Put This Request Aside', tooltip: 'Your ship has no record of this request, so nothing is waiting to be sent. Putting it aside lets you make the same request again. It is kept in history, and your ship is read once more first.',
             command: {command: 'readymade.retireProjectInvitation', title: 'Put This Request Aside', arguments: [command.request]}}] : []),
           ...(accepted && command.operation === 'invite-member' ? [{label: 'Copy Join Link', command: {command: 'readymade.copyProjectJoinLink', title: 'Copy Join Link', arguments: [command.request]}}] : []),
           ...(accepted && command.operation === 'join' ? [{label: offerLeave ? 'Joined — ask owner for shared files' : 'Joined earlier'},
@@ -679,5 +711,5 @@ export class ProjectInvitationsView implements vscode.Disposable {
     }
     return [{id: 'project-invitations', label: 'Project Invitations', icon: 'organization', children}];
   }
-  dispose(): void {this.closed = true; this.observed.clear(); this.grants.clear(); this.page = undefined; this.joined = undefined;}
+  dispose(): void {this.closed = true; this.observed.clear(); this.grants.clear(); this.page = undefined; this.joined = undefined; this.answers.clear();}
 }

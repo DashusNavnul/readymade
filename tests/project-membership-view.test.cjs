@@ -28,6 +28,7 @@ function ship(actor, requests, owners, origin = 'https://' + actor.slice(1) + '.
     projectInvitation: async (operation, value) => {
       if (operation === 'requests') {
         listed.push({...value});
+        if (owners.holdList) await owners.holdList;
         if (requests === undefined) return {status: 404, body: {status: 'missing', message: 'no such route'}};
         return {status: 200, body: {schema: 'readymade-project-invitation-catalog-v1', owner: actor, permissionGranted: false, catalog: '0x9', offset: 0, total: requests.length, next: null, requests: [...requests]}};
       }
@@ -127,7 +128,7 @@ test('refusal, silence, an unfinished join and an unreadable list never read as 
     assert.equal(say('lost'), '~bud · member');
     assert.equal(say('again'), '~wes · member');
     // A check this connection could not start is said as that, with no Leave.
-    assert.equal(say('open'), '~bud · an earlier check is still open');
+    assert.equal(say('open'), '~bud · not asked just now'); assert.match(named(t.view, 'open').tooltip, /still holding earlier checks.*Refresh joined projects in a few minutes/);
     for (const label of ['left', 'quiet', 'open']) {
       assert.deepEqual(named(t.view, label).children.map(r => r.label), ['Check Again']);
       await assert.rejects(t.view.leave({authority: named(t.view, label).description.split(' ')[0], project: label}), /Refresh joined projects first/);
@@ -208,7 +209,7 @@ test('a request recorded here that the ship never received is said as that, and 
   const t2 = fresh(nec, async () => true, first.directory);
   await t2.view.observeRetained();
   const shown = children(t2.view).find(r => r.label === 'demo');
-  assert.equal(shown.description, 'join · not held by your ship'); assert.match(shown.tooltip, /no record of this request, so nothing was sent to the owner/);
+  assert.equal(shown.description, 'join · not held by your ship'); assert.match(shown.tooltip, /no record of this request: it never received it, or it settled so long ago that the ship has forgotten it\. Nothing is waiting to be sent/);
   assert.deepEqual(shown.children.map(r => r.label), ['Check Result', 'Put This Request Aside']);
   await assert.rejects(t2.journal.submit(nec, {...intent, command: {...join, request: uuid(8)}}, true), /it will not be sent again\. If your ship does not hold it, put it aside/);
   // Written a moment ago, it may still be arriving: it is left alone. Nothing was sent by asking.
@@ -245,4 +246,85 @@ test('a request the ship refused before recording keeps the ship\'s reason, and 
   assert.deepEqual(['accepted', 'refused', 'prepared', 'submitted', 'unknown', undefined].map(status => invitationStanding(status).words),
     ['accepted', 'refused', 'waiting to reach the owner', 'sent — no answer yet', 'sent — outcome not known', 'not read yet — check result']);
   for (const status of ['prepared', 'submitted', 'unknown']) assert.doesNotMatch(invitationStanding(status).words + invitationStanding(status).tooltip, /failed|refused|not sent/i);
+});
+
+test('an action pressed while joined projects are being read waits for that read and then runs; the background read never takes its place', async t => {
+  let release; const owners = {'~wes/demo': 'ready', holdList: new Promise(resolve => {release = resolve;})};
+  const nec = ship('~nec', [row(1)], owners), x = fresh(nec);
+  t.after(() => x.done());
+  // This profile holds the join itself, so its row has a Check Result.
+  const join = {request: uuid(1), authority: '~wes', project: 'demo', operation: 'join', invitation: '0x123'};
+  await x.journal.submit({...nec, projectInvitation: async (operation, value) => operation === 'submit' ? {status: 200, body: nec.requests[0]} : nec.projectInvitation(operation, value)},
+    {version: 1, origin: nec.origin, actor: '~nec', command: join}, true);
+  const pass = x.view.discover();
+  while (!nec.listed.length) await new Promise(resolve => setImmediate(resolve));
+  // The request list is being read. Check Result is pressed now, and so is a second one right after the first.
+  const pressed = x.view.check(join.request);
+  release(); await pressed;
+  assert.equal(children(x.view).find(r => r.label === 'demo').description, 'join · accepted');
+  await x.view.check(join.request); await pass;
+  assert.deepEqual(nec.asked, ['~wes/demo']); assert.deepEqual(nec.sent, []);
+});
+
+test('with more joined projects than one pass asks, each pass asks the ones not asked yet, and earlier answers stay shown', async t => {
+  const requests = Array.from({length: 18}, (_, n) => row(n + 1, 'join', 'accepted', '~wes', 'p' + String(n).padStart(2, '0')));
+  const owners = Object.fromEntries(requests.map(r => ['~wes/' + r.project, 'ready']));
+  const nec = ship('~nec', requests, owners), x = fresh(nec);
+  t.after(() => x.done());
+  const standing = () => children(x.view).filter(r => /^p\d\d$/.test(r.label)).map(r => r.description.split(' · ')[1]);
+  await x.view.discover();
+  assert.equal(nec.asked.length, 8); assert.equal(standing().filter(s => s === 'member').length, 8); assert.equal(standing().filter(s => s === 'not checked yet').length, 10);
+  // A pass soon after asks only owners that were not asked; the answers it has are used as they are.
+  await x.view.discover();
+  assert.equal(nec.asked.length, 16); assert.equal(new Set(nec.asked).size, 16); assert.equal(standing().filter(s => s === 'member').length, 16);
+  await x.view.discover();
+  assert.equal(nec.asked.length, 18); assert.equal(new Set(nec.asked).size, 18); assert.deepEqual(standing(), Array(18).fill('member'));
+  // Nothing is due: a further pass asks no one. Asked for by name, owners are due again, eight at a time, and the rest keep their answers.
+  await x.view.discover(); assert.equal(nec.asked.length, 18);
+  owners['~wes/p00'] = 'refused';
+  await x.view.discover(true);
+  assert.equal(nec.asked.length, 26); assert.equal(standing().filter(s => s === 'member').length, 17);
+  assert.equal(children(x.view).find(r => r.label === 'p00').description, '~wes · not confirmed by the owner’s ship');
+  // Refreshing again and again goes round all of them, never the same eight twice in a row.
+  await x.view.discover(true); await x.view.discover(true);
+  assert.equal(nec.asked.length, 42); assert.equal(new Set(nec.asked.slice(18, 34)).size, 16);
+  for (const late of ['~wes/p16', '~wes/p17']) assert.equal(nec.asked.slice(34).includes(late), true);
+});
+
+test('Leave from the palette works while another pass is queued, and does not wait for an owner that never answers', async t => {
+  // ~zod sorts after ~wes, so ~wes is asked and answers first; ~zod is asked next and never answers.
+  let never; const silent = new Promise(resolve => {never = resolve;});
+  const nec = ship('~nec', [row(1), row(2, 'join', 'accepted', '~zod', 'far')], {'~wes/demo': 'ready', '~zod/far': () => silent}), x = fresh(nec);
+  t.after(() => {never('uncertain'); x.done();});
+  x.view.joinedWaitMs = 300;
+  // One pass is running and another is queued behind it.
+  void x.view.discover(); void x.view.discover();
+  for (let n = 0; n < 400 && children(x.view).find(r => r.label === 'demo')?.description !== '~wes · member'; n++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(children(x.view).find(r => r.label === 'demo').description, '~wes · member');
+  assert.equal(children(x.view).find(r => r.label === 'far').description, '~zod · asking the owner’s ship…');
+  // The one confirmed project can be left, though ~zod has not answered: the wait is bounded.
+  const started = Date.now();
+  await x.view.leave();
+  assert.equal(nec.sent.length, 1); assert.equal(nec.sent[0].project, 'demo'); assert.equal(x.state.confirmed, 1);
+  assert.ok(Date.now() - started < 5000);
+});
+
+test('putting a request aside in one window never moves the same request made again from another', async t => {
+  const nec = ship('~nec', [], {}), x = fresh(nec);
+  t.after(() => x.done());
+  const join = {request: uuid(11), authority: '~wes', project: 'demo', operation: 'join', invitation: '0x123'}, intent = {version: 1, origin: nec.origin, actor: '~nec', command: join};
+  const stopping = {...nec, projectInvitation: async (operation, value) => {if (operation === 'submit') throw new Error('process ended'); return nec.projectInvitation(operation, value);}};
+  await assert.rejects(x.journal.submit(stopping, intent, true), /process ended/);
+  // Window two starts putting it aside; its read of the ship is slow.
+  let answer; const slow = {...nec, projectInvitation: async (operation, value) => operation === 'result' ? new Promise(resolve => {answer = () => resolve({status: 404, body: {status: 'missing', message: 'No retained invitation command.'}});}) : nec.projectInvitation(operation, value)};
+  const two = new InvitationJournal(x.directory), late = two.retire(slow, intent, Date.now() + 120000);
+  while (!answer) await new Promise(resolve => setImmediate(resolve));
+  // Meanwhile window one puts it aside and makes the same join again; the ship accepts it.
+  await x.journal.retire(nec, intent, Date.now() + 120000);
+  const again = {...intent, command: {...join, request: uuid(12)}};
+  assert.equal((await x.journal.submit(nec, again, true)).status, 'accepted');
+  // Window two's late answer is about the old request: the new one stays where it is.
+  answer(); await assert.rejects(late, /Retained invitation context changed/);
+  assert.deepEqual(x.journal.entries().map(i => i.command.request), [uuid(12)]);
+  assert.equal(fs.readdirSync(path.join(x.directory, 'history')).length, 1);
 });

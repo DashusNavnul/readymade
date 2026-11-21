@@ -18,8 +18,13 @@ export type CatalogFailure = 'unsupported' | 'changed' | 'unreachable' | 'malfor
 export type CatalogRead = {status: 'complete'; catalog: string; requests: InvitationResult[]} | {status: 'unavailable'; reason: CatalogFailure};
 /** The ship keeps at most 512 requests, 64 to a page: eight pages, or one empty page. */
 const PAGES = 8;
-/** Owners asked in one pass. Each ask is one read the connected ship holds for five minutes (it holds 32). */
-export const MEMBERSHIP_CHECKS = 16;
+/**
+ * Owners asked in one pass. Each ask is one read the connected ship holds for five and a half minutes, and it holds
+ * 32 at most, for every window together; so a pass asks few, and the next pass asks the ones not asked yet.
+ */
+export const MEMBERSHIP_CHECKS = 8;
+/** An owner's answer this recent is used as it is instead of asking again. */
+export const ANSWER_FRESH_MS = 60000;
 
 function thrown(error: unknown): CatalogFailure {
   if (!(error instanceof ShipClientError)) return 'unreachable';
@@ -103,7 +108,7 @@ export function ownerAnswer(reply: RemoteProjectSessionsReply | undefined): Owne
   return {standing: 'unreachable'};
 }
 
-/** `waiting`: this connection still holds an unanswered check of the project, so the owner was not asked again. */
+/** `waiting`: the ship or this connection still holds earlier checks, so the owner was not asked this time. `unchecked`: more projects than one pass asks. */
 export type JoinedStanding = Standing | 'checking' | 'unchecked' | 'waiting';
 export interface JoinedProject extends JoinedCandidate {standing: JoinedStanding; observedAt?: string}
 /** `~2026.11.20..22.42.03..2cbc` as `2026-11-20 22:42 UTC`; a date alone when the ship gave no time. */
@@ -122,10 +127,10 @@ export function joinedProjectWords(row: JoinedProject): {description: string; to
       tooltip: `Your ship once asked to join this project. ${row.authority} did not confirm that it is a member now: it may have left or been removed, or the owner’s ship does not answer this read.${unresolved} Nothing was sent.`};
     case 'unreachable': return {description: `${row.authority} · the owner’s ship did not answer`,
       tooltip: `Membership could not be checked now.${unresolved} Check again when ${row.authority} is reachable. Nothing was sent.`};
-    case 'waiting': return {description: `${row.authority} · an earlier check is still open`,
-      tooltip: 'Your ship has not finished an earlier check of this project, so the owner was not asked again. Check again in a few minutes; if this stays, reconnect the ship. Nothing was sent.'};
+    case 'waiting': return {description: `${row.authority} · not asked just now`,
+      tooltip: 'Your ship is still holding earlier checks, so this owner was not asked this time. Refresh joined projects in a few minutes. Nothing was sent.'};
     case 'unchecked': return {description: `${row.authority} · not checked yet`,
-      tooltip: `Only ${MEMBERSHIP_CHECKS} owners are asked at a time. Refresh joined projects to ask the rest.`};
+      tooltip: `Owners are asked ${MEMBERSHIP_CHECKS} at a time, those not asked yet first. Refresh joined projects to ask the next ones.`};
   }
 }
 /** Why the ship's own list could not be read, and what to do; never worded as "no projects". */

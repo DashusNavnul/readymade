@@ -130,9 +130,11 @@ unknown, use **Check Result** on that retained attempt; do not submit the link
 again to force an answer. See [Join a workspace](JOIN_A_WORKSPACE.md).
 
 A row under **Project Invitations** that reads **not held by your ship** is a
-request Readymade recorded and your ship never received: Readymade closed, or
-your ship refused it, before the ship recorded it, so nothing was sent to the
-owner. **Put This Request Aside** reads your ship once more and, if it still
+request your ship has no record of. Either it never received it (Readymade
+closed, or your ship refused it, before the ship recorded it), or it settled so
+long ago that your ship has forgotten it; it keeps its newest 512. Either way
+nothing is waiting to be sent. **Put This Request Aside** reads your ship once
+more and, if it still
 holds no such request, moves the request out of the way so you can invite, join
 or leave again. It is kept, not deleted, and a request recorded less than a
 minute ago is left alone because it may still be arriving.

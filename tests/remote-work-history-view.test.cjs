@@ -81,6 +81,11 @@ test('a 65th draft opens: the oldest finished work moves to history and the pers
   x.view.observation = x.observed();
   await assert.rejects(x.view.editDraft('/lib/a/hoon'), /64 drafts are open and none of them is finished\. Finish a suggestion, or move a draft you are not working on to history: its text is kept and it can be restored/);
   assert.equal(x.drafts.open, 64); assert.equal(x.drafts.archivedPage(0, 64).total, 2); assert.equal(ui.said.length, 2);
+  // A file whose draft is already open is simply opened: no place is needed, so nothing is refused.
+  const opened = ui.opened.length, existing = x.drafts.list()[5];
+  x.view.observation = existing.observation; await x.view.editDraft(existing.path);
+  assert.equal(ui.opened.length, opened + 1); assert.equal(ui.opened.at(-1), existing.uri); assert.equal(x.drafts.open, 64);
+  x.view.observation = x.observed();
   // A draft open in an editor is not moved from under the person, even when it is finished.
   const kept = x.drafts.list()[0]; await x.suggest(kept);
   ui.documents = [{isClosed: false, uri: {scheme: 'readymade-remote-draft', path: `/${kept.id}${kept.path}`, toString: () => kept.uri}, getText: () => kept.text}];
@@ -122,7 +127,7 @@ test('an unsent draft moves only when the person confirms; an unsettled send doe
   // The sent draft comes back exactly, is opened, and is still marked as sent: no Send is offered for it, and it is finished work again.
   await x.view.restoreDraft(done.id);
   assert.equal(x.drafts.get(done.id).text, done.text); assert.equal(ui.opened.at(-1), done.uri);
-  assert.equal(labels(row(x.view, done.id)).includes('Sent — its suggestion is in history'), true);
+  assert.equal(labels(row(x.view, done.id)).includes('In history: Recorded on owner — awaiting review'), true);
   assert.equal(row(x.view, done.id).children.some(c => c.command?.command === 'readymade.sendSharedSuggestion'), false);
   assert.equal(x.suggestions.holds(done.id), true);
   // The unsent draft comes back as an unsent draft: its Send is offered again, because it was never sent.

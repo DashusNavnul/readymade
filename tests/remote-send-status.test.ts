@@ -4,12 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {RemoteDraftStore} from '../src/remote-draft-store';
-import {RemoteSuggestionJournal, suggestionSettled, type SavedSuggestion} from '../src/remote-suggestion-journal';
+import {RemoteSuggestionJournal, suggestionSettled, suggestionStanding, type SavedSuggestion} from '../src/remote-suggestion-journal';
 import {RemoteBundleJournal, bundleStanding, remoteBundleOutcome, type RemoteBundleIntent, type SavedBundle} from '../src/remote-bundle-suggest';
 import {remoteSourceHash, type RemoteSourceObservation} from '../src/remote-project-view';
 import type {RemoteSuggestionIntent, RemoteSuggestionReply} from '../src/remote-project-suggest';
 import {SEND_ACTIONS, bundleStatus, suggestionStatus} from '../src/remote-send-status';
-import {OutcomeUnknownError} from '../src/ship-client';
+import {OutcomeUnknownError, ShipClientError} from '../src/ship-client';
 
 const original = 'original\n';
 function observed(request: string): RemoteSourceObservation {
@@ -33,7 +33,12 @@ test('every state of a send is one of five things, with one next step, and unkno
   for (const recovery of ['requested', 'uncertain', 'missing', 'recorded']) assert.equal(single('unknown', recovery).resolved, recovery === 'recorded');
   const bundles: SavedBundle['phase'][] = ['claimed', 'submitting', 'unknown', 'watching', 'sent', 'missing', 'uncertain', 'recorded', 'refused', 'refused-before-submit'];
   assert.deepEqual(bundles.map(phase => [bundleStatus({phase}).state, bundleStatus({phase}).action]), [['local', 'close-unsent'], ['unknown', 'check'], ['unknown', 'check'], ['unknown', 'check'], ['unknown', 'check'],
-    ['unknown', 'check'], ['unknown', 'none'], ['recorded', 'none'], ['refused', 'none'], ['not-sent', 'none']]);
+    ['unknown', 'none'], ['unknown', 'none'], ['recorded', 'none'], ['refused', 'none'], ['not-sent', 'none']]);
+  // What may move to history: finished work freely; a send that ended without an answer only when asked; anything still readable not at all.
+  assert.deepEqual(bundles.map(phase => bundleStanding({phase})), ['open', 'open', 'open', 'open', 'open', 'ended', 'ended', 'finished', 'finished', 'finished']);
+  assert.deepEqual(phases.map(phase => suggestionStanding({phase})), ['open', 'open', 'open', 'open', 'open', 'open', 'open', 'open', 'finished', 'finished', 'finished']);
+  assert.deepEqual(['requested', 'watching', 'unknown', 'uncertain', 'missing', 'expired', 'recorded'].map(phase => suggestionStanding({phase: 'missing', recoveries: [{at: 1, phase}]} as Pick<SavedSuggestion, 'phase' | 'recoveries'>)),
+    ['open', 'open', 'open', 'ended', 'ended', 'ended', 'finished']);
   assert.equal(bundleStatus({phase: 'uncertain', reason: 'poke-refused'}).state, 'refused');
   assert.match(bundleStatus({phase: 'uncertain', reason: 'suggest-timeout'}).label, /^Ended without a result — outcome not known \(the owner’s ship did not answer in time\)$/);
   assert.equal(bundleStatus({phase: 'refused-before-submit', reason: 'closed-unsent'}).label, 'Not sent: closed before it was sent; nothing left this computer');
@@ -63,15 +68,18 @@ function setup(t: {after(fn: () => void): void}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'readymade-send-status-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const drafts = new RemoteDraftStore(path.join(root, 'drafts')), directory = path.join(root, 'suggestions'), bundles = path.join(root, 'bundles');
-  const counts = {posts: 0, gets: 0}; let lose = false;
+  const counts = {posts: 0, gets: 0}; let lose: boolean | 'busy' = false;
   const client = {origin: 'https://peer.example', browserCookies: () => [{name: 'urbauth-~nec', value: 'fixture'}],
-    projectSuggestionSubmit: async (i: RemoteSuggestionIntent) => {counts.posts++; if (lose) throw new OutcomeUnknownError(); return reply(i, 'watching');},
+    projectSuggestionSubmit: async (i: RemoteSuggestionIntent) => {
+      if (lose === 'busy') throw new ShipClientError('commandBusy');      // The connection refuses before anything is sent.
+      counts.posts++; if (lose) throw new OutcomeUnknownError(); return reply(i, 'watching');
+    },
     projectSuggestionResult: async (i: RemoteSuggestionIntent) => {counts.gets++; return reply(i, 'recorded');},
     projectBundleSubmit: async (_i: RemoteBundleIntent): Promise<never> => {counts.posts++; throw new OutcomeUnknownError();},
     projectBundleResult: async (_i: RemoteBundleIntent): Promise<never> => {counts.gets++; throw new Error('not read in this test');}};
   let made = 0;
   const draft = (file = '/lib/a/hoon') => {const first = drafts.create(observed('0x' + (++made).toString(16)), file); return drafts.save(first.id, `edit ${made}\n`);};
-  return {directory, bundles, client, counts, draft, losing: (on: boolean) => {lose = on;}};
+  return {directory, bundles, client, counts, draft, losing: (on: boolean | 'busy') => {lose = on;}};
 }
 
 test('a send recorded and never started is closed as not sent without sending, in another process and against a window about to send', async t => {
@@ -113,6 +121,10 @@ test('a window that still holds the permit loses it to a close; a send that star
   assert.equal(suggestionStatus(journal.get(lost.request)).state, 'unknown'); assert.equal(suggestionStatus(journal.get(lost.request)).action, 'check');
   // The unknown one is settled by reading, from the other window, with nothing sent again.
   assert.equal((await other.observe(x.client, lost.request)).phase, 'recorded'); assert.equal(x.counts.posts, 2);
+  // A send the connection refused because another request was running never left the computer, and is recorded as not sent, not as unknown.
+  const f = x.draft(), busy = journal.claim(f, f.text, observed('0xb5')); x.losing('busy');
+  await assert.rejects(journal.submit(x.client, busy.request), /still finishing another request to your ship/); x.losing(false);
+  assert.equal(journal.get(busy.request).phase, 'refused-before-submit'); assert.equal(suggestionStatus(journal.get(busy.request)).state, 'not-sent'); assert.equal(x.counts.posts, 2);
 });
 
 test('a multi-file send that never started is closed the same way, and says why it was not sent', async t => {

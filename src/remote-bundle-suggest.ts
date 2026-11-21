@@ -7,6 +7,7 @@ import {remoteSourceObservation, remoteSourceHash, remoteProjectViewSelector, re
 import {newRemoteSuggestionRequest, remoteSuggestionHeaders} from './remote-project-suggest';
 import type {ShipClient} from './ship-client';
 import {RecordHistory} from './private-history';
+import {withWriteLock} from './private-lock';
 
 /** One suggestion covering several shared files, all bound to one owner source observation. */
 export interface RemoteBundleIntent {
@@ -112,13 +113,14 @@ const phases = ['claimed', 'submitting', 'unknown', 'refused-before-submit', 'wa
 const settled = ['recorded', 'refused', 'uncertain', 'refused-before-submit'];
 /**
  * How a multi-file suggestion may move to history. `finished`: the owner recorded it, the owner refused it, or it
- * never started; such a record moves by itself when room is needed. `ended`: final here but its outcome on the
- * owner's ship was never learned (`uncertain`); it moves only when the person says so, and history keeps saying
- * `uncertain`. Anything else can still be checked and stays open.
+ * never started; such a record moves by itself when room is needed. `ended`: nothing more can be read here and
+ * the outcome on the owner's ship was never learned (`uncertain`, or `missing`: this ship no longer holds the send
+ * and a multi-file send has no receipt recovery); it moves only when the person says so, and history keeps saying
+ * what it was. Anything else can still be checked or closed and stays open.
  */
 export function bundleStanding(row: Pick<SavedBundle, 'phase' | 'reason'>): 'finished' | 'ended' | 'open' {
   if (['recorded', 'refused', 'refused-before-submit'].includes(row.phase) || row.phase === 'uncertain' && row.reason === 'poke-refused') return 'finished';
-  return row.phase === 'uncertain' ? 'ended' : 'open';
+  return row.phase === 'uncertain' || row.phase === 'missing' ? 'ended' : 'open';
 }
 function fail(): never {throw new Error('Invalid retained multi-file suggestion.');}
 function validate(value: unknown): SavedBundle {
@@ -205,12 +207,7 @@ export class RemoteBundleJournal {
   private locked<T>(run: () => T): T {
     if (!exists(this.directory)) fs.mkdirSync(this.directory, {recursive: true, mode: 0o700});
     secure(fs.lstatSync(this.directory), true);
-    const file = path.join(this.directory, '.write.lock');
-    const fd = fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600), held = fs.fstatSync(fd);
-    try {return run();} finally {
-      fs.closeSync(fd);
-      if (exists(file)) {const now = fs.lstatSync(file); if (held.ino === now.ino && held.dev === now.dev) fs.unlinkSync(file);}
-    }
+    return withWriteLock(this.directory, run);
   }
   private write(value: SavedBundle, create = false): SavedBundle {
     const row = validate(value), bytes = Buffer.from(JSON.stringify(row)); if (bytes.length > 524288) fail();
@@ -273,7 +270,8 @@ export class RemoteBundleJournal {
         const reply = await client.projectBundleSubmit(row.intent, true); this.context(client, row);
         return this.update(row, reply.status, reply);
       } catch (error) {
-        this.update(row, (error as {code?: unknown} | null)?.code === 'refused' ? 'refused-before-submit' : 'unknown'); throw error;
+        // As for a single-file send: refused by this ship or by a busy connection means nothing left the computer.
+        this.update(row, ['refused', 'commandBusy'].includes(String((error as {code?: unknown} | null)?.code)) ? 'refused-before-submit' : 'unknown'); throw error;
       }
     } finally {this.busy.delete(request);}
   }

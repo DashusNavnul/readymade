@@ -4,7 +4,7 @@ const test = require('node:test'), assert = require('node:assert/strict'), Modul
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const original = Module._load;
 const ui = {said: [], documents: [], Uri: {parse: value => ({toString: () => value})},
-  window: {showInformationMessage: message => {ui.said.push(message);}},
+  window: {showInformationMessage: message => {ui.said.push(message);}, showWarningMessage: async (message, options, action) => {ui.asked.push({message, detail: options.detail, action}); return ui.answer;}},
   workspace: {registerTextDocumentContentProvider: () => ({dispose() {}}), get textDocuments() {return ui.documents;}}};
 let RemoteSourceView, RemoteDraftStore, RemoteSuggestionJournal, RemoteBundleJournal, remoteSourceHash, ShipClientError, OutcomeUnknownError;
 try {
@@ -25,13 +25,13 @@ function reply(i, status, recovery = false) {
   const o = i.observation, common = {owner: o.owner, peer: o.peer, project: o.project, generation: o.generation, request: i.request, permissionGranted: false, committed: false};
   if (status === 'missing') return {...common, status, ...(recovery ? {recovery: true} : {})};
   return {...common, status, viewRequest: o.request, grant: o.grant, root: o.root, snapshotDigest: o.snapshotDigest, path: i.path, sourceHash: remoteSourceHash(i.source),
-    reason: status === 'recorded' ? 'suggestion-recorded' : 'awaiting-owner', deadline: '~2026.11.09..00.00.30', retainedUntil: '~2026.11.09..00.05.30',
+    reason: status === 'recorded' ? 'suggestion-recorded' : status === 'uncertain' ? 'suggest-timeout' : 'awaiting-owner', deadline: '~2026.11.09..00.00.30', retainedUntil: '~2026.11.09..00.05.30',
     receiptHash: status === 'recorded' ? '0xa' : null, ...(recovery ? {recovery: true} : {})};
 }
 function setup(t, actor = '~nec') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'readymade-send-view-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
-  ui.said.length = 0; ui.documents = [];
+  ui.said.length = 0; ui.documents = []; ui.asked = []; ui.answer = undefined;
   const drafts = new RemoteDraftStore(path.join(root, 'drafts')), directory = path.join(root, 'suggestions');
   const counts = {posts: 0, gets: 0, recovers: 0, recoveryGets: 0}, ship = {result: () => 'recorded', recover: () => 'recorded', recovered: () => 'recorded'};
   const answer = (how, i, recovery) => {const value = how(); if (value instanceof Error) throw value; return reply(i, value, recovery);};
@@ -133,4 +133,33 @@ test('a receipt recovery that is interrupted stays a recovery to read; it never 
   assert.equal(labels(row(later.view, d.id)).includes('Owner receipt recovered — awaiting review'), true);
   assert.deepEqual(x.counts, {posts: 1, gets: 1, recovers: 1, recoveryGets: 1});
   assert.equal(later.suggestions.get(claim.request).phase, 'missing');
+});
+
+test('a suggestion the owner never confirmed is not a dead end: it moves to history as unresolved when the person says so, and never otherwise', async t => {
+  const x = setup(t), d = x.draft(), {view, suggestions} = x.reopen();
+  const claim = suggestions.claim(d, d.text, observed('0xd1')); await suggestions.submit(x.client, claim.request);
+  x.ship.result = () => 'missing'; await view.checkSuggestion(claim.request);
+  // Before the owner was asked there is still something to try: it does not move, asked or not.
+  assert.equal(labels(row(view, d.id)).some(l => l.startsWith('Move to History')), false);
+  await assert.rejects(view.moveDraftToHistory(d.id), /result is not settled\. Check its result first/);
+  // The owner is asked for its receipt and does not confirm one.
+  x.ship.recover = () => 'uncertain'; await view.checkSuggestion(claim.request);
+  const shown = row(view, d.id);
+  assert.equal(labels(shown).includes('The owner’s ship did not confirm a receipt — outcome not known'), true);
+  assert.equal(labels(shown).includes('Move to History…'), true);
+  // It is not finished work: nothing moves it by itself.
+  await view.moveFinishedToHistory(); assert.equal(suggestions.list().length, 1); assert.match(ui.said.at(-1), /Nothing is finished yet/);
+  // Dismissed: it stays. Confirmed: it moves with its draft, and history says exactly what it was.
+  await view.moveDraftToHistory(d.id);
+  assert.equal(suggestions.list().length, 1); assert.match(ui.asked.at(-1).detail, /did not confirm a receipt — outcome not known\. History keeps it exactly so; the draft goes with it and is never sent again/);
+  ui.answer = 'Move to History'; await view.moveDraftToHistory(d.id);
+  assert.equal(suggestions.list().length, 0); assert.equal(x.drafts.open, 0);
+  const kept = suggestions.find(claim.request);
+  assert.equal(kept.phase, 'missing'); assert.equal(kept.recoveries.at(-1).phase, 'uncertain'); assert.equal(suggestions.holds(d.id), true);
+  assert.throws(() => suggestions.claim(d, d.text, observed('0xd2')), /already sent; its suggestion is in history/);
+  assert.equal(x.counts.posts, 1);
+  // Restored to look at, the draft says what history holds, and offers no send.
+  await view.showHistory(); x.drafts.restore(d.id);
+  assert.equal(labels(row(view, d.id)).includes('In history: The owner’s ship did not confirm a receipt — outcome not known'), true);
+  assert.equal(row(view, d.id).children.some(c => c.command?.command === 'readymade.sendSharedSuggestion'), false);
 });

@@ -377,7 +377,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('checkProjectInvitation', request => this.invitations.check(String(request)));
     command('retireProjectInvitation', request => this.invitations.retire(String(request)));
     command('leaveProject', request => this.invitations.leave(typeof request === 'string' || typeof request === 'object' && request !== null ? request as string | JoinedTarget : undefined));
-    command('refreshJoinedProjects', () => this.invitations.discover());
+    command('refreshJoinedProjects', () => this.invitations.discover(true));
     command('removeCollaborationService', () => this.invitations.removeGuestService());
     command('copyProjectJoinLink', request => this.invitations.copyLink(String(request)));
     command('projectMembers', () => this.invitations.observe('members'));

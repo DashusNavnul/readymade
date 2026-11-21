@@ -108,3 +108,19 @@ test('room is made only when a store is full, only from finished work, oldest fi
   for (const store of ['drafts', 'suggestions', 'bundles'] as const) {assert.match(fullWords(store), /^64 /); assert.doesNotMatch(fullWords(store), /delet|discard/i);}
   assert.equal(stores.drafts.archivedPage(0, 64).total, 4); assert.equal(stores.suggestions.archivedPage(0, 64).total, 4);
 });
+
+test('a second window sees what the first one moved: it neither refuses for a store that has room nor keeps showing a moved draft', async t => {
+  const x = setup(t), {stores} = x;
+  for (let n = 0; n < 64; n++) {const d = x.draft(); await x.suggest(d, n < 3);}
+  // The second window opened while all 64 places were taken.
+  const second = {drafts: new RemoteDraftStore(stores.drafts.directory), suggestions: new RemoteSuggestionJournal(stores.suggestions.directory), bundles: new RemoteBundleJournal(stores.bundles.directory)};
+  assert.equal(second.drafts.open, 64);
+  assert.deepEqual(moveAllFinished(stores), {sends: 3, drafts: 3});
+  // It counts what is on disk now: there is room, nothing needs to move, and the moved drafts are in its history list, not its open list.
+  assert.equal(second.drafts.open, 61); assert.equal(second.drafts.list().length, 61);
+  assert.deepEqual(makeRoom(second, {drafts: 1, suggestions: 1}), {sends: 0, drafts: 0, short: []});
+  assert.equal(second.drafts.archivedPage(0, 8).drafts.length, 3);
+  const made = second.drafts.create({...second.drafts.list()[0].observation, request: '0xfeed'}, '/lib/a/hoon');
+  // And the first window sees the draft the second one made.
+  assert.equal(stores.drafts.open, 62); assert.equal(stores.drafts.get(made.id).path, '/lib/a/hoon');
+});

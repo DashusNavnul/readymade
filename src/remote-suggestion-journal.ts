@@ -8,6 +8,7 @@ import {remoteProjectViewJSON, type RemoteSourceObservation} from './remote-proj
 import {asRecord} from './protocol';
 import {ShipClientError, type ShipClient} from './ship-client';
 import {RecordHistory} from './private-history';
+import {withWriteLock} from './private-lock';
 
 export type SuggestionPhase = 'claimed' | 'submitting' | 'unknown' | 'refused-before-submit' | RemoteSuggestionReply['status'];
 export interface RecoveryObservation {
@@ -31,6 +32,16 @@ function fail(): never {throw new Error('Invalid retained suggestion intent.');}
  */
 export function suggestionSettled(row: Pick<SavedSuggestion, 'phase' | 'recoveries'>): boolean {
   return row.recoveries?.at(-1)?.phase === 'recorded' || ['recorded', 'refused', 'refused-before-submit'].includes(row.phase);
+}
+/**
+ * How a suggestion may move to history. `finished`: settled, see above; it moves by itself when room is needed.
+ * `ended`: the owner was asked for its receipt and did not confirm one, so the outcome is not known and nothing
+ * more is being read; it moves only when the person says so, and history keeps it exactly as unresolved.
+ * `open`: something can still be read or closed first (Check Result, Recover Owner Receipt, Close as Not Sent).
+ */
+export function suggestionStanding(row: Pick<SavedSuggestion, 'phase' | 'recoveries'>): 'finished' | 'ended' | 'open' {
+  if (suggestionSettled(row)) return 'finished';
+  return ['uncertain', 'missing', 'expired'].includes(row.recoveries?.at(-1)?.phase ?? '') ? 'ended' : 'open';
 }
 const requestKey = (request: string) => createHash('sha256').update(request).digest('hex');
 function copy<T>(value: T): T {return JSON.parse(JSON.stringify(value)) as T;}
@@ -153,15 +164,16 @@ export class RemoteSuggestionJournal {
     return {total: page.total, suggestions: page.names.filter(name => !exists(path.join(this.directory, `${name}.json`))).map(name => this.archived(name)).filter(row => row !== undefined)};
   }
   /**
-   * Move one finished suggestion to history, exactly as recorded. It leaves the 64 open suggestions; its draft is
-   * still never sent again, and no permit to send exists for it in this or any window. A send whose outcome is
-   * not settled stays open: it can still be checked, and moving it would hide that it is unresolved.
+   * Move one suggestion to history, exactly as recorded. It leaves the 64 open suggestions; its draft is still
+   * never sent again, and no permit to send exists for it in this or any window. A finished one moves freely. One
+   * that ended without an answer from the owner moves only when `asked` is true, because that is the person's
+   * decision, and history keeps it unresolved. One that can still be checked or closed stays open.
    */
-  archive(request: string): SavedSuggestion {
+  archive(request: string, asked = false): SavedSuggestion {
     return this.locked(() => {
-      const held = this.get(request);
+      const held = this.get(request), standing = suggestionStanding(held);
       if (this.busy.has(request)) throw new Error('This suggestion is being checked. Move it to history when that is done.');
-      if (!suggestionSettled(held)) throw new Error('Only a finished suggestion moves to history. Check this one first.');
+      if (standing === 'open' || standing === 'ended' && !asked) throw new Error('Only a finished suggestion moves to history. Check this one first.');
       this.history.move(held.draftId, [['request', requestKey(request)]]);
       this.permits.delete(request);
       return held;
@@ -170,12 +182,7 @@ export class RemoteSuggestionJournal {
   private locked<T>(run: () => T): T {
     if (!exists(this.directory)) fs.mkdirSync(this.directory, {recursive: true, mode: 0o700});
     secure(fs.lstatSync(this.directory), true);
-    const file = path.join(this.directory, '.write.lock');
-    const fd = fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600), held = fs.fstatSync(fd);
-    try {return run();} finally {
-      fs.closeSync(fd);
-      if (exists(file)) {const now = fs.lstatSync(file); if (held.ino === now.ino && held.dev === now.dev) fs.unlinkSync(file);}
-    }
+    return withWriteLock(this.directory, run);
   }
   private write(value: SavedSuggestion, create = false): SavedSuggestion {
     const row = validate(value), bytes = Buffer.from(JSON.stringify(row)); if (bytes.length > 524288) fail();
@@ -240,7 +247,9 @@ export class RemoteSuggestionJournal {
         const reply = await client.projectSuggestionSubmit(row.intent, true); this.context(client, row);
         return this.update(row, reply.status, historical(reply, row.intent));
       } catch (error) {
-        this.update(row, error instanceof ShipClientError && error.code === 'refused' ? 'refused-before-submit' : 'unknown'); throw error;
+        // Refused by this ship, or refused by this connection because another request was running: either way
+        // nothing left the computer, and the record says not sent. Anything else may have been sent.
+        this.update(row, error instanceof ShipClientError && ['refused', 'commandBusy'].includes(error.code) ? 'refused-before-submit' : 'unknown'); throw error;
       }
     } finally {this.busy.delete(request);}
   }

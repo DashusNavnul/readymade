@@ -88,7 +88,10 @@ project its owner confirms is listed under **Project Invitations** with
 **Leave Project…**. One the owner does not confirm reads **not confirmed by the
 owner's ship**, and one whose owner did not answer reads so; neither is treated
 as membership, and neither is treated as "not joined". **Refresh Joined
-Projects** asks again. These are reads only: nothing is joined again, and your
+Projects** asks again. Owners are asked eight at a time, those not asked yet
+first, so with many joined projects a refresh asks the next ones and the
+earlier answers stay shown with their time. These are reads only: nothing is
+joined again, and your
 old join is not copied into the new profile. File and session access are still
 granted separately by the owner. Your ship remembers its newest 512 requests,
 so a join older than that is not found this way. Drafts you had not sent stay on
@@ -236,18 +239,25 @@ answer the read. It says nothing about the suggestion; check again. A
 suggestion whose outcome is not known is never called failed, and its draft is
 not sent again or continued as a new draft until the outcome is known: the
 owner may still receive the original. No answer from an owner is not proof that
-nothing arrived, so such a suggestion can stay open; only the owner's receipt,
-the owner's refusal, or a record that it never left this computer closes it.
+nothing arrived; only the owner's receipt, the owner's refusal, or a record that
+it never left this computer resolves a suggestion. A multi-file suggestion has
+no receipt recovery: once your ship no longer holds it, or it ended without a
+result, there is nothing more to read, and its drafts can be reconciled into new
+ones.
 
-Your drafts and suggestions do not run out. Up to 64 drafts, 64 single-file
-suggestions and 64 multi-file suggestions are open at once. When a 65th is
-needed, the oldest finished work (a suggestion the owner recorded or refused, or
-one that was never sent, with its draft) moves to **Shared Work History**, and
-Readymade says so. History keeps every record exactly, lists it a page at a
-time, and still stops a draft from being sent twice. **Restore Draft** brings a
-draft back among the open ones. A draft you never sent moves only when you
-choose **Move to History…** and confirm; a suggestion whose outcome is not known
-does not move. Nothing is deleted.
+The 64 are a limit on open work, not on how much you ever do. Up to 64 drafts,
+64 single-file suggestions and 64 multi-file suggestions are open at once. When
+a 65th is needed, the oldest finished work (a suggestion the owner recorded or
+refused, or one that was never sent, with its draft) moves to **Shared Work
+History**, and Readymade says so. History keeps every record exactly, lists it a
+page at a time, and still stops a draft from being sent twice. **Restore Draft**
+brings a draft back among the open ones. Two kinds of work move only when you
+choose **Move to History…** and confirm: a draft you never sent, and a
+suggestion that ended without an answer (the owner was asked for its receipt and
+did not confirm one, or a multi-file suggestion with nothing more to read).
+History keeps such a suggestion as unresolved, never as done. A suggestion that
+can still be checked stays open until you check it, so 64 of those at once fill
+the list until some are checked. Nothing is deleted.
 
 On the owner's side, **Inbox** lists received suggestions for the
 selected project. Open a suggestion to inspect it, then **Import or Merge into

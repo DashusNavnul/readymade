@@ -5,6 +5,7 @@ import {dateAtom} from './editing-activity';
 import {remoteProjectViewSelector, remoteShip, remoteSourceHash, type RemoteSourceObservation} from './remote-project-view';
 import {asRecord, type JsonObject} from './protocol';
 import {RecordHistory} from './private-history';
+import {withWriteLock} from './private-lock';
 
 export interface RemoteDraftRecord {
   readonly id: string; readonly uri: string; readonly originalUri: string;
@@ -133,15 +134,37 @@ export class RemoteDraftStore {
   /** The draft this one continues, if it was made by reconciling another. */
   continued(id: string): string | undefined {return this.lineage.get(id);}
   private names(): string[] {return fs.readdirSync(this.directory).filter(n => /^[a-f0-9]{64}\.json$/.test(n));}
+  /**
+   * What other windows did since this one last looked. A draft they moved to history leaves this window's list; a
+   * draft they created or restored joins it. A draft both hold is left as this window read it: a stale copy is
+   * caught when it is saved. Names only are read, and the files of drafts new to this window.
+   */
+  private refresh(): void {
+    if (!exists(this.directory)) return;
+    const names = new Set(this.names().map(name => name.slice(0, -5)));
+    for (const id of [...this.records.keys()]) if (!names.has(id)) {this.records.delete(id); this.baselines.delete(id);}
+    for (const id of names) if (!this.records.has(id)) {
+      try {
+        const bytes = read(path.join(this.directory, `${id}.json`)), row = saved(decode(bytes));
+        if (row.id === id) {this.records.set(id, row); this.baselines.set(id, bytes);}
+      } catch { /* Not a draft this window can show; opening the store afresh reports it. */ }
+    }
+  }
   private current(value: string): Saved {
+    this.refresh();
     const row = this.records.get(value) ?? [...this.records.values()].find(r => r.uri === value || r.originalUri === value);
-    if (!row) throw new Error('Unknown remote draft.'); return row;
+    if (row) return row;
+    const id = /^[a-f0-9]{64}$/.test(value) ? value : /^readymade-remote-(?:draft|original):\/([a-f0-9]{64})\//.exec(value)?.[1];
+    throw new Error(id && this.history.has(id) ? 'This draft was moved to history. Restore it from Shared Work History before editing.' : 'Unknown remote draft.');
   }
   get(value: string): RemoteDraftRecord {return copy(this.current(value));}
-  list(): readonly RemoteDraftRecord[] {return [...this.records.values()].map(copy);}
+  list(): readonly RemoteDraftRecord[] {this.refresh(); return [...this.records.values()].map(copy);}
+  /** Is a draft of this file of this read already open? Then opening it again needs no room. */
+  opened(value: RemoteSourceObservation, file: string): boolean {this.refresh(); return this.records.has(identity(observation(value), file));}
   create(value: RemoteSourceObservation, file: string): RemoteDraftRecord {
     const source = observation(value), original = source.files.find(f => f.path === file);
     if (!original) invalid();
+    this.refresh();
     const id = identity(source, file), old = this.records.get(id);
     if (old) return copy(old);
     // The same file of the same read was drafted before and moved to history: that draft comes back, exactly as it was.
@@ -160,17 +183,12 @@ export class RemoteDraftStore {
   private locked<T>(run: () => T): T {
     if (!exists(this.directory)) fs.mkdirSync(this.directory, {recursive: true, mode: 0o700});
     secure(fs.lstatSync(this.directory), true);
-    const lock = path.join(this.directory, '.write.lock');
-    const guard = fs.openSync(lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600), held = fs.fstatSync(guard);
-    try {return run();} finally {
-      fs.closeSync(guard);
-      if (exists(lock)) {const now = fs.lstatSync(lock); if (now.ino === held.ino && now.dev === held.dev) fs.unlinkSync(lock);}
-    }
+    return withWriteLock(this.directory, run);
   }
-  /** Open drafts and room left among the 64. */
-  get open(): number {return this.records.size;}
+  /** Open drafts, as the folder holds them now (another window may have opened or moved some). */
+  get open(): number {this.refresh(); return this.records.size;}
   /** Is this draft held at all, open or in history? */
-  holds(id: string): boolean {return this.records.has(id) || this.history.has(id);}
+  holds(id: string): boolean {this.refresh(); return this.records.has(id) || this.history.has(id);}
   /**
    * Move one draft to history exactly as it is saved. It leaves the 64 open drafts, keeps its text and the source
    * it was read from, and comes back with restore(). A draft another window changed since this one read it is not moved.
@@ -209,16 +227,15 @@ export class RemoteDraftStore {
   archivedPage(offset = 0, limit = 16): {total: number; drafts: RemoteDraftRecord[]} {
     const page = this.history.page(offset, limit);
     // A draft that is also open is an unfinished move; it is listed with the open drafts, not here.
+    this.refresh();
     return {total: page.total, drafts: page.names.filter(name => !this.records.has(name)).map(name => this.archived(name)).filter(row => row !== undefined)};
   }
   private commit(value: Saved): void {
     const row = saved(value), bytes = Buffer.from(JSON.stringify(row)); if (bytes.length > LIMIT) invalid();
     if (!exists(this.directory)) fs.mkdirSync(this.directory, {recursive: true, mode: 0o700});
     secure(fs.lstatSync(this.directory), true);
-    const lock = path.join(this.directory, '.write.lock');
-    const guard = fs.openSync(lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
-    const held = fs.fstatSync(guard), temporary = path.join(this.directory, `.${randomUUID()}.tmp`);
-    try {
+    const temporary = path.join(this.directory, `.${randomUUID()}.tmp`);
+    withWriteLock(this.directory, () => {try {
       const target = path.join(this.directory, `${row.id}.json`), baseline = this.baselines.get(row.id);
       if (exists(target)) {if (!baseline || !read(target).equals(baseline)) throw new Error('Remote draft changed in another window. Reopen it before saving.');}
       else if (baseline) throw new Error(this.history.has(row.id) ? 'This draft was moved to history in another window. Restore it before editing.' : 'Remote draft journal disappeared.');
@@ -230,9 +247,6 @@ export class RemoteDraftStore {
       fs.renameSync(temporary, target);
       const dir = fs.openSync(this.directory, fs.constants.O_RDONLY); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}
       this.records.set(row.id, row); this.baselines.set(row.id, bytes);
-    } finally {
-      fs.closeSync(guard); fs.rmSync(temporary, {force: true});
-      if (exists(lock)) {const now = fs.lstatSync(lock); if (now.ino === held.ino && now.dev === held.dev) fs.unlinkSync(lock);}
-    }
+    } finally {fs.rmSync(temporary, {force: true});}});
   }
 }

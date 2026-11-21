@@ -76,10 +76,11 @@ export function bundleStatus(row: Pick<SavedBundle, 'phase' | 'reason'>): SendSt
     case 'claimed': return {...local, detail: local.detail.replace('reconcile the draft', 'reconcile its drafts')};
     case 'uncertain': return row.reason === 'poke-refused' ? {state: 'refused', action: 'none', resolved: true, label: words, detail: 'The owner’s ship rejected the message; nothing was recorded.' + KEPT}
       : {state: 'unknown', action: 'none', resolved: false, label: `Ended without a result — outcome not known (${lost[row.reason ?? ''] ?? row.reason ?? 'no reason given'})`,
-        detail: 'Your ship stopped waiting. That is not proof it was not delivered, and there is nothing more to read. Its drafts are never sent again; to continue, reconcile them into new drafts.' + KEPT};
+        detail: 'Your ship stopped waiting. That is not proof it was not delivered, and there is nothing more to read. Its drafts are never sent again; to continue, reconcile them into new drafts. You can move it to history as it is.' + KEPT};
     case 'submitting': return unknown('Sending was interrupted — outcome not known', 'Readymade stopped while sending. Check Result reads what your ship holds.');
     case 'unknown': return unknown('Sent, or possibly sent — outcome not known', 'No usable answer came back. Check Result reads what your ship holds.');
-    case 'missing': return unknown('Your ship no longer holds this send — outcome not known', 'Your ship keeps a send for a few minutes only. Check Result reads it once more.');
+    case 'missing': return {state: 'unknown', action: 'none', resolved: false, label: 'Your ship no longer holds this send — outcome not known',
+      detail: 'Your ship keeps a send for a few minutes only, and there is nothing more to read here. That is not proof it was not delivered. Its drafts are never sent again; to continue, reconcile them into new drafts. You can move it to history as it is.' + KEPT};
     default: return unknown(row.phase === 'sent' ? 'Sent — waiting for the owner’s receipt' : 'Sent — waiting for the owner’s ship', 'Check Result reads where it stands.');
   }
 }

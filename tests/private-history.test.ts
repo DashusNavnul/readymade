@@ -72,6 +72,10 @@ test('history that is not private, or reached through a link, is refused and nev
   fs.rmdirSync(path.join(store, 'history')); fs.mkdirSync(path.join(root, 'elsewhere'), {mode: 0o700});
   fs.symlinkSync(path.join(root, 'elsewhere'), path.join(store, 'history'));
   assert.throws(() => history.move(a), /private and owned/); assert.deepEqual(fs.readdirSync(path.join(root, 'elsewhere')), []);
+  // A second-name folder behind the link is not reached through it either.
+  fs.mkdirSync(path.join(root, 'elsewhere', 'draft'), {mode: 0o700});
+  assert.throws(() => history.has(a, 'draft'), /private and owned/); assert.throws(() => history.read(a, 'draft'), /private and owned/);
+  fs.rmdirSync(path.join(root, 'elsewhere', 'draft'));
   fs.unlinkSync(path.join(store, 'history')); history.move(a);
   fs.chmodSync(path.join(store, 'history', a + '.json'), 0o644);
   assert.throws(() => history.read(a), /private and owned/);
@@ -104,7 +108,7 @@ test('the 65th draft is refused only while 64 are open; finished drafts move to 
       store.archive(id); moved.push({id, bytes});
       assert.equal(sha(path.join(directory, 'history', id + '.json')), bytes);
     }
-    assert.throws(() => store.get(moved.at(-1)!.id), /Unknown remote draft/);
+    assert.throws(() => store.get(moved.at(-1)!.id), /This draft was moved to history\. Restore it/); assert.throws(() => store.get('f'.repeat(64)), /Unknown remote draft/);
   }
   assert.equal(made, 78); assert.equal(moved.length, 20);
   // Reopened: the open drafts are the open drafts, history is all there, and one page reads one page.
@@ -135,7 +139,8 @@ test('a draft moved in one window cannot be silently overwritten or lost from an
   assert.equal(new RemoteDraftStore(directory).get(draft.id).text, 'theirs\n');
   two.archive(draft.id);
   // The first window still shows what it read; its save is refused with the reason, and history keeps the moved text.
-  assert.throws(() => one.save(draft.id, 'late\n'), /moved to history in another window\. Restore it before editing/);
+  assert.throws(() => one.save(draft.id, 'late\n'), /This draft was moved to history\. Restore it from Shared Work History before editing/);
+  assert.equal(one.list().length, 0); assert.equal(one.open, 0); assert.equal(one.archivedPage().drafts.length, 1);
   assert.equal(two.archived(draft.id)!.text, 'theirs\n'); assert.equal(names(directory).length, 0);
   // A lock another window holds stops a move like any other write.
   const kept = one.restore(draft.id);

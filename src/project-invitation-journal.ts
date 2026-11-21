@@ -5,6 +5,7 @@ import {digest, originOf} from './source-store';
 import {remoteShip} from './remote-project-view';
 import {invitationCommand, invitationResult, type InvitationCommand} from './project-invitations';
 import type {ShipClient} from './ship-client';
+import {withWriteLock} from './private-lock';
 
 type Client = Pick<ShipClient, 'origin' | 'projectInvitation' | 'browserCookies'> & {assertIdle?(): void};
 export interface InvitationIntent {version: 1; origin: string; actor: string; command: InvitationCommand}
@@ -55,14 +56,13 @@ export class InvitationJournal {
     // Before anything is recorded: a client that could not send now would leave an intent that was never sent and is never sent again.
     client.assertIdle?.();
     this.entries();
-    const lock = join(this.directory, '.write.lock'), fd = fs.openSync(lock, 'wx', 0o600);
-    try {
+    withWriteLock(this.directory, () => {
       const held = this.entries();
       if (held.length >= 512 || held.some(i => this.key(i) === this.key(intent) || i.command.request === intent.command.request)) throw new Error('Observe the retained invitation; it will not be sent again. If your ship does not hold it, put it aside under Project Invitations and make the request again.');
       const file = fs.openSync(join(this.directory, this.key(intent) + '.intent.json'), 'wx', 0o600);
       try {fs.writeFileSync(file, JSON.stringify(intent)); fs.fsyncSync(file);} finally {fs.closeSync(file);}
       const dir = fs.openSync(this.directory, fs.constants.O_RDONLY); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}
-    } finally {fs.closeSync(fd); fs.unlinkSync(lock);}
+    });
     this.context(client, intent);
     const reply = await client.projectInvitation('submit', intent.command); this.context(client, intent);
     // Not recorded by this ship. A refusal it gave before recording anything names its reason; that is kept for the row.
@@ -73,12 +73,14 @@ export class InvitationJournal {
     return {intent, ...invitationResult(reply.body, intent.command)};
   }
   /**
-   * Put aside a request this ship does not hold, so the same request can be made again. This ship records a
-   * command before it sends anything to an owner, so a request it has no record of was sent to no one: Readymade
-   * stopped, or the ship refused, between writing the intent here and the ship recording it. The ship is read once
-   * more first, and a request written under a minute ago is left alone because it may still be arriving. The
-   * intent moves to `history/`; nothing is deleted. Should the ship hold the same action after all, under another
-   * request, it refuses the repeat itself: it never sends one action twice.
+   * Put aside a request this ship does not hold, so the same request can be made again. The ship records a command
+   * before it sends anything to an owner, so a request it has no record of is one of two things: never received
+   * (Readymade stopped, or the ship refused, before the ship recorded it), or settled so long ago that the ship has
+   * forgotten it (it keeps its newest 512). Either way nothing is waiting to be sent. The ship is read once more
+   * first, and a request written under a minute ago is left alone because it may still be arriving. The intent
+   * moves to `history/`; nothing is deleted. A repeat is decided where it always is: the ship refuses an action
+   * it still holds under another request, and the owner's project accepts an invitation once and refuses a leave
+   * by a ship that is not a member.
    */
   async retire(client: Client, supplied: InvitationIntent, now = Date.now()): Promise<void> {
     const intent = validate(supplied); this.context(client, intent);
@@ -88,14 +90,17 @@ export class InvitationJournal {
     const reply = await client.projectInvitation('result', {request: intent.command.request}); this.context(client, intent);
     if (reply.status === 200) throw new Error('Your ship holds this request after all. Check its result; it was not put aside.');
     if (reply.status !== 404) throw new Error('Your ship could not be read. Nothing was changed.');
-    const lock = join(this.directory, '.write.lock'), fd = fs.openSync(lock, 'wx', 0o600);
-    try {
+    withWriteLock(this.directory, () => {
       const history = join(this.directory, 'history'), name = this.key(intent) + '.intent.json';
+      // The same action may have been put aside and made again by another window while the ship was read: what
+      // sits under this name now must still be this very request, or nothing is moved.
+      const now = this.read().find(row => this.key(row.intent) === this.key(intent));
+      if (!now || JSON.stringify(now.intent) !== JSON.stringify(intent)) throw new Error('Retained invitation context changed.');
       fs.mkdirSync(history, {recursive: true, mode: 0o700}); this.privateInfo(fs.lstatSync(history), true);
       // Kept under its own request, so a later request for the same action that is put aside too does not replace it.
       fs.renameSync(join(this.directory, name), join(history, `${this.key(intent)}.${intent.command.request}.intent.json`));
       for (const directory of [history, this.directory]) {const dir = fs.openSync(directory, fs.constants.O_RDONLY); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}}
-    } finally {fs.closeSync(fd); fs.unlinkSync(lock);}
+    });
   }
   async recover(client: Client, supplied: InvitationIntent) {
     const intent = validate(supplied); this.context(client, intent);

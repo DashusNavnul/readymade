@@ -4,7 +4,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {ShipClientError, type ShipClient} from './ship-client';
 import type {RemoteSuggestionJournal} from './remote-suggestion-journal';
 import {bundleStanding, remoteBundleOutcome, type RemoteBundleJournal, type SavedBundle} from './remote-bundle-suggest';
-import {suggestionSettled, type SavedSuggestion} from './remote-suggestion-journal';
+import {suggestionSettled, suggestionStanding, type SavedSuggestion} from './remote-suggestion-journal';
 import {SEND_ACTIONS, bundleStatus, suggestionStatus} from './remote-send-status';
 import {draftStanding, fullWords, makeRoom, moveAllFinished, moveFinished, finishedWork, movedWords, type Room, type WorkStores} from './remote-work-history';
 import type {RemoteDraftStore, RemoteDraftRecord} from './remote-draft-store';
@@ -47,7 +47,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
   private activity?: {client: ShipClient; link: SharedProjectLink; source: RemoteSourceObservation; rows: Extract<ActivityReply, {status: 'ready'}>['rows']; expires: number};
   private activityExpiry?: ReturnType<typeof setTimeout>;
   private readonly sessionLists = new Map<string, SessionList>();
-  /** Requests whose result could not be read at the last try, with why. Not a state of the send: the send record is unchanged by it. */
+  /** Requests whose result could not be read at the last try, with why. It is not an outcome: the send is as unresolved as before. */
   private readonly unread = new Map<string, string>();
   /** One page of history, read when the person asks for it; never read while the tree is drawn. */
   private history?: {page: number; drafts: {total: number; drafts: RemoteDraftRecord[]}; suggestions: {total: number; suggestions: SavedSuggestion[]}; bundles: {total: number; bundles: SavedBundle[]}; restorable: Map<string, string>};
@@ -225,6 +225,14 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (made.short.length) throw new Error(fullWords(made.short[0]));
   }
   private idle(): void {if (this.closed || this.busy || this.sending) throw new Error('Wait for the running shared-project operation to finish.');}
+  /**
+   * Before a send is recorded: a connection that is answering another request would refuse this one, so say so
+   * now, while nothing is recorded. From here to the send there is no pause in which that could change.
+   */
+  private sendable(client: ShipClient): void {
+    try {client.assertIdle();}
+    catch (error) {throw error instanceof ShipClientError && error.code === 'commandBusy' ? new Error('Your ship is answering another request right now. Nothing was recorded or sent; send again in a moment.') : error;}
+  }
   /** Move every finished suggestion and its drafts to history now. Unsent drafts and unsettled sends stay. */
   async moveFinishedToHistory(): Promise<void> {
     this.idle();
@@ -242,10 +250,17 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     this.idle();
     const stores = this.stores(), draft = stores.drafts.get(id), standing = draftStanding(stores, draft.id);
     if (standing === 'unsettled') throw new Error('This draft has a suggestion whose result is not settled. Check its result first; then it can move to history.');
-    if (standing === 'ended') throw new Error('This draft went in a multi-file suggestion that ended without a result. Move that suggestion to history; its drafts go with it.');
+    const ended = standing === 'ended' ? stores.suggestions?.list().find(row => row.draftId === draft.id) : undefined;
+    if (standing === 'ended' && !ended) throw new Error('This draft went in a multi-file suggestion that ended without a result. Move that suggestion to history; its drafts go with it.');
     const document = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === draft.uri && !doc.isClosed);
     if (document) stores.drafts.save(draft.id, document.getText());
-    if (standing === 'unsent') {
+    if (ended) {
+      // The owner was asked for its receipt and did not confirm one. Whether it arrived is not known, and that is what history will say.
+      const answer = await vscode.window.showWarningMessage('Move this suggestion to history without a result?', {modal: true,
+        detail: `${draft.path}: ${suggestionStatus(ended).label}. History keeps it exactly so; the draft goes with it and is never sent again. The owner’s answer, if one comes, still arrives as a notice.`}, 'Move to History');
+      if (answer !== 'Move to History') return;
+      this.idle(); stores.suggestions!.archive(ended.request, true); stores.drafts.archive(draft.id);
+    } else if (standing === 'unsent') {
       const answer = await vscode.window.showWarningMessage('Move this unsent draft to history?', {modal: true,
         detail: `${draft.path} was never sent. It moves out of your open drafts with its text exactly as it is, and can be restored from Shared Work History.`}, 'Move to History');
       if (answer !== 'Move to History') return;
@@ -301,7 +316,8 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     const selected = path ?? source.files.find(file => this.uri(source, file.path).toString() === vscode.window.activeTextEditor?.document.uri.toString())?.path ??
       (await vscode.window.showQuickPick(source.files.map(file => ({label: file.path})), {title: 'Edit shared file draft'}))?.label;
     if (!selected) return;
-    this.room({drafts: 1});
+    // A draft of this file of this read that is already open is simply opened; only a new one needs a place.
+    if (!this.drafts.opened(source, selected)) this.room({drafts: 1});
     const draft = this.drafts.create(source, selected);
     await this.openDraft(draft.id); this.changed();
   }
@@ -353,7 +369,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (!current) throw new Error('This file is no longer shared. The original draft is retained.');
     const merged = mergeDraft(original.text, local, current.text);
     if (merged.kind === 'merged' && Buffer.byteLength(merged.text) > 32768) throw new Error('Merged draft exceeds the shared source limit. Both versions are retained.');
-    this.room({drafts: 1}, [draft.id]);
+    if (!this.drafts.opened(fresh, draft.path)) this.room({drafts: 1}, [draft.id]);
     const next = this.drafts.create(fresh, draft.path);
     if (next.text !== current.text) throw new Error('A draft for this observation already has edits. Open it before reconciling.');
     if (next.id !== draft.id) this.drafts.continues(next.id, draft.id);
@@ -385,6 +401,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
         !after || before.hash !== after.hash || before.text !== after.text) throw new Error('Shared source changed. Reconcile this draft before sending.');
     this.sending = true; this.changed();
     try {
+      this.sendable(client);
       this.room({suggestions: 1}, [draft.id]);
       const claim = this.suggestions.claim(captured, source, fresh);
       await this.suggestions.submit(client, claim.request);
@@ -427,6 +444,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     })) throw new Error('Shared source changed. Reconcile these drafts before sending.');
     this.sending = true; this.changed();
     try {
+      this.sendable(client);
       this.room({bundles: 1}, chosen.map(d => d.id));
       const claim = bundles.claim(chosen.map(d => d.id), files, fresh);
       await bundles.submit(client, claim.request);
@@ -459,7 +477,8 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
     if (plan.some(row => drafts.list().some(d => d.observation.request === fresh.request && d.path === row.path && d.text !== row.current)))
       throw new Error('A draft for these current files already has edits. Open it before rebasing. Nothing was rebased.');
     // Room for every new draft before the first is written; the refused suggestion and its drafts are what is being rebased and stay.
-    this.room({drafts: plan.length}, held.drafts);
+    const places = plan.filter(row => !drafts.opened(fresh, row.path)).length;
+    if (places) this.room({drafts: places}, held.drafts);
     let conflicts = 0;
     for (const row of plan) {
       const next = drafts.create(fresh, row.path);
@@ -680,7 +699,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
         // What is known about the send, what is not, and the one next step. No step here sends the suggestion again.
         const status = suggestionStatus(suggestion), unread = this.unread.get(suggestion.request);
         actions.push({label: status.label, description: suggestion.recoveries?.length ? 'Original send record retained · Not committed' : 'Not committed', tooltip: status.detail});
-        if (unread) actions.push({label: 'The result could not be read just now', description: 'Nothing was sent', tooltip: unread});
+        if (unread) actions.push({label: 'The result could not be read just now', description: 'Your suggestion was not sent again', tooltip: unread});
         if (status.action !== 'none') {
           const next = SEND_ACTIONS[status.action];
           actions.push({label: next.label, tooltip: next.tooltip,
@@ -690,12 +709,17 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
               label: `${draft.observation.owner} / ${draft.observation.project}: ${status.label}`}});
         }
       } else if (bundled.has(draft.id)) actions.push({label: 'Sent in a multi-file suggestion', description: 'See its result below'});
-      else if (sentEarlier) actions.push({label: 'Sent — its suggestion is in history', description: 'Never sent again'});
+      else if (sentEarlier) {
+        // What history holds for this draft, in its own words: it may have been recorded, refused, or closed as never sent.
+        const kept = this.suggestions?.archived(draft.id);
+        actions.push({label: kept ? 'In history: ' + suggestionStatus(kept).label : 'In history with its multi-file suggestion', description: 'This draft is never sent again'});
+      }
       else if (client && this.suggestions) actions.push({label: 'Send Suggestion', command: {command: 'readymade.sendSharedSuggestion', title: 'Send Suggestion', arguments: [draft.id]}});
       // What may leave the open list: finished work freely, a never-sent draft when the person confirms, an unsettled send not at all.
-      const standing = suggestion ? (suggestionSettled(suggestion) ? 'finished' : 'unsettled') : inBundle ? bundleStanding(inBundle) : sentEarlier ? 'finished' : 'unsent';
-      if (standing === 'finished' || standing === 'unsent') actions.push({label: standing === 'unsent' ? 'Move to History…' : 'Move to History',
+      const standing = suggestion ? suggestionStanding(suggestion) : inBundle ? 'with-bundle' : sentEarlier ? 'finished' : 'unsent';
+      if (standing === 'finished' || standing === 'unsent' || standing === 'ended') actions.push({label: standing === 'finished' ? 'Move to History' : 'Move to History…',
         tooltip: standing === 'unsent' ? 'This draft was never sent. It leaves your open drafts with its text exactly as it is, and can be restored. Asks first.'
+          : standing === 'ended' ? 'The owner did not confirm a receipt, so the outcome is not known. History keeps the suggestion exactly so, with its draft. Asks first.'
           : 'This work is finished. It leaves the open list and stays readable in history; it is never sent again.',
         command: {command: 'readymade.moveSharedDraftToHistory', title: 'Move to History', arguments: [draft.id]}});
       const earlier = this.drafts?.continued(draft.id);
@@ -723,7 +747,7 @@ export class RemoteSourceView implements vscode.Disposable, vscode.TextDocumentC
         children: [{label: status.label, description: 'Not committed', tooltip: status.detail,
           problem: bundle.phase === 'recorded' ? undefined : {key, category: 'delivery', status: open && status.state !== 'local' ? 'unknown' : 'blocked',
             label: `${o.owner} / ${o.project}: multi-file suggestion: ${status.label}`}},
-        ...(unread ? [{label: 'The result could not be read just now', description: 'Nothing was sent', tooltip: unread}] : []),
+        ...(unread ? [{label: 'The result could not be read just now', description: 'Your suggestion was not sent again', tooltip: unread}] : []),
         ...bundle.intent.files.map(f => ({label: f.path, description: status.state === 'local' || status.state === 'not-sent' ? 'not sent' : 'sent'})),
         ...(status.action === 'none' ? [] : [{label: SEND_ACTIONS[status.action].label, tooltip: SEND_ACTIONS[status.action].tooltip,
           command: {command: status.action === 'close-unsent' ? 'readymade.closeUnsentSharedSuggestion' : 'readymade.checkSharedBundle', title: SEND_ACTIONS[status.action].label, arguments: [bundle.request]}}]),

@@ -1,5 +1,5 @@
 import type {RemoteDraftStore} from './remote-draft-store';
-import {suggestionSettled, type RemoteSuggestionJournal} from './remote-suggestion-journal';
+import {suggestionSettled, suggestionStanding, type RemoteSuggestionJournal} from './remote-suggestion-journal';
 import {bundleStanding, type RemoteBundleJournal} from './remote-bundle-suggest';
 
 /**
@@ -19,11 +19,11 @@ export const OPEN_PLACES = 64;
 
 /**
  * Where one open draft stands. `unsent`: no send was ever recorded for it. `unsettled`: its send can still be
- * checked. `ended`: it went in a multi-file suggestion that ended without an outcome. `finished`: see above.
+ * checked or closed. `ended`: its send ended without an outcome and nothing more is being read. `finished`: see above.
  */
 export function draftStanding(stores: WorkStores, id: string): DraftStanding {
   const single = stores.suggestions?.list().find(row => row.draftId === id);
-  if (single) return suggestionSettled(single) ? 'finished' : 'unsettled';
+  if (single) {const standing = suggestionStanding(single); return standing === 'open' ? 'unsettled' : standing;}
   const bundle = stores.bundles?.list().find(row => row.drafts.includes(id));
   if (bundle) {const standing = bundleStanding(bundle); return standing === 'open' ? 'unsettled' : standing;}
   return stores.suggestions?.holds(id) || stores.bundles?.holdsDraft(id) ? 'finished' : 'unsent';
