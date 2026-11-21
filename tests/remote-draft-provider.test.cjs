@@ -187,7 +187,7 @@ test('a suggestion refused as stale rebases onto the current files as NEW drafts
   const before = [store.get(da.id), store.get(db.id)];
   let held = {version: 1, request: '0x9', drafts: [da.id, db.id], phase: 'refused', reason: 'stale-parent', updatedAt: 1,
     intent: {observation: old, request: '0x9', files: [{path: '/lib/a/hoon', source: 'a1 edited\nkeep\n'}, {path: '/lib/b/hoon', source: 'b1 edited\n'}]}};
-  const bundles = {get: () => held, list: () => [held], claimedDrafts: () => new Set(held.drafts), submit: async () => {throw new Error('must not send');}};
+  const bundles = {get: () => held, list: () => [held], claimedDrafts: () => new Set(held.drafts), holdsDraft: id => held.drafts.includes(id), submit: async () => {throw new Error('must not send');}};
   const diffs = []; ui.commands = {executeCommand: async (...args) => {diffs.push(args.map(String));}};
   t.after(() => {ui.commands = {executeCommand: async () => {}};});
   let reads = 0;

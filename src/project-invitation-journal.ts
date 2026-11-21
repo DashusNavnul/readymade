@@ -58,15 +58,44 @@ export class InvitationJournal {
     const lock = join(this.directory, '.write.lock'), fd = fs.openSync(lock, 'wx', 0o600);
     try {
       const held = this.entries();
-      if (held.length >= 512 || held.some(i => this.key(i) === this.key(intent) || i.command.request === intent.command.request)) throw new Error('Observe the retained invitation; it will not be sent again.');
+      if (held.length >= 512 || held.some(i => this.key(i) === this.key(intent) || i.command.request === intent.command.request)) throw new Error('Observe the retained invitation; it will not be sent again. If your ship does not hold it, put it aside under Project Invitations and make the request again.');
       const file = fs.openSync(join(this.directory, this.key(intent) + '.intent.json'), 'wx', 0o600);
       try {fs.writeFileSync(file, JSON.stringify(intent)); fs.fsyncSync(file);} finally {fs.closeSync(file);}
       const dir = fs.openSync(this.directory, fs.constants.O_RDONLY); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}
     } finally {fs.closeSync(fd); fs.unlinkSync(lock);}
     this.context(client, intent);
     const reply = await client.projectInvitation('submit', intent.command); this.context(client, intent);
-    if (reply.status !== 200) return {intent, status: 'unconfirmed' as const};
+    // Not recorded by this ship. A refusal it gave before recording anything names its reason; that is kept for the row.
+    if (reply.status !== 200) {
+      const said = reply.status === 409 ? asRecord(reply.body).message : undefined;
+      return {intent, status: 'unconfirmed' as const, ...(typeof said === 'string' && /^[a-z-]{1,64}$/.test(said) ? {reason: said} : {})};
+    }
     return {intent, ...invitationResult(reply.body, intent.command)};
+  }
+  /**
+   * Put aside a request this ship does not hold, so the same request can be made again. This ship records a
+   * command before it sends anything to an owner, so a request it has no record of was sent to no one: Readymade
+   * stopped, or the ship refused, between writing the intent here and the ship recording it. The ship is read once
+   * more first, and a request written under a minute ago is left alone because it may still be arriving. The
+   * intent moves to `history/`; nothing is deleted. Should the ship hold the same action after all, under another
+   * request, it refuses the repeat itself: it never sends one action twice.
+   */
+  async retire(client: Client, supplied: InvitationIntent, now = Date.now()): Promise<void> {
+    const intent = validate(supplied); this.context(client, intent);
+    const held = this.read().find(row => this.key(row.intent) === this.key(intent));
+    if (!held || JSON.stringify(held.intent) !== JSON.stringify(intent)) throw new Error('Retained invitation context changed.');
+    if (now - held.at < 60000) throw new Error('This request was recorded less than a minute ago and may still be on its way. Check its result in a minute.');
+    const reply = await client.projectInvitation('result', {request: intent.command.request}); this.context(client, intent);
+    if (reply.status === 200) throw new Error('Your ship holds this request after all. Check its result; it was not put aside.');
+    if (reply.status !== 404) throw new Error('Your ship could not be read. Nothing was changed.');
+    const lock = join(this.directory, '.write.lock'), fd = fs.openSync(lock, 'wx', 0o600);
+    try {
+      const history = join(this.directory, 'history'), name = this.key(intent) + '.intent.json';
+      fs.mkdirSync(history, {recursive: true, mode: 0o700}); this.privateInfo(fs.lstatSync(history), true);
+      // Kept under its own request, so a later request for the same action that is put aside too does not replace it.
+      fs.renameSync(join(this.directory, name), join(history, `${this.key(intent)}.${intent.command.request}.intent.json`));
+      for (const directory of [history, this.directory]) {const dir = fs.openSync(directory, fs.constants.O_RDONLY); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);}}
+    } finally {fs.closeSync(fd); fs.unlinkSync(lock);}
   }
   async recover(client: Client, supplied: InvitationIntent) {
     const intent = validate(supplied); this.context(client, intent);

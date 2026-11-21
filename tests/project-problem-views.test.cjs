@@ -70,7 +70,7 @@ test('unconfirmed message imports link to observation and clear only on an obser
 test('delivery problems inspect existing receipts or drafts and never offer a resend', () => {
   const draft = {id: 'draft', path: '/lib/a/hoon', observation: {origin: client.origin, peer: '~zod', owner: '~nec', project: 'shared', generation: '1', revision: '1'}};
   const suggestion = {draftId: 'draft', request: 'send-1', phase: 'unknown', recoveries: []};
-  const view = instance(RemoteSourceView, {current: () => client, reads: [], drafts: {list: () => [draft]}, suggestions: {list: () => [suggestion]}});
+  const view = instance(RemoteSourceView, {current: () => client, reads: [], unread: new Map(), drafts: {list: () => [draft], continued: () => undefined}, suggestions: {list: () => [suggestion]}});
   assert.equal(problems(view)[0].description, 'delivery · unknown');
   assert.equal(problems(view)[0].command.command, 'readymade.checkSharedSuggestion');
   assert.deepEqual(problems(view)[0].command.arguments, ['send-1']);

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { delimiter, join } from 'node:path';
 import { homedir } from 'node:os';
-import {ProjectInvitationsView} from './project-invitations-view';
+import {ProjectInvitationsView, type JoinedTarget} from './project-invitations-view';
 import {InvitationJournal} from './project-invitation-journal';
 import {ProjectInboxView, type InboxAnswer} from './project-inbox-view';
 import {NoltbookDocumentsView} from './noltbook-documents-view';
@@ -257,7 +257,11 @@ export class ReadymadeWorkspace implements vscode.Disposable {
       },
       sessions: () => this.remoteSource.sharedSessions(), state: context.globalState, recover: error => this.recoverSession(error),
       suggestionFile: (owner, project, request) => {
-        try {return this.remoteSuggestions?.list().find(row => row.request === request && row.intent.observation.owner === owner && row.intent.observation.project === project)?.intent.path;} catch {return undefined;}
+        try {
+          // Open or in history: a suggestion answered long after it was sent still names its file.
+          const row = this.remoteSuggestions?.find(request);
+          return row && row.intent.observation.owner === owner && row.intent.observation.project === project ? row.intent.path : undefined;
+        } catch {return undefined;}
       }, changed: () => {if (!this.disposed) this.render();}});
     this.registrations.push(this.backendInstall, this.planetBoot, this.doctor, this.native);
     void this.offerStart();
@@ -360,12 +364,20 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     command('sendSharedBundle', ids => this.remoteSource.sendBundle(Array.isArray(ids) ? ids.map(String) : undefined));
     command('checkSharedBundle', request => this.remoteSource.checkBundle(String(request)));
     command('rebaseSharedBundle', request => this.remoteSource.rebaseBundle(String(request)));
+    command('closeUnsentSharedSuggestion', request => this.remoteSource.closeUnsent(String(request)));
+    command('moveFinishedSharedWork', () => this.remoteSource.moveFinishedToHistory());
+    command('moveSharedDraftToHistory', id => this.remoteSource.moveDraftToHistory(String(id)));
+    command('moveSharedBundleToHistory', request => this.remoteSource.moveBundleToHistory(String(request)));
+    command('sharedWorkHistory', page => this.remoteSource.showHistory(typeof page === 'number' ? page : 0));
+    command('restoreSharedDraft', id => this.remoteSource.restoreDraft(String(id)));
     const role = (value: unknown) => value === 'contributor' || value === 'observer' || value === 'maintainer' ? value : undefined;
     command('inviteCollaborator', async (target, wanted) => {await this.invitations.invite(typeof target === 'string' ? target : undefined, role(wanted));});
     command('inviteAndCopyLink', (target, wanted) => this.invitations.inviteAndCopyLink(typeof target === 'string' ? target : undefined, role(wanted)));
     command('joinProject', link => this.invitations.join(typeof link === 'string' ? link : undefined));
     command('checkProjectInvitation', request => this.invitations.check(String(request)));
-    command('leaveProject', request => this.invitations.leave(typeof request === 'string' ? request : undefined));
+    command('retireProjectInvitation', request => this.invitations.retire(String(request)));
+    command('leaveProject', request => this.invitations.leave(typeof request === 'string' || typeof request === 'object' && request !== null ? request as string | JoinedTarget : undefined));
+    command('refreshJoinedProjects', () => this.invitations.discover());
     command('removeCollaborationService', () => this.invitations.removeGuestService());
     command('copyProjectJoinLink', request => this.invitations.copyLink(String(request)));
     command('projectMembers', () => this.invitations.observe('members'));
@@ -488,7 +500,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   }
   private async connectApps(): Promise<boolean> {
     if (this.media.connectedClient) return true;
-    try {await this.media.connectClient(); this.render(); void this.offerInstall(); void this.invitations.observeRetained(); return true;}
+    try {await this.media.connectClient(); this.render(); void this.offerInstall(); void this.invitations.observeRetained(); void this.invitations.discover(); return true;}
     catch (error) {if (error instanceof ShipClientError && error.code === 'cancelled') return false; throw error;}
   }
   /** When the app opens: a planet Readymade set up that is not running (after a Mac restart, say) is offered a start. */
@@ -504,7 +516,7 @@ export class ReadymadeWorkspace implements vscode.Disposable {
     const opened = await this.media.reconnectLast();
     if (!opened || this.disposed) return;
     const client = opened.client;
-    this.render(); void this.offerInstall(); void this.invitations.observeRetained();
+    this.render(); void this.offerInstall(); void this.invitations.observeRetained(); void this.invitations.discover();
     const ship = client.browserCookies(client.origin)[0]?.name.slice('urbauth-'.length);
     if (!ship) return;
     if (!opened.first) {void vscode.window.setStatusBarMessage(`Connected to ${ship}`, 5000); return;}
@@ -586,10 +598,11 @@ export class ReadymadeWorkspace implements vscode.Disposable {
   private checkingWaiting = false;
   private heldShareNotices?: ShareNotices;
   private remoteSuggestions?: RemoteSuggestionJournal;
-  /** The file of a suggestion this computer sent, if its journal still holds the request an owner answered. */
+  /** The file of a suggestion this computer sent, if its journal (open or history) holds the request an owner answered. */
   private readonly suggestionFile = (n: ShareNotice): string | undefined => {
     try {
-      return this.remoteSuggestions?.list().find(row => row.request === n.session && row.intent.observation.owner === n.owner && row.intent.observation.project === n.project)?.intent.path;
+      const row = this.remoteSuggestions?.find(n.session);
+      return row && row.intent.observation.owner === n.owner && row.intent.observation.project === n.project ? row.intent.path : undefined;
     } catch {return undefined;}
   };
   private shareNoticesChecked = 0;

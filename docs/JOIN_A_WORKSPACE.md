@@ -81,6 +81,19 @@ command palette, ends your membership after asking (the owner's ship ends your
 file and session grants at the same moment). **Readymade: Remove Collaboration
 Service** uninstalls the desk; it works only on a ship that has no full backend.
 
+On another computer, or after a profile was lost, the projects your ship joined
+are still shown. After connecting, Readymade reads your ship's own list of join
+requests and asks each project's owner whether your ship is a member now. A
+project its owner confirms is listed under **Project Invitations** with
+**Leave Project…**. One the owner does not confirm reads **not confirmed by the
+owner's ship**, and one whose owner did not answer reads so; neither is treated
+as membership, and neither is treated as "not joined". **Refresh Joined
+Projects** asks again. These are reads only: nothing is joined again, and your
+old join is not copied into the new profile. File and session access are still
+granted separately by the owner. Your ship remembers its newest 512 requests,
+so a join older than that is not found this way. Drafts you had not sent stay on
+the computer where you wrote them.
+
 Requirements: your ship on Kelvin 408 (an up-to-date ship is; for a ship on
 this Mac **Readymade: Ship Doctor** shows it as "System version"), able to reach the inviting ship. Any
 runtime will do, at its default memory. This flow was run live with the packaged
@@ -206,6 +219,36 @@ If the sender's ship no longer retains that result, **Recover Owner Receipt**
 asks the owner's ship for its existing receipt. It does not resend the edit.
 Readymade retains the original outcome alongside the recovery result.
 
+Each suggestion's row says where it stands and offers one next step. None of
+these steps sends the suggestion again.
+
+| The row reads | What it means | Next step |
+| --- | --- | --- |
+| Recorded on this computer — never sent | Readymade stopped after recording the suggestion and before sending it | **Close as Not Sent**, then **Reconcile** the draft and send a new suggestion |
+| Sent, or possibly sent — outcome not known | No usable answer came back | **Check Result** |
+| Your ship no longer holds this send | Your ship keeps a send for a few minutes | **Recover Owner Receipt** |
+| Recorded on owner — awaiting review | The owner's ship holds it | None; the owner's answer arrives as a notice |
+| Owner's ship refused it | Nothing was recorded there | **Reconcile**, then send a new suggestion |
+| Not sent — nothing reached the owner | It never left this computer | **Reconcile**, then send a new suggestion |
+
+**The result could not be read just now** under a row means your ship did not
+answer the read. It says nothing about the suggestion; check again. A
+suggestion whose outcome is not known is never called failed, and its draft is
+not sent again or continued as a new draft until the outcome is known: the
+owner may still receive the original. No answer from an owner is not proof that
+nothing arrived, so such a suggestion can stay open; only the owner's receipt,
+the owner's refusal, or a record that it never left this computer closes it.
+
+Your drafts and suggestions do not run out. Up to 64 drafts, 64 single-file
+suggestions and 64 multi-file suggestions are open at once. When a 65th is
+needed, the oldest finished work (a suggestion the owner recorded or refused, or
+one that was never sent, with its draft) moves to **Shared Work History**, and
+Readymade says so. History keeps every record exactly, lists it a page at a
+time, and still stops a draft from being sent twice. **Restore Draft** brings a
+draft back among the open ones. A draft you never sent moves only when you
+choose **Move to History…** and confirm; a suggestion whose outcome is not known
+does not move. Nothing is deleted.
+
 On the owner's side, **Inbox** lists received suggestions for the
 selected project. Open a suggestion to inspect it, then **Import or Merge into
 My Draft** to use the normal Changes, candidate and review flow. Import verifies
@@ -225,7 +268,9 @@ This flow needs the native shared-source and suggestion endpoints on the
 participating ships. One real suggestion has crossed two ships in real windows
 (shared to read and suggest, edited, sent, shown in the owner's Inbox, answered,
 collaborator told). Importing a suggestion and landing it through review has
-automated tests only; it has not been run live between two ships. An owner's
+automated tests only; it has not been run live between two ships. Showing joined
+projects on another computer, Shared Work History and **Close as Not Sent** also
+have automated tests only. An owner's
 ship keeps at most 64 suggestion receipts in all. The current
 remote source contract supports up to eight shared Hoon files, 32 KiB per file
 and 64 KiB total, with ASCII text, tabs and line endings. These limits apply to

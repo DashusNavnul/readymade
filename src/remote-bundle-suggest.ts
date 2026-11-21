@@ -6,6 +6,7 @@ import {asRecord, type JsonObject} from './protocol';
 import {remoteSourceObservation, remoteSourceHash, remoteProjectViewSelector, remoteProjectViewJSON, type RemoteSourceObservation} from './remote-project-view';
 import {newRemoteSuggestionRequest, remoteSuggestionHeaders} from './remote-project-suggest';
 import type {ShipClient} from './ship-client';
+import {RecordHistory} from './private-history';
 
 /** One suggestion covering several shared files, all bound to one owner source observation. */
 export interface RemoteBundleIntent {
@@ -94,7 +95,7 @@ const refusals: Record<string, string> = {
 export function remoteBundleOutcome(phase: BundlePhase, reason?: string): string {
   if (phase === 'recorded') return 'Recorded on owner — awaiting review';
   if (phase === 'uncertain' && reason === 'poke-refused') return 'Owner’s ship refused it; nothing was recorded. If the shared files changed, reconcile your drafts and send again';
-  if (phase === 'refused-before-submit') return 'Not sent: your ship refused to start it';
+  if (phase === 'refused-before-submit') return reason === 'closed-unsent' ? 'Not sent: closed before it was sent; nothing left this computer' : 'Not sent: your ship refused to start it';
   if (phase === 'refused') return 'Owner’s ship refused it; nothing was recorded. ' + (refusals[reason ?? ''] ?? `Reason: ${reason ?? 'not given'}`);
   if (phase === 'missing') return 'Your ship no longer holds this send; the outcome is unknown. Do not resend';
   return 'Suggestion: ' + phase + (reason ? ` (${reason})` : '');
@@ -109,6 +110,16 @@ type Client = Pick<ShipClient, 'origin' | 'browserCookies' | 'projectBundleSubmi
 const phases = ['claimed', 'submitting', 'unknown', 'refused-before-submit', 'watching', 'sent', 'recorded', 'refused', 'uncertain', 'missing'];
 /** Final on the collaborator's ship (`uncertain` included): later reads never overwrite this evidence. */
 const settled = ['recorded', 'refused', 'uncertain', 'refused-before-submit'];
+/**
+ * How a multi-file suggestion may move to history. `finished`: the owner recorded it, the owner refused it, or it
+ * never started; such a record moves by itself when room is needed. `ended`: final here but its outcome on the
+ * owner's ship was never learned (`uncertain`); it moves only when the person says so, and history keeps saying
+ * `uncertain`. Anything else can still be checked and stays open.
+ */
+export function bundleStanding(row: Pick<SavedBundle, 'phase' | 'reason'>): 'finished' | 'ended' | 'open' {
+  if (['recorded', 'refused', 'refused-before-submit'].includes(row.phase) || row.phase === 'uncertain' && row.reason === 'poke-refused') return 'finished';
+  return row.phase === 'uncertain' ? 'ended' : 'open';
+}
 function fail(): never {throw new Error('Invalid retained multi-file suggestion.');}
 function validate(value: unknown): SavedBundle {
   const r = asRecord(value), keys = ['version', 'request', 'drafts', 'intent', 'phase', 'updatedAt',
@@ -136,7 +147,8 @@ const name = (request: string) => createHash('sha256').update(request).digest('h
 export class RemoteBundleJournal {
   private readonly permits = new Set<string>();
   private readonly busy = new Set<string>();
-  constructor(readonly directory: string) {}
+  private readonly history: RecordHistory;
+  constructor(readonly directory: string) {this.history = new RecordHistory(directory, 'Suggestion storage');}
   list(): readonly SavedBundle[] {
     if (!exists(this.directory)) return [];
     secure(fs.lstatSync(this.directory), true);
@@ -156,8 +168,40 @@ export class RemoteBundleJournal {
     const row = this.list().find(r => r.request === request);
     if (!row) throw new Error('Retained multi-file suggestion not found.'); return row;
   }
-  /** Draft ids already sent in a retained bundle; such a draft is never sent again by any path. */
+  /** Draft ids sent in an open multi-file suggestion; such a draft is never sent again by any path. See holdsDraft for history. */
   claimedDrafts(): ReadonlySet<string> {return new Set(this.list().flatMap(r => r.drafts));}
+  private kept(bytes: Buffer | undefined): SavedBundle | undefined {return bytes ? validate(remoteProjectViewJSON(bytes)) : undefined;}
+  /** Was this draft ever sent in a multi-file suggestion, open or in history? History is one lookup by name; `open` spares reading the open ones again. */
+  holdsDraft(id: string, open: ReadonlySet<string> = this.claimedDrafts()): boolean {return open.has(id) || this.history.has(id, 'draft');}
+  /** One multi-file suggestion by request, open or in history. History is read for this record only. */
+  find(request: string): SavedBundle | undefined {
+    const open = this.list().find(r => r.request === request);
+    if (open) return open;
+    const row = this.kept(this.history.read(name(request).slice(0, -5)));
+    if (row && row.request !== request) fail();
+    return row;
+  }
+  /** Multi-file suggestions in history, most recently moved first, one page at a time; only that page is read. */
+  archivedPage(offset = 0, limit = 16): {total: number; bundles: SavedBundle[]} {
+    const page = this.history.page(offset, limit);
+    // A suggestion that is also open is an unfinished move; it is listed with the open ones, not here.
+    return {total: page.total, bundles: page.names.filter(n => !exists(path.join(this.directory, n + '.json'))).map(n => this.kept(this.history.read(n))).filter(row => row !== undefined)};
+  }
+  /**
+   * Move one multi-file suggestion to history, exactly as recorded, with each of its drafts still marked as sent.
+   * A finished one moves freely. One that ended without an outcome (`uncertain`) moves only when `asked` is true,
+   * because that is the person's decision, and history keeps its state as it is. One that can still be checked stays.
+   */
+  archive(request: string, asked = false): SavedBundle {
+    return this.locked(() => {
+      const held = this.get(request), standing = bundleStanding(held);
+      if (this.busy.has(request)) throw new Error('This suggestion is being checked. Move it to history when that is done.');
+      if (standing === 'open' || standing === 'ended' && !asked) throw new Error('Only a finished suggestion moves to history. Check this one first.');
+      this.history.move(name(request).slice(0, -5), held.drafts.map(id => ['draft', id] as const));
+      this.permits.delete(request);
+      return held;
+    });
+  }
   private locked<T>(run: () => T): T {
     if (!exists(this.directory)) fs.mkdirSync(this.directory, {recursive: true, mode: 0o700});
     secure(fs.lstatSync(this.directory), true);
@@ -184,10 +228,25 @@ export class RemoteBundleJournal {
     const row = this.locked(() => {
       const all = this.list();
       if (all.some(r => r.drafts.some(d => drafts.includes(d)))) throw new Error('A chosen draft was already sent in a multi-file suggestion. Check its result; it will not be sent again.');
-      if (all.length >= 64) throw new Error('64 multi-file suggestions are retained.');
+      if (drafts.some(d => this.history.has(d, 'draft')) || this.history.has(name(intent.request).slice(0, -5))) throw new Error('A chosen draft was already sent in a multi-file suggestion that is now in history. It will not be sent again.');
+      if (all.length >= 64) throw new Error('64 multi-file suggestions are open. Move finished ones to history to make room; nothing was discarded.');
       return this.write({version: 1, request: intent.request, drafts: [...drafts], intent, phase: 'claimed', updatedAt: Date.now()}, true);
     });
     this.permits.add(row.request); return row;
+  }
+  /**
+   * Close a send that was recorded here and never started (see RemoteSuggestionJournal.release: `claimed` on disk
+   * means no window sent it, and closing takes the lock a send needs). Settled as not sent, with the reason kept.
+   */
+  release(request: string): SavedBundle {
+    if (this.busy.has(request)) throw new Error('This suggestion is being sent or checked now.');
+    const closed = this.locked(() => {
+      const held = this.get(request);
+      if (held.phase !== 'claimed') throw new Error('Only a suggestion that was never sent can be closed as not sent. This one was sent or checked; read its result instead.');
+      return this.write({version: 1, request: held.request, drafts: held.drafts, intent: held.intent, phase: 'refused-before-submit', updatedAt: Math.max(Date.now(), held.updatedAt + 1), reason: 'closed-unsent'});
+    });
+    this.permits.delete(request);
+    return closed;
   }
   private context(client: Client, row: SavedBundle): void {
     const cookies = client.browserCookies(client.origin), o = row.intent.observation;

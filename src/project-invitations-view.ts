@@ -6,9 +6,25 @@ import {remoteShip} from './remote-project-view';
 import {invitationCommand, leavableJoins, invitationHash, invitationMembers, invitationProject, type InvitationCommand, type InvitationPage, type InvitationRow, eventSentence, type EventRow, type MemberRow, type MembersKind} from './project-invitations';
 import type {SessionSharingSnapshot} from './session-sharing';
 import {InvitationJournal, type InvitationIntent} from './project-invitation-journal';
+import {MEMBERSHIP_CHECKS, catalogFailureWords, joinedCandidates, joinedProjectWords, ownerAnswer, readRequestCatalog, type CatalogFailure, type JoinedProject} from './project-membership';
+import {remoteProjectSessionsObserve, type RemoteProjectSessionsReply} from './remote-project-sessions';
 import type {MediaTreeRow} from './media-workbench';
 
-type Outcome = Awaited<ReturnType<InvitationJournal['recover']>>;
+type Outcome = Awaited<ReturnType<InvitationJournal['recover']>> & {reason?: string};
+/** Where one retained request stands, in a few plain words for its row, and what the next step is on hover. */
+export function invitationStanding(status: Outcome['status'] | undefined, reason?: string): {words: string; tooltip: string} {
+  const read = 'Check Result reads what your ship holds. Nothing is sent again.';
+  switch (status) {
+    case 'accepted': return {words: 'accepted', tooltip: 'The owner’s ship accepted it.'};
+    case 'refused': return {words: 'refused', tooltip: 'The owner’s ship refused it; nothing changed there.'};
+    case 'prepared': return {words: 'waiting to reach the owner', tooltip: 'Your ship recorded it and has not delivered it yet. ' + read};
+    case 'submitted': return {words: 'sent — no answer yet', tooltip: 'The owner’s ship has not answered yet. ' + read};
+    case 'unknown': return {words: 'sent — outcome not known', tooltip: 'Your ship got no usable answer from the owner. It may or may not have taken effect. ' + read};
+    case 'unconfirmed': return {words: reason ? `not recorded by your ship (${reason})` : 'not held by your ship',
+      tooltip: 'Your ship has no record of this request, so nothing was sent to the owner. Put it aside to make the same request again; it is kept, not deleted.'};
+    default: return {words: 'not read yet — check result', tooltip: read};
+  }
+}
 /** `source`, when present, is the ship the owner said publishes the guest desk (normally the owner itself). */
 export interface JoinProjectLink {authority: string; project: string; invitation: string; target: string; source?: string}
 export function joinProjectLink(uri: vscode.Uri, extension: string): JoinProjectLink {
@@ -44,6 +60,10 @@ export function memberGrants(held: SessionSharingSnapshot | undefined): string {
   const shared = held.sessions.filter(session => session.shared).length;
   return `files ${held.viewGrant === 'live' ? 'shared' : 'not shared'} · ${shared === 0 ? 'no sessions' : shared === 1 ? '1 session' : `${shared} sessions`} shared`;
 }
+/** What one pass read from the ship about joined projects, for one connection and one identity. Held in memory only. */
+interface JoinedDiscovery {client: ShipClient; actor: string; status: 'reading' | 'unavailable' | 'complete'; reason?: CatalogFailure; projects: JoinedProject[]}
+export interface JoinedTarget {authority: string; project: string}
+const joinedTarget = (value: unknown): value is JoinedTarget => typeof value === 'object' && value !== null && remoteShip((value as JoinedTarget).authority) && invitationProject((value as JoinedTarget).project);
 export class ProjectInvitationsView implements vscode.Disposable {
   private busy = false;
   private closed = false;
@@ -52,6 +72,9 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private readonly observed = new Map<string, Outcome>();
   private grants = new Map<string, SessionSharingSnapshot>();
   private retaining?: Promise<void>;
+  private joined?: JoinedDiscovery;
+  private discovering?: Promise<void>;
+  private queued?: Promise<void>;
   constructor(private readonly extension: string, private readonly current: () => ShipClient | undefined,
     private readonly project: () => string | undefined, private readonly connect: (wanted?: string) => Promise<ShipClient | undefined>,
     private readonly journal: InvitationJournal, private readonly changed: () => void,
@@ -94,6 +117,8 @@ export class ProjectInvitationsView implements vscode.Disposable {
    * for Check Result.
    */
   async observeRetained(): Promise<void> {
+    // A background read of joined projects holds the view for a moment; wait for it instead of skipping this reading.
+    await this.quiet();
     const client = this.current();
     if (!client || this.closed || this.busy) return;
     let actor: string; try {actor = this.actor(client);} catch {return;}
@@ -112,6 +137,76 @@ export class ProjectInvitationsView implements vscode.Disposable {
   }
   /** An action pressed while retained results are still being read waits for that reading; it is not refused. */
   private async quiet(): Promise<void> {if (this.retaining) await this.retaining.catch(() => undefined);}
+  private same(client: ShipClient, actor: string): boolean {try {return !this.closed && this.current() === client && this.actor(client) === actor;} catch {return false;}}
+  /**
+   * A background read takes its turn: it waits for a running action, then holds the view for one short request,
+   * and an action pressed meanwhile waits in quiet() instead of colliding with it on the ship connection.
+   * The wait is a real timer whatever a test put in place of pause(): a loop without one would starve the action it waits for.
+   */
+  private async turn<T>(live: () => boolean, work: () => Promise<T>): Promise<T | undefined> {
+    for (;;) {
+      await this.quiet();
+      if (!live()) return undefined;
+      if (!this.busy) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    let done!: () => void;
+    this.busy = true; this.retaining = new Promise<void>(resolve => {done = resolve;}); this.changed();
+    try {return await work();} finally {this.busy = false; this.retaining = undefined; done(); this.changed();}
+  }
+  /** What the last pass read for this connection and identity; a pass made for another ship is never shown or acted on. */
+  private joinedFor(client: ShipClient | undefined, actor: string | undefined): JoinedDiscovery | undefined {
+    return client && actor && this.joined?.client === client && this.joined.actor === actor ? this.joined : undefined;
+  }
+  /**
+   * Read which projects the connected ship has joined, from the ships themselves: this computer's profile is not
+   * needed, so a new computer shows them too. One pass at a time; a call during a pass runs one more pass after it.
+   * Reads only. Nothing is written to the invitation journal and no old request becomes something that can be sent.
+   */
+  discover(): Promise<void> {
+    if (!this.discovering) {
+      const pass = this.pass().catch(() => undefined).finally(() => {if (this.discovering === pass) this.discovering = undefined;});
+      return this.discovering = pass;
+    }
+    return this.queued ??= this.discovering.then(() => {this.queued = undefined; return this.discover();});
+  }
+  private async pass(): Promise<void> {
+    const client = this.current();
+    if (!client || this.closed) return;
+    let actor: string; try {actor = this.actor(client);} catch {return;}
+    const live = () => this.same(client, actor);
+    const mine: JoinedDiscovery = {client, actor, status: 'reading', projects: []};
+    this.joined = mine; this.changed();
+    try {
+      // This ship's own requests: every page or none. A partial list would read as "joined nothing else".
+      const read = await this.turn(live, () => readRequestCatalog(client, actor, live));
+      if (!read || !live() || this.joined !== mine) return;
+      if (read.status === 'unavailable') {mine.status = 'unavailable'; mine.reason = read.reason; return;}
+      mine.projects = joinedCandidates(read.requests, actor).map((row, n) => ({...row, standing: n < MEMBERSHIP_CHECKS ? 'checking' : 'unchecked'}));
+      mine.status = 'complete'; this.changed();
+      // Each owner is asked once whether this ship is a member now. The ask is one short request; its answer is read afterwards.
+      for (const [n, row] of mine.projects.entries()) {
+        if (row.standing !== 'checking') continue;
+        let reply: RemoteProjectSessionsReply | undefined, waiting = false;
+        try {
+          reply = await this.turn(live, () => client.projectSessionsSubmit(row.authority, row.project));
+          if (reply?.status === 'pending') await remoteProjectSessionsObserve(client, {owner: row.authority, project: row.project}, reply.request, next => {reply = next;});
+        } catch (error) {
+          // The last reply stands; with none, the owner did not answer. A connection that still holds an unanswered
+          // check of this project refuses to start another: said as that, not as silence from the owner.
+          // So does this ship itself when it already holds its limit of recent checks ('refused').
+          waiting = reply === undefined && error instanceof ShipClientError && ['commandBusy', 'refused'].includes(error.code);
+        }
+        if (!live() || this.joined !== mine) return;
+        mine.projects[n] = waiting ? {...row, standing: 'waiting'} : {...row, ...ownerAnswer(reply)}; this.changed();
+      }
+    } finally {
+      // A pass that stopped early (the connection changed) leaves nothing that reads as an answer.
+      if (mine.status === 'reading') {mine.status = 'unavailable'; mine.reason = 'changed';}
+      for (const [n, row] of mine.projects.entries()) if (row.standing === 'checking') mine.projects[n] = {...row, standing: 'unreachable'};
+      this.changed();
+    }
+  }
   /**
    * A command is sent once and the ship settles it a moment later (about a second, measured). Read the result a
    * few times so the person sees the outcome without pressing Check Result. Reads only; nothing is sent again.
@@ -282,7 +377,9 @@ export class ProjectInvitationsView implements vscode.Disposable {
       if (!role) return undefined;
       if (held?.role === role) throw new Error(`${recipient} already has that role.`);
       const unresolved = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.project === project && row.command.operation === 'invite-member' && row.command.target === recipient && !['accepted', 'refused'].includes(this.observed.get(this.key(row))?.status ?? ''));
-      if (unresolved) throw new Error('Check the retained invitation result before inviting this collaborator again.');
+      if (unresolved) throw new Error(this.observed.get(this.key(unresolved))?.status === 'unconfirmed'
+        ? 'An earlier invitation for this collaborator never reached your ship. Put it aside under Project Invitations, then invite again.'
+        : 'Check the retained invitation result before inviting this collaborator again.');
       const page = await this.members(client, actor, project, 'invitations');
       if (!held && roster.total + page.total >= PROJECT_SHIP_LIMIT) throw new Error(`This project is full: ${PROJECT_SHIP_LIMIT} ships in all, counting yours and open invitations. Remove a member or withdraw an invitation first.`);
       const nonce = '0x' + (BigInt('0x' + randomBytes(16).toString('hex')) || 1n).toString(16).replace(/\B(?=(?:[0-9a-f]{4})+$)/g, '.');
@@ -315,7 +412,7 @@ export class ProjectInvitationsView implements vscode.Disposable {
       this.observed.set(this.key(intent), result);
     } finally {this.busy = false; this.changed();}
     // Older rows of this ship (earlier joins and leaves) are read too, so the list shows where things stand.
-    void this.observeRetained();
+    void this.observeRetained(); void this.discover();
   }
   /**
    * A guest leaves a project it joined. The owner's ship settles it; sent once through the same journal as the
@@ -325,38 +422,71 @@ export class ProjectInvitationsView implements vscode.Disposable {
   private leavable(client: ShipClient, actor: string): Set<string> {
     return leavableJoins(this.journal.ordered().filter(row => row.origin === client.origin && row.actor === actor && this.observed.get(this.key(row))?.status === 'accepted').map(row => row.command));
   }
-  /** With no request named (the command palette, the Home command line): the one project this ship can leave, or a choice among several. */
-  async leave(request?: string): Promise<void> {
+  /**
+   * With nothing named (the command palette, the Home command line): the one project this ship can leave, or a
+   * choice among several. A request names a join this profile holds; an owner and project name a membership the
+   * owner's ship confirmed in the last pass of discover(), which needs no join in this profile.
+   */
+  async leave(target?: string | JoinedTarget): Promise<void> {
     await this.quiet();
     const client = this.current();
     if (!client || this.closed || this.busy) throw new Error('Connect the ship that joined this project.');
-    if (request === undefined) {
+    let request = typeof target === 'string' ? target : undefined, confirmed = joinedTarget(target) ? target : undefined;
+    if (request === undefined && !confirmed) {
       await this.observeRetained(); await this.quiet();
       const who = this.actor(client), can = this.leavable(client, who);
       const open = this.journal.entries().filter(row => row.origin === client.origin && row.actor === who && can.has(row.command.request));
-      const unread = this.journal.entries().some(row => row.origin === client.origin && row.actor === who && !this.observed.has(this.key(row)));
-      if (!open.length) throw new Error(unread ? 'This ship\'s join results could not all be read yet. Try again, or use Check Result on the row under Project Invitations.' : 'This ship has not joined a project it can leave.');
-      const picked = open.length === 1 ? open[0] : (await vscode.window.showQuickPick(open.map(row => ({label: row.command.project, description: row.command.authority, row})), {title: 'Leave which project?'}))?.row;
+      // A profile that holds no join of its own (a new computer) asks the ships which projects this one is a member of.
+      if (!this.joinedFor(client, who) || this.discovering) await this.guest.progress('Reading joined projects from your ship', () => this.discovering ?? this.discover());
+      await this.quiet();
+      if (!this.same(client, who) || this.busy) throw new Error('Connection changed; nothing was sent.');
+      const found = this.joinedFor(client, who);
+      const members = (found?.projects ?? []).filter(row => row.standing === 'member' && !open.some(held => held.command.authority === row.authority && held.command.project === row.project));
+      if (!open.length && !members.length) {
+        const unread = this.journal.entries().some(row => row.origin === client.origin && row.actor === who && !this.observed.has(this.key(row)));
+        if (unread) throw new Error('This ship\'s join results could not all be read yet. Try again, or use Check Result on the row under Project Invitations.');
+        if (found?.status === 'unavailable') throw new Error('Joined projects could not be read from your ship. ' + catalogFailureWords(found.reason ?? 'unreachable'));
+        const unsure = found?.projects.filter(row => row.standing !== 'member').length ?? 0;
+        throw new Error(unsure ? `No owner confirmed this ship as a member now (${unsure} not confirmed). See the rows under Project Invitations, then refresh joined projects.` : 'This ship has not joined a project it can leave.');
+      }
+      const choices = [...open.map(row => ({label: row.command.project, description: row.command.authority, request: row.command.request as string | undefined, confirmed: undefined as JoinedTarget | undefined})),
+        ...members.map(row => ({label: row.project, description: `${row.authority} · confirmed by the owner’s ship`, request: undefined, confirmed: {authority: row.authority, project: row.project}}))];
+      const picked = choices.length === 1 ? choices[0] : await vscode.window.showQuickPick(choices, {title: 'Leave which project?'});
       if (!picked) return;
-      request = picked.command.request;
+      request = picked.request; confirmed = picked.confirmed;
     }
-    const actor = this.actor(client), joined = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
-    if (!joined || joined.command.operation !== 'join' || this.observed.get(this.key(joined))?.status !== 'accepted') throw new Error('Check the join result before leaving this project.');
-    const {authority, project} = joined.command;
+    const actor = this.actor(client);
+    let authority: string, project: string;
+    if (confirmed) {
+      const row = this.joinedFor(client, actor)?.projects.find(row => row.authority === confirmed.authority && row.project === confirmed.project);
+      if (row?.standing !== 'member') throw new Error('Refresh joined projects first: the owner’s ship has not confirmed this ship as a member of that project.');
+      if (row.leaving) throw new Error('This ship already sent a leave for this project and has no answer yet. Refresh joined projects to read it; nothing was sent.');
+      ({authority, project} = row);
+    } else {
+      const joined = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
+      if (!joined || joined.command.operation !== 'join' || this.observed.get(this.key(joined))?.status !== 'accepted') throw new Error('Check the join result before leaving this project.');
+      ({authority, project} = joined.command);
+    }
     const open = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.operation === 'leave' && row.command.authority === authority &&
       row.command.project === project && !['accepted', 'refused'].includes(this.observed.get(this.key(row))?.status ?? ''));
     if (open) throw new Error('Check the retained leave result before leaving again.');
     // Busy from before the question: a second Leave started while this one waits for its answer is refused, not sent as well.
     this.busy = true; this.changed();
+    let sent = false;
     try {
       if (!await this.guest.confirm(`Leave ${project} on ${authority}? You lose access to its shared files and sessions. The owner can invite you again.`, 'Leave Project?', 'Leave')) return;
       if (!this.active(client, actor)) throw new Error('Connection changed; nothing was sent.');
       const command = invitationCommand({request: randomUUID(), authority, project, operation: 'leave'});
       const intent: InvitationIntent = {version: 1, origin: client.origin, actor, command};
+      sent = true;
       const result = await this.submitOnce(client, intent);
       if (!this.active(client, actor)) throw new Error('Connection changed; check the retained leave result.');
       this.observed.set(this.key(intent), result);
-    } finally {this.busy = false; this.changed();}
+    } finally {
+      this.busy = false; this.changed();
+      // The owner is asked again, so the row says what the owner holds now, not what this window expects.
+      if (sent) void this.discover();
+    }
   }
   /**
    * Remove the collaboration service from a guest's own ship: kiln uninstalls the guest desk, nothing else.
@@ -401,6 +531,23 @@ export class ProjectInvitationsView implements vscode.Disposable {
       const result = await this.journal.recover(client, intent);
       if (!this.active(client, actor)) throw new Error('Connection changed during observation.');
       this.observed.set(this.key(intent), result);
+    } finally {this.busy = false; this.changed();}
+  }
+  /**
+   * Put aside a request the ship does not hold (Readymade stopped, or the ship refused, before the ship recorded
+   * it), so the same invitation, join or leave can be made again. The ship is read once more; nothing is sent.
+   */
+  async retire(request: string): Promise<void> {
+    await this.quiet();
+    const client = this.current();
+    if (!client || this.closed || this.busy) throw new Error('Connect the ship that made this request.');
+    const actor = this.actor(client), intent = this.journal.entries().find(row => row.origin === client.origin && row.actor === actor && row.command.request === request);
+    if (!intent) throw new Error('No retained invitation request belongs to this connection.');
+    this.busy = true; this.changed();
+    try {
+      await this.journal.retire(client, intent);
+      this.observed.delete(this.key(intent));
+      void vscode.window.showInformationMessage('Put aside. Your ship holds no such request, so nothing was sent; you can make the request again.');
     } finally {this.busy = false; this.changed();}
   }
   private async pending(client: ShipClient, actor: string, project: string): Promise<InvitationRow[]> {
@@ -495,19 +642,42 @@ export class ProjectInvitationsView implements vscode.Disposable {
     // Leave is offered once for a project, and only while this ship's accepted joins outnumber its accepted leaves.
     const retained = client && actor ? this.journal.entries().filter(row => row.origin === client.origin && row.actor === actor) : [];
     const leave = client && actor ? this.leavable(client, actor) : new Set<string>();
+    // Joined projects as the ships hold them, so a profile with no join of its own (a new computer) shows them too.
+    // A project this profile can already leave from its own row below is not listed twice.
+    if (client && actor) {
+      const found = this.joinedFor(client, actor), refresh = {command: 'readymade.refreshJoinedProjects', title: 'Refresh Joined Projects'};
+      const own = new Set(retained.filter(intent => leave.has(intent.command.request)).map(intent => intent.command.authority + '\n' + intent.command.project));
+      if (found?.status === 'reading') children.push({label: 'Reading joined projects from your ship…'});
+      else if (found?.status === 'unavailable') children.push({label: 'Joined projects could not be read', description: 'nothing assumed', tooltip: catalogFailureWords(found.reason ?? 'unreachable'),
+        children: [{label: catalogFailureWords(found.reason ?? 'unreachable')}, {label: 'Refresh Joined Projects', command: refresh}]});
+      else {
+        for (const row of found?.projects ?? []) {
+          if (own.has(row.authority + '\n' + row.project)) continue;
+          const words = joinedProjectWords(row);
+          children.push({label: row.project, description: words.description, tooltip: words.tooltip, children: row.standing === 'member' ? [
+            {label: 'Joined — ask owner for shared files'},
+            row.leaving ? {label: 'Leave sent — no answer yet', tooltip: 'This ship already sent a leave for this project. Refresh joined projects to read what the owner holds; nothing is sent again.'}
+              : {label: 'Leave Project…', command: {command: 'readymade.leaveProject', title: 'Leave Project', arguments: [{authority: row.authority, project: row.project}]}}]
+            : row.standing === 'checking' ? [] : [{label: 'Check Again', tooltip: 'Asks the owner’s ship again. Reads only; nothing is sent again.', command: refresh}]});
+        }
+        children.push({label: 'Refresh Joined Projects', tooltip: 'Reads this ship’s own list of join requests, then asks each owner whether this ship is a member now. Reads only; nothing is sent again.', command: refresh});
+      }
+    }
     if (client && actor) for (const intent of retained) {
       const outcome = this.observed.get(this.key(intent)), accepted = outcome?.status === 'accepted', command = intent.command;
-      const offerLeave = leave.has(command.request);
-      children.push({label: command.project, description: `${command.operation} · ${outcome?.status ?? 'retained — check result'}`,
-        children: [{label: 'Check Result', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]},
+      const offerLeave = leave.has(command.request), standing = invitationStanding(outcome?.status, outcome?.reason);
+      children.push({label: command.project, description: `${command.operation} · ${standing.words}`, tooltip: standing.tooltip,
+        children: [{label: 'Check Result', tooltip: 'Reads what your ship holds for this request. Nothing is sent again.', command: {command: 'readymade.checkProjectInvitation', title: 'Check Result', arguments: [command.request]},
           problem: command.operation === 'join' && !accepted ? {key: this.key(intent), category: 'join',
             status: outcome?.status === 'refused' ? 'blocked' : 'unknown',
             label: `${command.project}: join ${outcome?.status ?? 'outcome unconfirmed'}`} : undefined},
+          ...(outcome?.status === 'unconfirmed' ? [{label: 'Put This Request Aside', tooltip: 'Your ship has no record of this request, so nothing was sent to the owner. Putting it aside lets you make the same request again. It is kept in history, and your ship is read once more first.',
+            command: {command: 'readymade.retireProjectInvitation', title: 'Put This Request Aside', arguments: [command.request]}}] : []),
           ...(accepted && command.operation === 'invite-member' ? [{label: 'Copy Join Link', command: {command: 'readymade.copyProjectJoinLink', title: 'Copy Join Link', arguments: [command.request]}}] : []),
           ...(accepted && command.operation === 'join' ? [{label: offerLeave ? 'Joined — ask owner for shared files' : 'Joined earlier'},
             ...(offerLeave ? [{label: 'Leave Project…', command: {command: 'readymade.leaveProject', title: 'Leave Project', arguments: [command.request]}}] : [])] : [])]});
     }
     return [{id: 'project-invitations', label: 'Project Invitations', icon: 'organization', children}];
   }
-  dispose(): void {this.closed = true; this.observed.clear(); this.grants.clear(); this.page = undefined;}
+  dispose(): void {this.closed = true; this.observed.clear(); this.grants.clear(); this.page = undefined; this.joined = undefined;}
 }

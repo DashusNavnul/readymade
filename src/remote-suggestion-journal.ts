@@ -1,12 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {remoteDraftRecord, type RemoteDraftRecord} from './remote-draft-store';
 import {remoteSuggestionIntent, newRemoteSuggestionRequest, remoteSuggestionReply, remoteSuggestionRecoveryReply,
   type RemoteSuggestionIntent, type RemoteSuggestionReply, type RemoteSuggestionRecoveryReply} from './remote-project-suggest';
 import {remoteProjectViewJSON, type RemoteSourceObservation} from './remote-project-view';
 import {asRecord} from './protocol';
 import {ShipClientError, type ShipClient} from './ship-client';
+import {RecordHistory} from './private-history';
 
 export type SuggestionPhase = 'claimed' | 'submitting' | 'unknown' | 'refused-before-submit' | RemoteSuggestionReply['status'];
 export interface RecoveryObservation {
@@ -23,6 +24,15 @@ type Client = Pick<ShipClient, 'origin' | 'browserCookies' | 'projectSuggestionS
   Partial<Pick<ShipClient, 'projectSuggestionRecover' | 'projectSuggestionRecoveryResult'>>;
 const phases: readonly string[] = ['claimed', 'submitting', 'unknown', 'refused-before-submit', 'watching', 'sent', 'recorded', 'refused', 'uncertain', 'missing', 'expired'];
 function fail(): never {throw new Error('Invalid retained suggestion intent.');}
+/**
+ * A send this journal has nothing more to learn about: the owner recorded it, the owner refused it, it never
+ * started, or its receipt was recovered. Only such a record moves to history. `recorded` says the owner holds the
+ * suggestion for review, not that the review is over; the owner's answer arrives as a notice, found by request.
+ */
+export function suggestionSettled(row: Pick<SavedSuggestion, 'phase' | 'recoveries'>): boolean {
+  return row.recoveries?.at(-1)?.phase === 'recorded' || ['recorded', 'refused', 'refused-before-submit'].includes(row.phase);
+}
+const requestKey = (request: string) => createHash('sha256').update(request).digest('hex');
 function copy<T>(value: T): T {return JSON.parse(JSON.stringify(value)) as T;}
 function bind(draft: RemoteDraftRecord, intent: RemoteSuggestionIntent): void {
   const old = draft.observation, fresh = intent.observation;
@@ -94,7 +104,8 @@ function secure(s: fs.Stats, directory = false): void {
 export class RemoteSuggestionJournal {
   private readonly permits = new Set<string>();
   private readonly busy = new Set<string>();
-  constructor(readonly directory: string) {}
+  private readonly history: RecordHistory;
+  constructor(readonly directory: string) {this.history = new RecordHistory(directory, 'Suggestion storage');}
   private read(file: string): SavedSuggestion {
     secure(fs.lstatSync(file)); const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
@@ -117,6 +128,44 @@ export class RemoteSuggestionJournal {
   get(request: string): SavedSuggestion {
     const row = this.list().find(r => r.request === request);
     if (!row) throw new Error('Retained suggestion not found.'); return row;
+  }
+  private kept(bytes: Buffer | undefined): SavedSuggestion | undefined {return bytes ? copy(validate(remoteProjectViewJSON(bytes))) : undefined;}
+  /** Was this draft ever claimed for a send, among the open suggestions or in history? One lookup by name. */
+  holds(draftId: string): boolean {return exists(path.join(this.directory, `${draftId}.json`)) || this.history.has(draftId);}
+  /** One suggestion by request, open or in history. History is read for this record only. */
+  find(request: string): SavedSuggestion | undefined {
+    const open = this.list().find(r => r.request === request);
+    if (open) return open;
+    const row = this.kept(this.history.read(requestKey(request), 'request'));
+    if (row && row.request !== request) fail();
+    return row;
+  }
+  /** One suggestion in history, by the draft it sent. */
+  archived(draftId: string): SavedSuggestion | undefined {
+    const row = this.kept(this.history.read(draftId));
+    if (row && row.draftId !== draftId) fail();
+    return row;
+  }
+  /** Suggestions in history, most recently moved first, one page at a time; only that page is read. */
+  archivedPage(offset = 0, limit = 16): {total: number; suggestions: SavedSuggestion[]} {
+    const page = this.history.page(offset, limit);
+    // A suggestion that is also open is an unfinished move; it is listed with the open ones, not here.
+    return {total: page.total, suggestions: page.names.filter(name => !exists(path.join(this.directory, `${name}.json`))).map(name => this.archived(name)).filter(row => row !== undefined)};
+  }
+  /**
+   * Move one finished suggestion to history, exactly as recorded. It leaves the 64 open suggestions; its draft is
+   * still never sent again, and no permit to send exists for it in this or any window. A send whose outcome is
+   * not settled stays open: it can still be checked, and moving it would hide that it is unresolved.
+   */
+  archive(request: string): SavedSuggestion {
+    return this.locked(() => {
+      const held = this.get(request);
+      if (this.busy.has(request)) throw new Error('This suggestion is being checked. Move it to history when that is done.');
+      if (!suggestionSettled(held)) throw new Error('Only a finished suggestion moves to history. Check this one first.');
+      this.history.move(held.draftId, [['request', requestKey(request)]]);
+      this.permits.delete(request);
+      return held;
+    });
   }
   private locked<T>(run: () => T): T {
     if (!exists(this.directory)) fs.mkdirSync(this.directory, {recursive: true, mode: 0o700});
@@ -145,10 +194,27 @@ export class RemoteSuggestionJournal {
     const row = this.locked(() => {
       const all = this.list();
       if (all.some(r => r.draftId === draft.id || r.request === intent.request)) throw new Error('This draft already has a retained suggestion. Check its result; it will not be sent again.');
-      if (all.length >= 64) throw new Error('64 suggestion intents are retained.');
+      if (this.history.has(draft.id) || this.history.has(requestKey(intent.request), 'request')) throw new Error('This draft was already sent; its suggestion is in history. It will not be sent again.');
+      if (all.length >= 64) throw new Error('64 suggestions are open. Move finished ones to history to make room; nothing was discarded.');
       return this.write({version: 1, draftId: draft.id, request: intent.request, draft, intent, phase: 'claimed', updatedAt: Date.now()}, true);
     });
     this.permits.add(row.request); return row;
+  }
+  /**
+   * Close a send that was recorded here and never started. On disk, `claimed` means exactly that: every window
+   * writes `submitting` under the lock before it sends, so a record still `claimed` was sent by no one. Closing
+   * takes the same lock, so a window that was about to send finds the claim closed and sends nothing. The record
+   * stays, settled as not sent, and its draft is never sent under this claim.
+   */
+  release(request: string): SavedSuggestion {
+    if (this.busy.has(request)) throw new Error('This suggestion is being sent or checked now.');
+    const closed = this.locked(() => {
+      const held = this.get(request);
+      if (held.phase !== 'claimed' || held.recoveries?.length) throw new Error('Only a suggestion that was never sent can be closed as not sent. This one was sent or checked; read its result instead.');
+      return this.write({version: 1, draftId: held.draftId, request: held.request, draft: held.draft, intent: held.intent, phase: 'refused-before-submit', updatedAt: Math.max(Date.now(), held.updatedAt + 1)});
+    });
+    this.permits.delete(request);
+    return closed;
   }
   private context(client: Client, row: SavedSuggestion): void {
     const cookies = client.browserCookies(client.origin), o = row.intent.observation;
